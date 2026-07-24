@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Include directories
-include_directories(include)
+include_directories(include .)
 
 # Windows system libraries for Win32 Raw Input, SetupAPI, and DXGI
 if(WIN32)
@@ -17,18 +17,41 @@ endif()
 # Find Qt6 components if available
 find_package(Qt6 COMPONENTS Core Widgets QUIET)
 
+if(Qt6_FOUND)
+    set(CMAKE_AUTOMOC ON)
+    set(CMAKE_AUTOUIC ON)
+    set(CMAKE_AUTORCC ON)
+    set(UI_SOURCES
+        ui/workspace_widget.cpp
+        ui/main_window.cpp
+    )
+    set(UI_HEADERS
+        ui/workspace_widget.hpp
+        ui/main_window.hpp
+    )
+endif()
+
 # Source files
 set(HYDRA_SOURCES
     src/hardware_detector.cpp
-    src/main.cpp
+    src/input_router.cpp
+    src/display_manager.cpp
+    src/workspace_manager.cpp
+    src/game_launcher.cpp
+    ${UI_SOURCES}
 )
 
 set(HYDRA_HEADERS
     include/hydra/hardware_detector.hpp
+    include/hydra/input_router.hpp
+    include/hydra/display_manager.hpp
+    include/hydra/workspace_manager.hpp
+    include/hydra/game_launcher.hpp
+    ${UI_HEADERS}
 )
 
-# Executable target
-add_executable(HydraSeat ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+# Core Executable target
+add_executable(HydraSeat src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 
 if(WIN32)
     target_link_libraries(HydraSeat PRIVATE ${WIN32_LIBS})
@@ -38,3 +61,14 @@ if(Qt6_FOUND)
     target_link_libraries(HydraSeat PRIVATE Qt6::Core Qt6::Widgets)
     target_compile_definitions(HydraSeat PRIVATE HYDRA_HAS_QT=1)
 endif()
+
+# Test Suite Executable Target
+enable_testing()
+add_executable(hydra_tests tests/test_hydra.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+if(WIN32)
+    target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
+endif()
+if(Qt6_FOUND)
+    target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
+endif()
+add_test(NAME EngineUnitTests COMMAND hydra_tests)

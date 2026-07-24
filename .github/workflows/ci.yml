@@ -1,0 +1,32 @@
+name: HydraSeat CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up MSVC & CMake
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Configure CMake
+      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build Project
+      run: cmake --build build --config Release
+
+    - name: Run Hardware Detector Test
+      run: |
+        if (Test-Path "build/Release/HydraSeat.exe") {
+          & "build/Release/HydraSeat.exe"
+        } else if (Test-Path "build/HydraSeat.exe") {
+          & "build/HydraSeat.exe"
+        }

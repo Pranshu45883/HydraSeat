@@ -21,6 +21,7 @@ struct RawInputEvent {
     int32_t deltaX{0};
     int32_t deltaY{0};
     uint32_t mouseButtons{0};
+    bool isTouchpad{false};
 };
 
 using InputCallback = std::function<void(const RawInputEvent&)>;
@@ -33,7 +34,7 @@ public:
     // Initialize Win32 Raw Input hook window
     bool initialize();
 
-    // Register Raw Input sink for keyboards and mice
+    // Register Raw Input sink for keyboards, mice, and touchpads
     bool registerRawInputDevices(bool backgroundSink = true);
 
     // Bind a callback to receive routed input events from a specific device handle

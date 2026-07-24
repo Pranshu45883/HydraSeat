@@ -40,6 +40,18 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
     RawInputEvent event{};
     event.deviceHandle = reinterpret_cast<uintptr_t>(raw->header.hDevice);
 
+    // Query device path string from handle if available
+    if (raw->header.hDevice != NULL) {
+        UINT nameSize = 0;
+        GetRawInputDeviceInfoW(raw->header.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
+        if (nameSize > 0) {
+            std::wstring nameBuf(nameSize, L'\0');
+            if (GetRawInputDeviceInfoW(raw->header.hDevice, RIDI_DEVICENAME, nameBuf.data(), &nameSize) != (UINT)-1) {
+                event.devicePath = nameBuf;
+            }
+        }
+    }
+
     if (raw->header.dwType == RIM_TYPEKEYBOARD) {
         event.messageType = raw->data.keyboard.Message;
         event.vkey = raw->data.keyboard.VKey;
@@ -48,6 +60,9 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
         event.deltaX = raw->data.mouse.lLastX;
         event.deltaY = raw->data.mouse.lLastY;
         event.mouseButtons = raw->data.mouse.usButtonFlags;
+    } else if (raw->header.dwType == RIM_TYPEHID) {
+        event.messageType = WM_MOUSEMOVE;
+        event.isTouchpad = true;
     }
 
     // Trigger device specific callback if registered
@@ -93,21 +108,27 @@ bool InputRouter::registerRawInputDevices(bool backgroundSink) {
 
     DWORD flags = backgroundSink ? RIDEV_INPUTSINK : 0;
 
-    RAWINPUTDEVICE rid[2];
+    RAWINPUTDEVICE rid[3];
 
     // Keyboard
-    rid[0].usUsagePage = 0x01; // Generic Desktop Controls
+    rid[0].usUsagePage = 0x01; // Generic Desktop
     rid[0].usUsage = 0x06;     // Keyboard
     rid[0].dwFlags = flags;
     rid[0].hwndTarget = m_hwnd;
 
     // Mouse
-    rid[1].usUsagePage = 0x01; // Generic Desktop Controls
+    rid[1].usUsagePage = 0x01; // Generic Desktop
     rid[1].usUsage = 0x02;     // Mouse
     rid[1].dwFlags = flags;
     rid[1].hwndTarget = m_hwnd;
 
-    if (!RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE))) {
+    // Touchpad / Precision Touchpad
+    rid[2].usUsagePage = 0x01; // Generic Desktop
+    rid[2].usUsage = 0x05;     // Touch Pad
+    rid[2].dwFlags = flags;
+    rid[2].hwndTarget = m_hwnd;
+
+    if (!RegisterRawInputDevices(rid, 3, sizeof(RAWINPUTDEVICE))) {
         return false;
     }
 #else

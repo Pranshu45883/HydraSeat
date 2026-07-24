@@ -23,10 +23,11 @@ jobs:
     - name: Build Project
       run: cmake --build build --config Release
 
-    - name: Run Hardware Detector Test
+    - name: Run Engine Unit Tests
       run: |
-        if (Test-Path "build/Release/HydraSeat.exe") {
-          & "build/Release/HydraSeat.exe"
-        } else if (Test-Path "build/HydraSeat.exe") {
-          & "build/HydraSeat.exe"
+        if (Test-Path "build/Release/hydra_tests.exe") {
+            & "build/Release/hydra_tests.exe"
+        }
+        if (Test-Path "build/hydra_tests.exe") {
+            & "build/hydra_tests.exe"
         }

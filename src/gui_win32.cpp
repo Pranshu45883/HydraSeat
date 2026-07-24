@@ -61,32 +61,53 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
     // Hook global raw input events to Live Input Tester
     m_inputRouter.setGlobalCallback([this](const RawInputEvent& evt) {
         std::wstringstream ss;
-        ss << L"[Handle 0x" << std::hex << evt.deviceHandle << std::dec << L"] ";
 
-        // Match device name
-        std::wstring devName = L"Unknown Device";
-        for (const auto& k : m_keyboards) {
-            if (k.nativeHandle == evt.deviceHandle) {
-                devName = k.name;
-                break;
+        std::wstring devName;
+
+        // Match by exact device handle
+        if (evt.deviceHandle != 0) {
+            for (const auto& k : m_keyboards) {
+                if (k.nativeHandle == evt.deviceHandle) {
+                    devName = k.name;
+                    break;
+                }
+            }
+            if (devName.empty()) {
+                for (const auto& m : m_mice) {
+                    if (m.nativeHandle == evt.deviceHandle) {
+                        devName = m.name;
+                        break;
+                    }
+                }
             }
         }
-        if (devName == L"Unknown Device") {
+
+        // Match by device path string if handle match missed
+        if (devName.empty() && !evt.devicePath.empty()) {
             for (const auto& m : m_mice) {
-                if (m.nativeHandle == evt.deviceHandle) {
+                if (!m.devicePath.empty() && evt.devicePath.find(m.devicePath) != std::wstring::npos) {
                     devName = m.name;
                     break;
                 }
             }
         }
 
-        ss << L"Device: " << devName;
+        // Handle synthesized/precision touchpad pointer events (Handle 0x0)
+        if (devName.empty()) {
+            if (evt.deviceHandle == 0 || evt.isTouchpad) {
+                devName = L"Physical Mouse / Touchpad #2 (Laptop Touchpad)";
+            } else {
+                devName = L"External Input Device (0x" + std::to_wstring(evt.deviceHandle) + L")";
+            }
+        }
+
+        ss << L"[" << devName << L"]";
 
         if (evt.vkey > 0) {
             ss << L" | Key VK: 0x" << std::hex << evt.vkey << std::dec
                << (evt.messageType == WM_KEYDOWN ? L" [KEYDOWN]" : L" [KEYUP]");
         } else {
-            ss << L" | Mouse Motion dX: " << evt.deltaX << L" dY: " << evt.deltaY;
+            ss << L" | Motion dX: " << evt.deltaX << L" dY: " << evt.deltaY;
         }
 
         ss << L"\r\n";
@@ -245,7 +266,7 @@ void Win32App::refreshHardware() {
         SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)L"-- Select Keyboard --");
         for (const auto& k : m_keyboards) {
             std::wstring label = k.name + (k.devicePath.empty() ? L"" : (L" [" + k.devicePath + L"]"));
-            SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+            SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)L" [");
         }
         SendMessageW(cbKbd, CB_SETCURSEL, m_keyboards.empty() ? 0 : (i < m_keyboards.size() ? i + 1 : 1), 0);
 

@@ -1,0 +1,53 @@
+# Build directories
+build/
+bin/
+out/
+build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+
+# C++ Compiled Binaries & Objects
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.obj
+*.o
+*.pdb
+*.idb
+*.ilk
+*.exp
+
+# Qt build artifacts & generated code
+*.ui.h
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+.qmake.stash
+
+# Visual Studio & IDE files
+.vs/
+.vscode/
+.idea/
+*.user
+*.vcxproj.user
+*.suo
+*.userlibraries
+
+# Local configuration & secrets
+.env
+.env.local
+*.log
+*.tmp
+*.bak

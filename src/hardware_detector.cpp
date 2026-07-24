@@ -3,6 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -10,6 +11,9 @@
 #include <setupapi.h>
 #include <dxgi.h>
 #include <xinput.h>
+
+#pragma comment(lib, "hid.lib")
+#pragma comment(lib, "setupapi.lib")
 #endif
 
 namespace hydra {
@@ -57,11 +61,10 @@ std::vector<DeviceInfo> HardwareDetector::detectKeyboards() {
         if (dev.dwType == RIM_TYPEKEYBOARD) {
             kbdCount++;
             DeviceInfo info;
-            info.id = L"Keyboard_" + std::to_wstring(kbdCount);
-            info.name = L"Physical Keyboard #" + std::to_wstring(kbdCount);
             info.type = DeviceType::Keyboard;
             info.nativeHandle = reinterpret_cast<uintptr_t>(dev.hDevice);
 
+            // Fetch RIDI_DEVICENAME
             UINT nameSize = 0;
             GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
             if (nameSize > 0) {
@@ -71,6 +74,19 @@ std::vector<DeviceInfo> HardwareDetector::detectKeyboards() {
                 }
             }
 
+            // Distinguish ACPI/Internal Laptop vs USB/External
+            std::wstring pathUpper = info.devicePath;
+            for (auto& c : pathUpper) c = ::towupper(c);
+
+            if (pathUpper.find(L"ACPI") != std::wstring::npos || pathUpper.find(L"MSFT0001") != std::wstring::npos || pathUpper.find(L"I8042PRT") != std::wstring::npos) {
+                info.name = L"Laptop Internal Keyboard #" + std::to_wstring(kbdCount);
+            } else if (pathUpper.find(L"HID") != std::wstring::npos || pathUpper.find(L"USB") != std::wstring::npos) {
+                info.name = L"USB External Keyboard #" + std::to_wstring(kbdCount);
+            } else {
+                info.name = L"Physical Keyboard #" + std::to_wstring(kbdCount);
+            }
+
+            info.id = L"Keyboard_" + std::to_wstring(kbdCount);
             result.push_back(info);
         }
     }
@@ -98,8 +114,6 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
         if (dev.dwType == RIM_TYPEMOUSE) {
             mouseCount++;
             DeviceInfo info;
-            info.id = L"Mouse_" + std::to_wstring(mouseCount);
-            info.name = L"Physical Mouse / Touchpad #" + std::to_wstring(mouseCount);
             info.type = DeviceType::Mouse;
             info.nativeHandle = reinterpret_cast<uintptr_t>(dev.hDevice);
 
@@ -112,6 +126,18 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
                 }
             }
 
+            std::wstring pathUpper = info.devicePath;
+            for (auto& c : pathUpper) c = ::towupper(c);
+
+            if (pathUpper.find(L"ELAN") != std::wstring::npos || pathUpper.find(L"SYN") != std::wstring::npos || pathUpper.find(L"MSFT0001") != std::wstring::npos) {
+                info.name = L"Laptop Touchpad #" + std::to_wstring(mouseCount);
+            } else if (pathUpper.find(L"HID") != std::wstring::npos || pathUpper.find(L"USB") != std::wstring::npos) {
+                info.name = L"USB External Mouse #" + std::to_wstring(mouseCount);
+            } else {
+                info.name = L"Physical Mouse #" + std::to_wstring(mouseCount);
+            }
+
+            info.id = L"Mouse_" + std::to_wstring(mouseCount);
             result.push_back(info);
         }
     }
@@ -124,7 +150,6 @@ std::vector<DeviceInfo> HardwareDetector::detectControllers() {
     std::vector<DeviceInfo> result;
 
 #ifdef _WIN32
-    // Check XInput slots (0..3)
     for (DWORD i = 0; i < 4; ++i) {
         XINPUT_STATE state;
         ZeroMemory(&state, sizeof(XINPUT_STATE));

@@ -61,7 +61,6 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
     // Hook global raw input events to Live Input Tester
     m_inputRouter.setGlobalCallback([this](const RawInputEvent& evt) {
         std::wstringstream ss;
-
         std::wstring devName;
 
         // Match by exact device handle
@@ -82,22 +81,43 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
             }
         }
 
-        // Match by device path string if handle match missed
+        // Match by RIDI_DEVICENAME string if handle match missed
         if (devName.empty() && !evt.devicePath.empty()) {
-            for (const auto& m : m_mice) {
-                if (!m.devicePath.empty() && evt.devicePath.find(m.devicePath) != std::wstring::npos) {
-                    devName = m.name;
-                    break;
+            std::wstring evtPathUpper = evt.devicePath;
+            for (auto& c : evtPathUpper) c = ::towupper(c);
+
+            for (const auto& k : m_keyboards) {
+                if (!k.devicePath.empty()) {
+                    std::wstring kPathUpper = k.devicePath;
+                    for (auto& c : kPathUpper) c = ::towupper(c);
+                    if (evtPathUpper.find(kPathUpper) != std::wstring::npos || kPathUpper.find(evtPathUpper) != std::wstring::npos) {
+                        devName = k.name;
+                        break;
+                    }
+                }
+            }
+            if (devName.empty()) {
+                for (const auto& m : m_mice) {
+                    if (!m.devicePath.empty()) {
+                        std::wstring mPathUpper = m.devicePath;
+                        for (auto& c : mPathUpper) c = ::towupper(c);
+                        if (evtPathUpper.find(mPathUpper) != std::wstring::npos || mPathUpper.find(evtPathUpper) != std::wstring::npos) {
+                            devName = m.name;
+                            break;
+                        }
+                    }
                 }
             }
         }
 
-        // Handle synthesized/precision touchpad pointer events (Handle 0x0)
+        // Fallback for USB or Laptop keyboards/mice if path match missed
         if (devName.empty()) {
-            if (evt.deviceHandle == 0 || evt.isTouchpad) {
-                devName = L"Physical Mouse / Touchpad #2 (Laptop Touchpad)";
+            if (evt.vkey > 0) {
+                devName = L"USB External Keyboard";
+            } else if (evt.deviceHandle == 0 || evt.isTouchpad) {
+                devName = L"Laptop Touchpad";
             } else {
-                devName = L"External Input Device (0x" + std::to_wstring(evt.deviceHandle) + L")";
+                devName = L"External Mouse";
             }
         }
 
@@ -266,7 +286,7 @@ void Win32App::refreshHardware() {
         SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)L"-- Select Keyboard --");
         for (const auto& k : m_keyboards) {
             std::wstring label = k.name + (k.devicePath.empty() ? L"" : (L" [" + k.devicePath + L"]"));
-            SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)L" [");
+            SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)label.c_str());
         }
         SendMessageW(cbKbd, CB_SETCURSEL, m_keyboards.empty() ? 0 : (i < m_keyboards.size() ? i + 1 : 1), 0);
 

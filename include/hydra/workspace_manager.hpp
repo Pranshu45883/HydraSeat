@@ -14,6 +14,7 @@ struct WorkspaceConfig {
     std::wstring keyboardDevicePath;
     std::wstring mouseDevicePath;
     uint32_t controllerIndex{0};
+    uint64_t targetHwnd{0}; // Window handle of assigned game window
     bool active{true};
 };
 
@@ -40,17 +41,26 @@ public:
     // Assign gamepad controller to workspace
     bool assignController(uint32_t workspaceId, uint32_t controllerIndex);
 
+    // Set target window handle for workspace input isolation
+    bool assignTargetWindow(uint32_t workspaceId, uint64_t hwnd);
+
     // Get configuration for a specific workspace
     const WorkspaceConfig* getWorkspace(uint32_t workspaceId) const;
+
+    // Get workspace by keyboard path
+    uint32_t findWorkspaceByKeyboardPath(const std::wstring& keyboardPath) const;
+
+    // Get workspace by mouse path
+    uint32_t findWorkspaceByMousePath(const std::wstring& mousePath) const;
 
     // Get all active workspaces
     std::vector<WorkspaceConfig> getAllWorkspaces() const;
 
     // Save profile configurations to file
-    bool saveToFile(const std::string& filePath) const;
+    bool saveToFile(const std::string& filePath = "workspace_config.json") const;
 
     // Load profile configurations from file
-    bool loadFromFile(const std::string& filePath);
+    bool loadFromFile(const std::string& filePath = "workspace_config.json");
 
 private:
     uint32_t m_nextId{1};

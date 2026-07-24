@@ -29,11 +29,17 @@ private:
     void setupUI();
     void refreshHardware();
     void addWorkspaceCard();
+    void saveWorkspaceProfile();
+    void loadWorkspaceProfile();
+    void toggleIsolationMode();
     void launchMultiseat();
 
     HWND m_hwnd{nullptr};
     HWND m_statusBtn{nullptr};
     HWND m_addWsBtn{nullptr};
+    HWND m_saveProfileBtn{nullptr};
+    HWND m_loadProfileBtn{nullptr};
+    HWND m_isolationBtn{nullptr};
     HWND m_refreshBtn{nullptr};
     HWND m_launchBtn{nullptr};
     HWND m_deviceStatusLabel{nullptr};

@@ -17,6 +17,31 @@ InputRouter::~InputRouter() {
     }
 }
 
+bool InputRouter::postInputToWindow(uint64_t hwndVal, const RawInputEvent& evt) {
+#ifdef _WIN32
+    HWND hwnd = reinterpret_cast<HWND>(hwndVal);
+    if (!hwnd || !IsWindow(hwnd)) return false;
+
+    if (evt.vkey > 0) {
+        UINT msg = (evt.messageType == WM_KEYDOWN) ? WM_KEYDOWN : WM_KEYUP;
+        WPARAM wParam = static_cast<WPARAM>(evt.vkey);
+        LPARAM lParam = (msg == WM_KEYDOWN) ? 0x00010001 : 0xC0010001;
+        PostMessageW(hwnd, msg, wParam, lParam);
+        return true;
+    } else if (evt.deltaX != 0 || evt.deltaY != 0) {
+        WPARAM wParam = 0;
+        LPARAM lParam = MAKELPARAM(evt.deltaX, evt.deltaY);
+        PostMessageW(hwnd, WM_MOUSEMOVE, wParam, lParam);
+        return true;
+    }
+#else
+    (void)hwndVal;
+    (void)evt;
+#endif
+
+    return false;
+}
+
 #ifdef _WIN32
 LRESULT CALLBACK InputRouter::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_INPUT && g_routerInstance) {
@@ -40,7 +65,6 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
     RawInputEvent event{};
     event.deviceHandle = reinterpret_cast<uintptr_t>(raw->header.hDevice);
 
-    // Query device path string from handle if available
     if (raw->header.hDevice != NULL) {
         UINT nameSize = 0;
         GetRawInputDeviceInfoW(raw->header.hDevice, RIDI_DEVICENAME, NULL, &nameSize);

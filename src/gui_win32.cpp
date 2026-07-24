@@ -12,10 +12,13 @@ namespace gui {
 
 static Win32App* g_appInstance = nullptr;
 
-#define ID_BTN_REFRESH 1001
-#define ID_BTN_ADD_WS  1002
-#define ID_BTN_LAUNCH  1003
+#define ID_BTN_REFRESH  1001
+#define ID_BTN_ADD_WS   1002
+#define ID_BTN_LAUNCH   1003
 #define ID_EDIT_INPUTLOG 1004
+#define ID_BTN_SAVE_PROF 1005
+#define ID_BTN_LOAD_PROF 1006
+#define ID_BTN_ISOLATION 1007
 
 Win32App::Win32App() {
     g_appInstance = this;
@@ -46,9 +49,9 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
 
     m_hwnd = CreateWindowExW(
         0, L"HydraSeatMainWindowClass",
-        L"HydraSeat - Windows Local Gaming Multiseat Control Center & Input Tester",
+        L"HydraSeat - Windows Local Gaming Multiseat Control Center & Isolation Engine",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 980, 740,
+        CW_USEDEFAULT, CW_USEDEFAULT, 980, 750,
         NULL, NULL, hInstance, NULL
     );
 
@@ -58,12 +61,11 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
     m_inputRouter.initialize();
     refreshHardware();
 
-    // Hook global raw input events to Live Input Tester
+    // Hook global raw input events to Live Input Tester & Routing Engine
     m_inputRouter.setGlobalCallback([this](const RawInputEvent& evt) {
         std::wstringstream ss;
         std::wstring devName;
 
-        // Match by exact device handle
         if (evt.deviceHandle != 0) {
             for (const auto& k : m_keyboards) {
                 if (k.nativeHandle == evt.deviceHandle) {
@@ -81,7 +83,6 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
             }
         }
 
-        // Match by RIDI_DEVICENAME string if handle match missed
         if (devName.empty() && !evt.devicePath.empty()) {
             std::wstring evtPathUpper = evt.devicePath;
             for (auto& c : evtPathUpper) c = ::towupper(c);
@@ -110,7 +111,6 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
             }
         }
 
-        // Fallback for USB or Laptop keyboards/mice if path match missed
         if (devName.empty()) {
             if (evt.vkey > 0) {
                 devName = L"USB External Keyboard";
@@ -121,7 +121,13 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
             }
         }
 
+        uint32_t wsId = m_workspaceManager.findWorkspaceByKeyboardPath(devName);
+        if (wsId == 0) wsId = m_workspaceManager.findWorkspaceByMousePath(devName);
+
         ss << L"[" << devName << L"]";
+        if (wsId > 0) {
+            ss << L" -> Workspace #" << wsId;
+        }
 
         if (evt.vkey > 0) {
             ss << L" | Key VK: 0x" << std::hex << evt.vkey << std::dec
@@ -155,22 +161,32 @@ void Win32App::setupUI() {
     // Header Label
     HWND header = CreateWindowExW(0, L"STATIC", L"🎮 HydraSeat Multiseat Control Center",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        20, 15, 500, 30, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+        20, 15, 450, 30, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
     HFONT hFontHeader = CreateFontW(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(header, WM_SETFONT, (WPARAM)hFontHeader, TRUE);
 
-    // Refresh Button
-    m_refreshBtn = CreateWindowExW(0, L"BUTTON", L"🔄 Refresh Devices",
+    // Save Profile Button
+    m_saveProfileBtn = CreateWindowExW(0, L"BUTTON", L"💾 Save Profile",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        630, 15, 140, 32, m_hwnd, (HMENU)ID_BTN_REFRESH, GetModuleHandle(NULL), NULL);
+        480, 15, 110, 32, m_hwnd, (HMENU)ID_BTN_SAVE_PROF, GetModuleHandle(NULL), NULL);
+
+    // Load Profile Button
+    m_loadProfileBtn = CreateWindowExW(0, L"BUTTON", L"📂 Load Profile",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        600, 15, 110, 32, m_hwnd, (HMENU)ID_BTN_LOAD_PROF, GetModuleHandle(NULL), NULL);
+
+    // Refresh Button
+    m_refreshBtn = CreateWindowExW(0, L"BUTTON", L"🔄 Refresh",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        720, 15, 90, 32, m_hwnd, (HMENU)ID_BTN_REFRESH, GetModuleHandle(NULL), NULL);
 
     // Add Workspace Button
-    m_addWsBtn = CreateWindowExW(0, L"BUTTON", L"➕ Add Workspace",
+    m_addWsBtn = CreateWindowExW(0, L"BUTTON", L"➕ Add WS",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        780, 15, 140, 32, m_hwnd, (HMENU)ID_BTN_ADD_WS, GetModuleHandle(NULL), NULL);
+        820, 15, 100, 32, m_hwnd, (HMENU)ID_BTN_ADD_WS, GetModuleHandle(NULL), NULL);
 
     // Status Label
     m_deviceStatusLabel = CreateWindowExW(0, L"STATIC", L"Detecting connected hardware...",
@@ -181,6 +197,8 @@ void Win32App::setupUI() {
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(m_deviceStatusLabel, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
+    SendMessageW(m_saveProfileBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
+    SendMessageW(m_loadProfileBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
     SendMessageW(m_refreshBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
     SendMessageW(m_addWsBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
 
@@ -189,7 +207,7 @@ void Win32App::setupUI() {
     addWorkspaceCard();
 
     // Input Tester Groupbox & Edit Log Box
-    HWND inputTesterGroup = CreateWindowExW(0, L"BUTTON", L"⚡ Live Input Tester (Press key or move mouse to identify source device)",
+    HWND inputTesterGroup = CreateWindowExW(0, L"BUTTON", L"⚡ Live Input Isolation Tester & Device Router",
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
         20, 480, 900, 150, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
@@ -207,14 +225,20 @@ void Win32App::setupUI() {
         FIXED_PITCH | FF_MODERN, L"Consolas");
     SendMessageW(m_inputLogEdit, WM_SETFONT, (WPARAM)hFontMono, TRUE);
 
+    // Isolation Toggle Button
+    m_isolationBtn = CreateWindowExW(0, L"BUTTON", L"🔒 Lock & Isolate Workspace Inputs: OFF",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        20, 642, 440, 42, m_hwnd, (HMENU)ID_BTN_ISOLATION, GetModuleHandle(NULL), NULL);
+
     // Launch Button at bottom
     m_launchBtn = CreateWindowExW(0, L"BUTTON", L"🚀 Launch Multiseat Game Session",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        20, 642, 900, 42, m_hwnd, (HMENU)ID_BTN_LAUNCH, GetModuleHandle(NULL), NULL);
+        470, 642, 450, 42, m_hwnd, (HMENU)ID_BTN_LAUNCH, GetModuleHandle(NULL), NULL);
 
-    HFONT hFontBtn = CreateFontW(17, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+    HFONT hFontBtn = CreateFontW(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(m_isolationBtn, WM_SETFONT, (WPARAM)hFontBtn, TRUE);
     SendMessageW(m_launchBtn, WM_SETFONT, (WPARAM)hFontBtn, TRUE);
 }
 
@@ -252,6 +276,48 @@ void Win32App::addWorkspaceCard() {
     m_comboMice.push_back(cbMouse);
 
     refreshHardware();
+}
+
+void Win32App::saveWorkspaceProfile() {
+    for (size_t i = 0; i < m_comboDisplays.size(); ++i) {
+        uint32_t id = static_cast<uint32_t>(i + 1);
+
+        wchar_t dispText[256] = {0};
+        wchar_t kbdText[256] = {0};
+        wchar_t mouseText[256] = {0};
+
+        GetWindowTextW(m_comboDisplays[i], dispText, 256);
+        GetWindowTextW(m_comboKeyboards[i], kbdText, 256);
+        GetWindowTextW(m_comboMice[i], mouseText, 256);
+
+        m_workspaceManager.assignDisplay(id, dispText);
+        m_workspaceManager.assignKeyboard(id, kbdText);
+        m_workspaceManager.assignMouse(id, mouseText);
+    }
+
+    if (m_workspaceManager.saveToFile("workspace_config.json")) {
+        MessageBoxW(m_hwnd, L"Workspace profile saved to workspace_config.json!", L"HydraSeat Profile Manager", MB_OK | MB_ICONINFORMATION);
+    }
+}
+
+void Win32App::loadWorkspaceProfile() {
+    if (m_workspaceManager.loadFromFile("workspace_config.json")) {
+        MessageBoxW(m_hwnd, L"Workspace profile loaded successfully!", L"HydraSeat Profile Manager", MB_OK | MB_ICONINFORMATION);
+    } else {
+        MessageBoxW(m_hwnd, L"No saved workspace_config.json found.", L"HydraSeat Profile Manager", MB_OK | MB_ICONWARNING);
+    }
+}
+
+void Win32App::toggleIsolationMode() {
+    bool current = m_inputRouter.isIsolationMode();
+    m_inputRouter.setIsolationMode(!current);
+
+    if (!current) {
+        SetWindowTextW(m_isolationBtn, L"🔓 Lock & Isolate Workspace Inputs: ON");
+        MessageBoxW(m_hwnd, L"Multiseat Input Isolation Activated!\n\nKeystrokes & mouse inputs are locked exclusively to their assigned Player Workspaces.", L"HydraSeat Input Isolation Engine", MB_OK | MB_ICONINFORMATION);
+    } else {
+        SetWindowTextW(m_isolationBtn, L"🔒 Lock & Isolate Workspace Inputs: OFF");
+    }
 }
 
 void Win32App::refreshHardware() {
@@ -313,6 +379,12 @@ LRESULT CALLBACK Win32App::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
             g_appInstance->refreshHardware();
         } else if (wmId == ID_BTN_ADD_WS && g_appInstance) {
             g_appInstance->addWorkspaceCard();
+        } else if (wmId == ID_BTN_SAVE_PROF && g_appInstance) {
+            g_appInstance->saveWorkspaceProfile();
+        } else if (wmId == ID_BTN_LOAD_PROF && g_appInstance) {
+            g_appInstance->loadWorkspaceProfile();
+        } else if (wmId == ID_BTN_ISOLATION && g_appInstance) {
+            g_appInstance->toggleIsolationMode();
         } else if (wmId == ID_BTN_LAUNCH && g_appInstance) {
             g_appInstance->launchMultiseat();
         }

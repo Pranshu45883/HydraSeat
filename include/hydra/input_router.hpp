@@ -22,6 +22,7 @@ struct RawInputEvent {
     int32_t deltaY{0};
     uint32_t mouseButtons{0};
     bool isTouchpad{false};
+    uint32_t assignedWorkspaceId{0};
 };
 
 using InputCallback = std::function<void(const RawInputEvent&)>;
@@ -43,6 +44,13 @@ public:
     // Bind a global callback for all raw input events
     void setGlobalCallback(InputCallback callback);
 
+    // Enable or disable active multiseat input isolation mode
+    void setIsolationMode(bool enabled) { m_isolationMode = enabled; }
+    bool isIsolationMode() const { return m_isolationMode; }
+
+    // Forward raw input event directly to target game window handle (HWND)
+    static bool postInputToWindow(uint64_t hwnd, const RawInputEvent& evt);
+
     // Process Win32 window message loop for Raw Input
     void processMessages();
 
@@ -60,6 +68,7 @@ private:
 #endif
 
     bool m_running{false};
+    bool m_isolationMode{false};
     InputCallback m_globalCallback{nullptr};
     std::unordered_map<uintptr_t, InputCallback> m_deviceCallbacks;
 };

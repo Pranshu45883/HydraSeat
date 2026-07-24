@@ -114,7 +114,6 @@ bool InputRouter::initialize(uint64_t targetHwndVal) {
 
         RegisterClassExW(&wc);
 
-        // Top-level hidden window required for RIDEV_INPUTSINK
         m_hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW, L"HydraSeatRawInputHost", L"HydraSeat Input Router",
             WS_POPUP, 0, 0, 0, 0,
@@ -130,26 +129,25 @@ bool InputRouter::initialize(uint64_t targetHwndVal) {
 #endif
 
     m_running = true;
-    return registerRawInputDevices(true);
+    return registerRawInputDevices(false);
 }
 
 bool InputRouter::registerRawInputDevices(bool backgroundSink) {
 #ifdef _WIN32
     if (!m_hwnd) return false;
 
-    // RIDEV_INPUTSINK allows receiving raw input even when window is unfocused
-    // RIDEV_DEVNOTIFY receives device arrival / removal notifications
-    DWORD flags = backgroundSink ? (RIDEV_INPUTSINK | RIDEV_DEVNOTIFY) : RIDEV_DEVNOTIFY;
+    // Use dwFlags = 0 (or RIDEV_DEVNOTIFY) to monitor Raw Input without suppressing legacy typing
+    DWORD flags = backgroundSink ? 0 : 0;
 
     RAWINPUTDEVICE rid[3];
 
-    // Keyboard
+    // Keyboard (Non-blocking passive monitoring)
     rid[0].usUsagePage = 0x01; // Generic Desktop
     rid[0].usUsage = 0x06;     // Keyboard
     rid[0].dwFlags = flags;
     rid[0].hwndTarget = m_hwnd;
 
-    // Mouse
+    // Mouse (Non-blocking passive monitoring)
     rid[1].usUsagePage = 0x01; // Generic Desktop
     rid[1].usUsage = 0x02;     // Mouse
     rid[1].dwFlags = flags;
@@ -193,6 +191,13 @@ void InputRouter::stop() {
     m_running = false;
 #ifdef _WIN32
     if (m_hwnd) {
+        // Remove raw input device registrations before closing window
+        RAWINPUTDEVICE rid[3];
+        rid[0].usUsagePage = 0x01; rid[0].usUsage = 0x06; rid[0].dwFlags = RIDEV_REMOVE; rid[0].hwndTarget = NULL;
+        rid[1].usUsagePage = 0x01; rid[1].usUsage = 0x02; rid[1].dwFlags = RIDEV_REMOVE; rid[1].hwndTarget = NULL;
+        rid[2].usUsagePage = 0x01; rid[2].usUsage = 0x05; rid[2].dwFlags = RIDEV_REMOVE; rid[2].hwndTarget = NULL;
+        RegisterRawInputDevices(rid, 3, sizeof(RAWINPUTDEVICE));
+
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
     }

@@ -64,6 +64,12 @@ if(Qt6_FOUND)
     target_compile_definitions(HydraSeat PRIVATE HYDRA_HAS_QT=1)
 endif()
 
+# Reset Tool Target
+add_executable(reset_input src/reset_input.cpp)
+if(WIN32)
+    target_link_libraries(reset_input PRIVATE User32.lib)
+endif()
+
 # Test Suite Executable Target
 enable_testing()
 add_executable(hydra_tests tests/test_hydra.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})

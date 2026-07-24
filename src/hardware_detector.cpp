@@ -2,12 +2,14 @@
 
 #include <iostream>
 #include <vector>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
 #include <hidsdi.h>
 #include <setupapi.h>
 #include <dxgi.h>
+#include <xinput.h>
 #endif
 
 namespace hydra {
@@ -41,11 +43,9 @@ std::vector<DeviceInfo> HardwareDetector::detectKeyboards() {
 
 #ifdef _WIN32
     UINT numDevices = 0;
-    if (GetRawInputDeviceList(NULL, &numDevices, sizeof(RAWINPUTDEVICELIST)) != 0) {
+    if (GetRawInputDeviceList(NULL, &numDevices, sizeof(RAWINPUTDEVICELIST)) != 0 || numDevices == 0) {
         return result;
     }
-
-    if (numDevices == 0) return result;
 
     std::vector<RAWINPUTDEVICELIST> rawList(numDevices);
     if (GetRawInputDeviceList(rawList.data(), &numDevices, sizeof(RAWINPUTDEVICELIST)) == (UINT)-1) {
@@ -62,7 +62,6 @@ std::vector<DeviceInfo> HardwareDetector::detectKeyboards() {
             info.type = DeviceType::Keyboard;
             info.nativeHandle = reinterpret_cast<uintptr_t>(dev.hDevice);
 
-            // Fetch device name string if available
             UINT nameSize = 0;
             GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
             if (nameSize > 0) {
@@ -85,11 +84,9 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
 
 #ifdef _WIN32
     UINT numDevices = 0;
-    if (GetRawInputDeviceList(NULL, &numDevices, sizeof(RAWINPUTDEVICELIST)) != 0) {
+    if (GetRawInputDeviceList(NULL, &numDevices, sizeof(RAWINPUTDEVICELIST)) != 0 || numDevices == 0) {
         return result;
     }
-
-    if (numDevices == 0) return result;
 
     std::vector<RAWINPUTDEVICELIST> rawList(numDevices);
     if (GetRawInputDeviceList(rawList.data(), &numDevices, sizeof(RAWINPUTDEVICELIST)) == (UINT)-1) {
@@ -125,7 +122,23 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
 
 std::vector<DeviceInfo> HardwareDetector::detectControllers() {
     std::vector<DeviceInfo> result;
-    // Controller detection logic (XInput / DirectInput / SetupAPI)
+
+#ifdef _WIN32
+    // Check XInput slots (0..3)
+    for (DWORD i = 0; i < 4; ++i) {
+        XINPUT_STATE state;
+        ZeroMemory(&state, sizeof(XINPUT_STATE));
+        if (XInputGetState(i, &state) == ERROR_SUCCESS) {
+            DeviceInfo info;
+            info.id = L"Controller_XInput_" + std::to_wstring(i + 1);
+            info.name = L"Xbox / XInput Controller #" + std::to_wstring(i + 1);
+            info.type = DeviceType::Controller;
+            info.nativeHandle = static_cast<uintptr_t>(i);
+            result.push_back(info);
+        }
+    }
+#endif
+
     return result;
 }
 
@@ -156,6 +169,12 @@ void HardwareDetector::printReport() {
         if (!m.devicePath.empty()) {
             std::wcout << L"    Path: " << m.devicePath << L"\n";
         }
+    }
+
+    auto controllers = detectControllers();
+    std::wcout << L"\n[Controllers Found: " << controllers.size() << L"]\n";
+    for (const auto& c : controllers) {
+        std::wcout << L"  - " << c.name << L"\n";
     }
 
     std::wcout << L"\n===========================================\n";

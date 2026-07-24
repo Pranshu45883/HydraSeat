@@ -11,7 +11,7 @@ include_directories(include)
 # Windows system libraries for Win32 Raw Input, SetupAPI, and DXGI
 if(WIN32)
     add_compile_definitions(_UNICODE UNICODE WIN32_LEAN_AND_MEAN)
-    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib)
+    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib)
 endif()
 
 # Find Qt6 components if available

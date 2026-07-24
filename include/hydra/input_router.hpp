@@ -32,8 +32,8 @@ public:
     InputRouter();
     ~InputRouter();
 
-    // Initialize Win32 Raw Input hook window
-    bool initialize();
+    // Initialize Win32 Raw Input hook with target top-level window handle
+    bool initialize(uint64_t targetHwnd = 0);
 
     // Register Raw Input sink for keyboards, mice, and touchpads
     bool registerRawInputDevices(bool backgroundSink = true);

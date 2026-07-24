@@ -102,24 +102,31 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
 }
 #endif
 
-bool InputRouter::initialize() {
+bool InputRouter::initialize(uint64_t targetHwndVal) {
 #ifdef _WIN32
-    WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
-    wc.lpfnWndProc = InputRouter::WndProc;
-    wc.hInstance = GetModuleHandle(NULL);
-    wc.lpszClassName = L"HydraSeatRawInputHost";
+    if (targetHwndVal != 0) {
+        m_hwnd = reinterpret_cast<HWND>(targetHwndVal);
+    } else {
+        WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
+        wc.lpfnWndProc = InputRouter::WndProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = L"HydraSeatRawInputHost";
 
-    RegisterClassExW(&wc);
+        RegisterClassExW(&wc);
 
-    m_hwnd = CreateWindowExW(
-        0, L"HydraSeatRawInputHost", L"HydraSeat Input Router",
-        0, 0, 0, 0, 0,
-        HWND_MESSAGE, NULL, GetModuleHandle(NULL), NULL
-    );
+        // Top-level hidden window required for RIDEV_INPUTSINK
+        m_hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW, L"HydraSeatRawInputHost", L"HydraSeat Input Router",
+            WS_POPUP, 0, 0, 0, 0,
+            NULL, NULL, GetModuleHandle(NULL), NULL
+        );
 
-    if (!m_hwnd) {
-        return false;
+        if (!m_hwnd) {
+            return false;
+        }
     }
+#else
+    (void)targetHwndVal;
 #endif
 
     m_running = true;
@@ -130,7 +137,9 @@ bool InputRouter::registerRawInputDevices(bool backgroundSink) {
 #ifdef _WIN32
     if (!m_hwnd) return false;
 
-    DWORD flags = backgroundSink ? RIDEV_INPUTSINK : 0;
+    // RIDEV_INPUTSINK allows receiving raw input even when window is unfocused
+    // RIDEV_DEVNOTIFY receives device arrival / removal notifications
+    DWORD flags = backgroundSink ? (RIDEV_INPUTSINK | RIDEV_DEVNOTIFY) : RIDEV_DEVNOTIFY;
 
     RAWINPUTDEVICE rid[3];
 

@@ -58,7 +58,7 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
     if (!m_hwnd) return false;
 
     setupUI();
-    m_inputRouter.initialize();
+    m_inputRouter.initialize(reinterpret_cast<uint64_t>(m_hwnd));
     refreshHardware();
 
     // Hook global raw input events to Live Input Tester & Routing Engine

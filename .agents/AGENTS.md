@@ -27,6 +27,9 @@ HydraSeat is an open-source Windows gaming multiseat framework written in C++20 
 ### 3. Automatic .gitignore Maintenance
 - **Auto-Update .gitignore**: Whenever creating new build output paths, log files, binary dependencies, or temporary files, immediately update [.gitignore](file:///c:/Users/prans/Downloads/HydraSeat/.gitignore) to ensure all intermediate and generated artifacts are strictly ignored.
 
+### 4. Git Push Policy
+- **Do NOT execute `git push`**: Only perform local commits (`git commit`) when requested. Do NOT push code to remote GitHub repository (`git push`) unless the user explicitly tells you to do so.
+
 ---
 
 ## Project Structure & Module Ownership

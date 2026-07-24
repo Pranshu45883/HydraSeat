@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -14,6 +15,7 @@ static Win32App* g_appInstance = nullptr;
 #define ID_BTN_REFRESH 1001
 #define ID_BTN_ADD_WS  1002
 #define ID_BTN_LAUNCH  1003
+#define ID_EDIT_INPUTLOG 1004
 
 Win32App::Win32App() {
     g_appInstance = this;
@@ -44,9 +46,9 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
 
     m_hwnd = CreateWindowExW(
         0, L"HydraSeatMainWindowClass",
-        L"HydraSeat - Windows Local Gaming Multiseat Control Center",
+        L"HydraSeat - Windows Local Gaming Multiseat Control Center & Input Tester",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 960, 680,
+        CW_USEDEFAULT, CW_USEDEFAULT, 980, 740,
         NULL, NULL, hInstance, NULL
     );
 
@@ -56,16 +58,63 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
     m_inputRouter.initialize();
     refreshHardware();
 
+    // Hook global raw input events to Live Input Tester
+    m_inputRouter.setGlobalCallback([this](const RawInputEvent& evt) {
+        std::wstringstream ss;
+        ss << L"[Handle 0x" << std::hex << evt.deviceHandle << std::dec << L"] ";
+
+        // Match device name
+        std::wstring devName = L"Unknown Device";
+        for (const auto& k : m_keyboards) {
+            if (k.nativeHandle == evt.deviceHandle) {
+                devName = k.name;
+                break;
+            }
+        }
+        if (devName == L"Unknown Device") {
+            for (const auto& m : m_mice) {
+                if (m.nativeHandle == evt.deviceHandle) {
+                    devName = m.name;
+                    break;
+                }
+            }
+        }
+
+        ss << L"Device: " << devName;
+
+        if (evt.vkey > 0) {
+            ss << L" | Key VK: 0x" << std::hex << evt.vkey << std::dec
+               << (evt.messageType == WM_KEYDOWN ? L" [KEYDOWN]" : L" [KEYUP]");
+        } else {
+            ss << L" | Mouse Motion dX: " << evt.deltaX << L" dY: " << evt.deltaY;
+        }
+
+        ss << L"\r\n";
+        logInputEvent(ss.str());
+    });
+
     ShowWindow(m_hwnd, nCmdShow);
     UpdateWindow(m_hwnd);
     return true;
+}
+
+void Win32App::logInputEvent(const std::wstring& message) {
+    if (!m_inputLogEdit) return;
+
+    int len = GetWindowTextLengthW(m_inputLogEdit);
+    if (len > 10000) {
+        SetWindowTextW(m_inputLogEdit, L"");
+        len = 0;
+    }
+    SendMessageW(m_inputLogEdit, EM_SETSEL, (WPARAM)len, (LPARAM)len);
+    SendMessageW(m_inputLogEdit, EM_REPLACESEL, FALSE, (LPARAM)message.c_str());
 }
 
 void Win32App::setupUI() {
     // Header Label
     HWND header = CreateWindowExW(0, L"STATIC", L"🎮 HydraSeat Multiseat Control Center",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        20, 20, 500, 30, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+        20, 15, 500, 30, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
     HFONT hFontHeader = CreateFontW(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
@@ -75,19 +124,19 @@ void Win32App::setupUI() {
     // Refresh Button
     m_refreshBtn = CreateWindowExW(0, L"BUTTON", L"🔄 Refresh Devices",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        600, 20, 140, 35, m_hwnd, (HMENU)ID_BTN_REFRESH, GetModuleHandle(NULL), NULL);
+        630, 15, 140, 32, m_hwnd, (HMENU)ID_BTN_REFRESH, GetModuleHandle(NULL), NULL);
 
     // Add Workspace Button
     m_addWsBtn = CreateWindowExW(0, L"BUTTON", L"➕ Add Workspace",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        750, 20, 140, 35, m_hwnd, (HMENU)ID_BTN_ADD_WS, GetModuleHandle(NULL), NULL);
+        780, 15, 140, 32, m_hwnd, (HMENU)ID_BTN_ADD_WS, GetModuleHandle(NULL), NULL);
 
     // Status Label
     m_deviceStatusLabel = CreateWindowExW(0, L"STATIC", L"Detecting connected hardware...",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        20, 65, 870, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+        20, 50, 900, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
-    HFONT hFontNormal = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    HFONT hFontNormal = CreateFontW(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(m_deviceStatusLabel, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
@@ -98,12 +147,31 @@ void Win32App::setupUI() {
     addWorkspaceCard();
     addWorkspaceCard();
 
+    // Input Tester Groupbox & Edit Log Box
+    HWND inputTesterGroup = CreateWindowExW(0, L"BUTTON", L"⚡ Live Input Tester (Press key or move mouse to identify source device)",
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        20, 480, 900, 150, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    HFONT hFontBold = CreateFontW(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(inputTesterGroup, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+
+    m_inputLogEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Waiting for Raw Input events...\r\n",
+        WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
+        35, 510, 870, 105, m_hwnd, (HMENU)ID_EDIT_INPUTLOG, GetModuleHandle(NULL), NULL);
+
+    HFONT hFontMono = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        FIXED_PITCH | FF_MODERN, L"Consolas");
+    SendMessageW(m_inputLogEdit, WM_SETFONT, (WPARAM)hFontMono, TRUE);
+
     // Launch Button at bottom
     m_launchBtn = CreateWindowExW(0, L"BUTTON", L"🚀 Launch Multiseat Game Session",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        20, 560, 870, 45, m_hwnd, (HMENU)ID_BTN_LAUNCH, GetModuleHandle(NULL), NULL);
+        20, 642, 900, 42, m_hwnd, (HMENU)ID_BTN_LAUNCH, GetModuleHandle(NULL), NULL);
 
-    HFONT hFontBtn = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+    HFONT hFontBtn = CreateFontW(17, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(m_launchBtn, WM_SETFONT, (WPARAM)hFontBtn, TRUE);
@@ -111,32 +179,32 @@ void Win32App::setupUI() {
 
 void Win32App::addWorkspaceCard() {
     size_t index = m_comboDisplays.size() + 1;
-    int startY = 100 + static_cast<int>(index - 1) * 220;
+    int startY = 80 + static_cast<int>(index - 1) * 195;
 
-    if (startY > 480) return; // Limit visual space for basic demo card
+    if (startY > 350) return;
 
     std::wstring groupTitle = L"Player Workspace #" + std::to_wstring(index) + L" (Player " + std::to_wstring(index) + L")";
 
     HWND group = CreateWindowExW(0, L"BUTTON", groupTitle.c_str(),
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        20, startY, 870, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+        20, startY, 900, 185, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
-    HFONT hFontBold = CreateFontW(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+    HFONT hFontBold = CreateFontW(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SendMessageW(group, WM_SETFONT, (WPARAM)hFontBold, TRUE);
 
     // Display Combobox
-    CreateWindowExW(0, L"STATIC", L"Display Output:", WS_CHILD | WS_VISIBLE, 40, startY + 35, 120, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-    HWND cbDisp = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 170, startY + 32, 690, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    CreateWindowExW(0, L"STATIC", L"Display Output:", WS_CHILD | WS_VISIBLE, 40, startY + 32, 130, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND cbDisp = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 180, startY + 28, 720, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
     // Keyboard Combobox
-    CreateWindowExW(0, L"STATIC", L"Keyboard:", WS_CHILD | WS_VISIBLE, 40, startY + 75, 120, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-    HWND cbKbd = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 170, startY + 72, 690, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    CreateWindowExW(0, L"STATIC", L"Keyboard:", WS_CHILD | WS_VISIBLE, 40, startY + 72, 130, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND cbKbd = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 180, startY + 68, 720, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
     // Mouse Combobox
-    CreateWindowExW(0, L"STATIC", L"Mouse / Touchpad:", WS_CHILD | WS_VISIBLE, 40, startY + 115, 140, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-    HWND cbMouse = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 170, startY + 112, 690, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    CreateWindowExW(0, L"STATIC", L"Mouse / Touchpad:", WS_CHILD | WS_VISIBLE, 40, startY + 112, 130, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND cbMouse = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 180, startY + 108, 720, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
     m_comboDisplays.push_back(cbDisp);
     m_comboKeyboards.push_back(cbKbd);
@@ -158,7 +226,6 @@ void Win32App::refreshHardware() {
 
     SetWindowTextW(m_deviceStatusLabel, statusText.c_str());
 
-    // Update all comboboxes
     for (size_t i = 0; i < m_comboDisplays.size(); ++i) {
         HWND cbDisp = m_comboDisplays[i];
         HWND cbKbd = m_comboKeyboards[i];
@@ -218,6 +285,9 @@ LRESULT CALLBACK Win32App::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
 int Win32App::run() {
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0)) {
+        if (g_appInstance) {
+            g_appInstance->m_inputRouter.processMessages();
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }

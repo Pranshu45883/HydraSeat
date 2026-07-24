@@ -22,6 +22,8 @@ public:
     bool initialize(HINSTANCE hInstance, int nCmdShow);
     int run();
 
+    void logInputEvent(const std::wstring& message);
+
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     void setupUI();
@@ -35,6 +37,7 @@ private:
     HWND m_refreshBtn{nullptr};
     HWND m_launchBtn{nullptr};
     HWND m_deviceStatusLabel{nullptr};
+    HWND m_inputLogEdit{nullptr};
 
     std::vector<HWND> m_comboDisplays;
     std::vector<HWND> m_comboKeyboards;

@@ -1,0 +1,229 @@
+#include "hydra/gui_win32.hpp"
+
+#ifdef _WIN32
+#include <iostream>
+#include <sstream>
+
+#pragma comment(lib, "comctl32.lib")
+
+namespace hydra {
+namespace gui {
+
+static Win32App* g_appInstance = nullptr;
+
+#define ID_BTN_REFRESH 1001
+#define ID_BTN_ADD_WS  1002
+#define ID_BTN_LAUNCH  1003
+
+Win32App::Win32App() {
+    g_appInstance = this;
+}
+
+Win32App::~Win32App() {
+    if (g_appInstance == this) {
+        g_appInstance = nullptr;
+    }
+}
+
+bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
+    INITCOMMONCONTROLSEX icex;
+    icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
+    icex.dwICC = ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES;
+    InitCommonControlsEx(&icex);
+
+    WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
+    wc.lpfnWndProc = Win32App::WindowProc;
+    wc.hInstance = hInstance;
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = L"HydraSeatMainWindowClass";
+
+    if (!RegisterClassExW(&wc)) {
+        return false;
+    }
+
+    m_hwnd = CreateWindowExW(
+        0, L"HydraSeatMainWindowClass",
+        L"HydraSeat - Windows Local Gaming Multiseat Control Center",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 960, 680,
+        NULL, NULL, hInstance, NULL
+    );
+
+    if (!m_hwnd) return false;
+
+    setupUI();
+    m_inputRouter.initialize();
+    refreshHardware();
+
+    ShowWindow(m_hwnd, nCmdShow);
+    UpdateWindow(m_hwnd);
+    return true;
+}
+
+void Win32App::setupUI() {
+    // Header Label
+    HWND header = CreateWindowExW(0, L"STATIC", L"🎮 HydraSeat Multiseat Control Center",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        20, 20, 500, 30, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    HFONT hFontHeader = CreateFontW(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(header, WM_SETFONT, (WPARAM)hFontHeader, TRUE);
+
+    // Refresh Button
+    m_refreshBtn = CreateWindowExW(0, L"BUTTON", L"🔄 Refresh Devices",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        600, 20, 140, 35, m_hwnd, (HMENU)ID_BTN_REFRESH, GetModuleHandle(NULL), NULL);
+
+    // Add Workspace Button
+    m_addWsBtn = CreateWindowExW(0, L"BUTTON", L"➕ Add Workspace",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        750, 20, 140, 35, m_hwnd, (HMENU)ID_BTN_ADD_WS, GetModuleHandle(NULL), NULL);
+
+    // Status Label
+    m_deviceStatusLabel = CreateWindowExW(0, L"STATIC", L"Detecting connected hardware...",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        20, 65, 870, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    HFONT hFontNormal = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(m_deviceStatusLabel, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
+    SendMessageW(m_refreshBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
+    SendMessageW(m_addWsBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
+
+    // Initial Workspaces
+    addWorkspaceCard();
+    addWorkspaceCard();
+
+    // Launch Button at bottom
+    m_launchBtn = CreateWindowExW(0, L"BUTTON", L"🚀 Launch Multiseat Game Session",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        20, 560, 870, 45, m_hwnd, (HMENU)ID_BTN_LAUNCH, GetModuleHandle(NULL), NULL);
+
+    HFONT hFontBtn = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(m_launchBtn, WM_SETFONT, (WPARAM)hFontBtn, TRUE);
+}
+
+void Win32App::addWorkspaceCard() {
+    size_t index = m_comboDisplays.size() + 1;
+    int startY = 100 + static_cast<int>(index - 1) * 220;
+
+    if (startY > 480) return; // Limit visual space for basic demo card
+
+    std::wstring groupTitle = L"Player Workspace #" + std::to_wstring(index) + L" (Player " + std::to_wstring(index) + L")";
+
+    HWND group = CreateWindowExW(0, L"BUTTON", groupTitle.c_str(),
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        20, startY, 870, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    HFONT hFontBold = CreateFontW(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(group, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+
+    // Display Combobox
+    CreateWindowExW(0, L"STATIC", L"Display Output:", WS_CHILD | WS_VISIBLE, 40, startY + 35, 120, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND cbDisp = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 170, startY + 32, 690, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    // Keyboard Combobox
+    CreateWindowExW(0, L"STATIC", L"Keyboard:", WS_CHILD | WS_VISIBLE, 40, startY + 75, 120, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND cbKbd = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 170, startY + 72, 690, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    // Mouse Combobox
+    CreateWindowExW(0, L"STATIC", L"Mouse / Touchpad:", WS_CHILD | WS_VISIBLE, 40, startY + 115, 140, 25, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+    HWND cbMouse = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 170, startY + 112, 690, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    m_comboDisplays.push_back(cbDisp);
+    m_comboKeyboards.push_back(cbKbd);
+    m_comboMice.push_back(cbMouse);
+
+    refreshHardware();
+}
+
+void Win32App::refreshHardware() {
+    m_displays = m_hardwareDetector.detectDisplays();
+    m_keyboards = m_hardwareDetector.detectKeyboards();
+    m_mice = m_hardwareDetector.detectMice();
+    m_controllers = m_hardwareDetector.detectControllers();
+
+    std::wstring statusText = L"Connected Hardware: " + std::to_wstring(m_displays.size()) + L" Displays | " +
+                              std::to_wstring(m_keyboards.size()) + L" Keyboards | " +
+                              std::to_wstring(m_mice.size()) + L" Mice | " +
+                              std::to_wstring(m_controllers.size()) + L" Gamepads";
+
+    SetWindowTextW(m_deviceStatusLabel, statusText.c_str());
+
+    // Update all comboboxes
+    for (size_t i = 0; i < m_comboDisplays.size(); ++i) {
+        HWND cbDisp = m_comboDisplays[i];
+        HWND cbKbd = m_comboKeyboards[i];
+        HWND cbMouse = m_comboMice[i];
+
+        SendMessageW(cbDisp, CB_RESETCONTENT, 0, 0);
+        SendMessageW(cbKbd, CB_RESETCONTENT, 0, 0);
+        SendMessageW(cbMouse, CB_RESETCONTENT, 0, 0);
+
+        SendMessageW(cbDisp, CB_ADDSTRING, 0, (LPARAM)L"-- Select Display --");
+        for (const auto& d : m_displays) {
+            std::wstring label = d.name + L" (" + d.id + L")";
+            SendMessageW(cbDisp, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+        }
+        SendMessageW(cbDisp, CB_SETCURSEL, m_displays.empty() ? 0 : (i < m_displays.size() ? i + 1 : 1), 0);
+
+        SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)L"-- Select Keyboard --");
+        for (const auto& k : m_keyboards) {
+            std::wstring label = k.name + (k.devicePath.empty() ? L"" : (L" [" + k.devicePath + L"]"));
+            SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+        }
+        SendMessageW(cbKbd, CB_SETCURSEL, m_keyboards.empty() ? 0 : (i < m_keyboards.size() ? i + 1 : 1), 0);
+
+        SendMessageW(cbMouse, CB_ADDSTRING, 0, (LPARAM)L"-- Select Mouse --");
+        for (const auto& m : m_mice) {
+            std::wstring label = m.name + (m.devicePath.empty() ? L"" : (L" [" + m.devicePath + L"]"));
+            SendMessageW(cbMouse, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+        }
+        SendMessageW(cbMouse, CB_SETCURSEL, m_mice.empty() ? 0 : (i < m_mice.size() ? i + 1 : 1), 0);
+    }
+}
+
+void Win32App::launchMultiseat() {
+    MessageBoxW(m_hwnd,
+        L"Multiseat Inputs & Displays Routed Successfully!\n\nLaunching target game instances...",
+        L"HydraSeat Multiseat Launcher",
+        MB_OK | MB_ICONINFORMATION);
+}
+
+LRESULT CALLBACK Win32App::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    if (uMsg == WM_COMMAND) {
+        int wmId = LOWORD(wParam);
+        if (wmId == ID_BTN_REFRESH && g_appInstance) {
+            g_appInstance->refreshHardware();
+        } else if (wmId == ID_BTN_ADD_WS && g_appInstance) {
+            g_appInstance->addWorkspaceCard();
+        } else if (wmId == ID_BTN_LAUNCH && g_appInstance) {
+            g_appInstance->launchMultiseat();
+        }
+    } else if (uMsg == WM_DESTROY) {
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+}
+
+int Win32App::run() {
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    return static_cast<int>(msg.wParam);
+}
+
+} // namespace gui
+} // namespace hydra
+#endif

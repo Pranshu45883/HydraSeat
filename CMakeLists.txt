@@ -8,10 +8,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Include directories
 include_directories(include .)
 
-# Windows system libraries for Win32 Raw Input, SetupAPI, and DXGI
+# Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
 if(WIN32)
     add_compile_definitions(_UNICODE UNICODE WIN32_LEAN_AND_MEAN)
-    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib)
+    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib)
 endif()
 
 # Find Qt6 components if available
@@ -38,6 +38,7 @@ set(HYDRA_SOURCES
     src/display_manager.cpp
     src/workspace_manager.cpp
     src/game_launcher.cpp
+    src/gui_win32.cpp
     ${UI_SOURCES}
 )
 
@@ -47,11 +48,12 @@ set(HYDRA_HEADERS
     include/hydra/display_manager.hpp
     include/hydra/workspace_manager.hpp
     include/hydra/game_launcher.hpp
+    include/hydra/gui_win32.hpp
     ${UI_HEADERS}
 )
 
-# Core Executable target
-add_executable(HydraSeat src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+# Core Executable target (Windows GUI subsystem)
+add_executable(HydraSeat WIN32 src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 
 if(WIN32)
     target_link_libraries(HydraSeat PRIVATE ${WIN32_LIBS})

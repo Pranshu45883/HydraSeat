@@ -62,7 +62,7 @@ private:
     std::vector<HWND> m_comboKeyboards;
     std::vector<HWND> m_comboMice;
 
-    std::vector<VisualDeviceTile> m_deviceTiles;
+    std::vector<std::unique_ptr<VisualDeviceTile>> m_deviceTiles;
     std::unordered_map<uintptr_t, size_t> m_handleToTileIndex;
 
     HardwareDetector m_hardwareDetector;

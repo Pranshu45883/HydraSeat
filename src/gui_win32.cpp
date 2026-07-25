@@ -45,7 +45,6 @@ LRESULT CALLBACK Win32App::DeviceTileProc(HWND hwnd, UINT uMsg, WPARAM wParam, L
             isFlashing = true;
         }
 
-        // ASTER Dark Theme Colors
         HBRUSH bgBrush = isFlashing ? CreateSolidBrush(RGB(34, 197, 94)) : CreateSolidBrush(RGB(30, 41, 59));
         HPEN borderPen = isFlashing ? CreatePen(PS_SOLID, 2, RGB(74, 222, 128)) : CreatePen(PS_SOLID, 2, RGB(59, 130, 246));
 
@@ -138,8 +137,8 @@ void Win32App::triggerDeviceFlash(uintptr_t handle, const std::wstring& devPath)
     if (handle != 0) {
         auto it = m_handleToTileIndex.find(handle);
         if (it != m_handleToTileIndex.end() && it->second < m_deviceTiles.size()) {
-            m_deviceTiles[it->second].flashUntil = now + 350;
-            InvalidateRect(m_deviceTiles[it->second].hwndControl, NULL, FALSE);
+            m_deviceTiles[it->second]->flashUntil = now + 350;
+            InvalidateRect(m_deviceTiles[it->second]->hwndControl, NULL, FALSE);
             found = true;
         }
     }
@@ -148,24 +147,23 @@ void Win32App::triggerDeviceFlash(uintptr_t handle, const std::wstring& devPath)
         std::wstring devPathUpper = devPath;
         for (auto& c : devPathUpper) c = ::towupper(c);
 
-        for (auto& tile : m_deviceTiles) {
-            std::wstring nameUpper = tile.name;
+        for (auto& tilePtr : m_deviceTiles) {
+            std::wstring nameUpper = tilePtr->name;
             for (auto& c : nameUpper) c = ::towupper(c);
             if (devPathUpper.find(nameUpper) != std::wstring::npos || nameUpper.find(devPathUpper) != std::wstring::npos) {
-                tile.flashUntil = now + 350;
-                InvalidateRect(tile.hwndControl, NULL, FALSE);
+                tilePtr->flashUntil = now + 350;
+                InvalidateRect(tilePtr->hwndControl, NULL, FALSE);
                 found = true;
                 break;
             }
         }
     }
 
-    // Fallback: Flash primary keyboard or touchpad tile if handle match missed
     if (!found && !m_deviceTiles.empty()) {
-        for (auto& tile : m_deviceTiles) {
-            if (tile.typeIcon == L"⌨️" || tile.typeIcon == L"🖱️") {
-                tile.flashUntil = now + 350;
-                InvalidateRect(tile.hwndControl, NULL, FALSE);
+        for (auto& tilePtr : m_deviceTiles) {
+            if (tilePtr->typeIcon == L"⌨️" || tilePtr->typeIcon == L"🖱️") {
+                tilePtr->flashUntil = now + 350;
+                InvalidateRect(tilePtr->hwndControl, NULL, FALSE);
                 break;
             }
         }
@@ -277,72 +275,72 @@ void Win32App::addWorkspaceCard() {
 }
 
 void Win32App::rebuildVisualDeviceGrid() {
-    // Destroy previous tile windows
-    for (auto& tile : m_deviceTiles) {
-        if (tile.hwndControl) {
-            DestroyWindow(tile.hwndControl);
+    for (auto& tilePtr : m_deviceTiles) {
+        if (tilePtr && tilePtr->hwndControl) {
+            DestroyWindow(tilePtr->hwndControl);
         }
     }
     m_deviceTiles.clear();
     m_handleToTileIndex.clear();
 
-    // Create ASTER-style Visual Tiles inside each Workspace Card
     for (size_t i = 0; i < m_workspaceGroupboxes.size(); ++i) {
         int startY = 80 + static_cast<int>(i) * 270;
 
         // Display Tile
         if (i < m_displays.size()) {
-            VisualDeviceTile tile{};
-            tile.name = L"Display " + std::to_wstring(i + 1) + L" (" + m_displays[i].name + L")";
-            tile.typeIcon = L"🖥️";
-            tile.workspaceId = static_cast<uint32_t>(i + 1);
-            tile.nativeHandle = m_displays[i].nativeHandle;
+            auto tile = std::make_unique<VisualDeviceTile>();
+            tile->name = L"Display " + std::to_wstring(i + 1) + L" (" + m_displays[i].name + L")";
+            tile->typeIcon = L"🖥️";
+            tile->workspaceId = static_cast<uint32_t>(i + 1);
+            tile->nativeHandle = m_displays[i].nativeHandle;
 
-            tile.hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
+            tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
                 WS_CHILD | WS_VISIBLE,
                 40, startY + 135, 260, 100, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
-            SetWindowLongPtrW(tile.hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&tile));
-            m_deviceTiles.push_back(tile);
+            SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
+            m_deviceTiles.push_back(std::move(tile));
         }
 
         // Keyboard Tile
         if (i < m_keyboards.size()) {
-            VisualDeviceTile tile{};
-            tile.name = m_keyboards[i].name;
-            tile.typeIcon = L"⌨️";
-            tile.workspaceId = static_cast<uint32_t>(i + 1);
-            tile.nativeHandle = m_keyboards[i].nativeHandle;
+            auto tile = std::make_unique<VisualDeviceTile>();
+            tile->name = m_keyboards[i].name;
+            tile->typeIcon = L"⌨️";
+            tile->workspaceId = static_cast<uint32_t>(i + 1);
+            tile->nativeHandle = m_keyboards[i].nativeHandle;
 
-            tile.hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
+            tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
                 WS_CHILD | WS_VISIBLE,
                 320, startY + 135, 280, 100, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
-            SetWindowLongPtrW(tile.hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&tile));
+            SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
             size_t tileIdx = m_deviceTiles.size();
-            m_deviceTiles.push_back(tile);
-            if (tile.nativeHandle != 0) {
-                m_handleToTileIndex[tile.nativeHandle] = tileIdx;
+            uintptr_t handle = tile->nativeHandle;
+            m_deviceTiles.push_back(std::move(tile));
+            if (handle != 0) {
+                m_handleToTileIndex[handle] = tileIdx;
             }
         }
 
         // Mouse Tile
         if (i < m_mice.size()) {
-            VisualDeviceTile tile{};
-            tile.name = m_mice[i].name;
-            tile.typeIcon = L"🖱️";
-            tile.workspaceId = static_cast<uint32_t>(i + 1);
-            tile.nativeHandle = m_mice[i].nativeHandle;
+            auto tile = std::make_unique<VisualDeviceTile>();
+            tile->name = m_mice[i].name;
+            tile->typeIcon = L"🖱️";
+            tile->workspaceId = static_cast<uint32_t>(i + 1);
+            tile->nativeHandle = m_mice[i].nativeHandle;
 
-            tile.hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
+            tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
                 WS_CHILD | WS_VISIBLE,
                 620, startY + 135, 280, 100, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
-            SetWindowLongPtrW(tile.hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&tile));
+            SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
             size_t tileIdx = m_deviceTiles.size();
-            m_deviceTiles.push_back(tile);
-            if (tile.nativeHandle != 0) {
-                m_handleToTileIndex[tile.nativeHandle] = tileIdx;
+            uintptr_t handle = tile->nativeHandle;
+            m_deviceTiles.push_back(std::move(tile));
+            if (handle != 0) {
+                m_handleToTileIndex[handle] = tileIdx;
             }
         }
     }
@@ -462,10 +460,10 @@ LRESULT CALLBACK Win32App::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
         }
     } else if (uMsg == TIMER_FLASH_RESET && g_appInstance) {
         uint64_t now = GetTickCount64();
-        for (auto& tile : g_appInstance->m_deviceTiles) {
-            if (tile.flashUntil > 0 && now >= tile.flashUntil) {
-                tile.flashUntil = 0;
-                InvalidateRect(tile.hwndControl, NULL, FALSE);
+        for (auto& tilePtr : g_appInstance->m_deviceTiles) {
+            if (tilePtr && tilePtr->flashUntil > 0 && now >= tilePtr->flashUntil) {
+                tilePtr->flashUntil = 0;
+                InvalidateRect(tilePtr->hwndControl, NULL, FALSE);
             }
         }
     } else if (uMsg == WM_DESTROY) {

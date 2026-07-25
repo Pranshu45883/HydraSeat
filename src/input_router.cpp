@@ -129,25 +129,25 @@ bool InputRouter::initialize(uint64_t targetHwndVal) {
 #endif
 
     m_running = true;
-    return registerRawInputDevices(false);
+    return registerRawInputDevices(true);
 }
 
 bool InputRouter::registerRawInputDevices(bool backgroundSink) {
 #ifdef _WIN32
     if (!m_hwnd) return false;
 
-    // Use dwFlags = 0 (or RIDEV_DEVNOTIFY) to monitor Raw Input without suppressing legacy typing
-    DWORD flags = backgroundSink ? 0 : 0;
+    // RIDEV_INPUTSINK bound to top-level window captures raw input without blocking system typing
+    DWORD flags = backgroundSink ? (RIDEV_INPUTSINK | RIDEV_DEVNOTIFY) : RIDEV_DEVNOTIFY;
 
     RAWINPUTDEVICE rid[3];
 
-    // Keyboard (Non-blocking passive monitoring)
+    // Keyboard
     rid[0].usUsagePage = 0x01; // Generic Desktop
     rid[0].usUsage = 0x06;     // Keyboard
     rid[0].dwFlags = flags;
     rid[0].hwndTarget = m_hwnd;
 
-    // Mouse (Non-blocking passive monitoring)
+    // Mouse
     rid[1].usUsagePage = 0x01; // Generic Desktop
     rid[1].usUsage = 0x02;     // Mouse
     rid[1].dwFlags = flags;
@@ -191,7 +191,6 @@ void InputRouter::stop() {
     m_running = false;
 #ifdef _WIN32
     if (m_hwnd) {
-        // Remove raw input device registrations before closing window
         RAWINPUTDEVICE rid[3];
         rid[0].usUsagePage = 0x01; rid[0].usUsage = 0x06; rid[0].dwFlags = RIDEV_REMOVE; rid[0].hwndTarget = NULL;
         rid[1].usUsagePage = 0x01; rid[1].usUsage = 0x02; rid[1].dwFlags = RIDEV_REMOVE; rid[1].hwndTarget = NULL;

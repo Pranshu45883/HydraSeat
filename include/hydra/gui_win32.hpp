@@ -5,6 +5,7 @@
 #include <commctrl.h>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <memory>
 
 #include "hydra/hardware_detector.hpp"
@@ -14,6 +15,15 @@
 namespace hydra {
 namespace gui {
 
+struct VisualDeviceTile {
+    HWND hwndControl{nullptr};
+    std::wstring name;
+    std::wstring typeIcon; // 🖥️, ⌨️, 🖱️
+    uintptr_t nativeHandle{0};
+    uint32_t workspaceId{1};
+    uint64_t flashUntil{0};
+};
+
 class Win32App {
 public:
     Win32App();
@@ -22,12 +32,15 @@ public:
     bool initialize(HINSTANCE hInstance, int nCmdShow);
     int run();
 
-    void logInputEvent(const std::wstring& message);
+    void triggerDeviceFlash(uintptr_t handle, const std::wstring& devPath);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK DeviceTileProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
     void setupUI();
     void refreshHardware();
+    void rebuildVisualDeviceGrid();
     void addWorkspaceCard();
     void saveWorkspaceProfile();
     void loadWorkspaceProfile();
@@ -43,11 +56,14 @@ private:
     HWND m_refreshBtn{nullptr};
     HWND m_launchBtn{nullptr};
     HWND m_deviceStatusLabel{nullptr};
-    HWND m_inputLogEdit{nullptr};
 
+    std::vector<HWND> m_workspaceGroupboxes;
     std::vector<HWND> m_comboDisplays;
     std::vector<HWND> m_comboKeyboards;
     std::vector<HWND> m_comboMice;
+
+    std::vector<VisualDeviceTile> m_deviceTiles;
+    std::unordered_map<uintptr_t, size_t> m_handleToTileIndex;
 
     HardwareDetector m_hardwareDetector;
     WorkspaceManager m_workspaceManager;

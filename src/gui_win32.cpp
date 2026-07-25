@@ -12,12 +12,11 @@ namespace gui {
 
 static Win32App* g_appInstance = nullptr;
 
-#define ID_BTN_REFRESH  1001
-#define ID_BTN_ADD_WS   1002
-#define ID_BTN_LAUNCH   1003
-#define ID_BTN_SAVE_PROF 1005
-#define ID_BTN_LOAD_PROF 1006
-#define ID_BTN_ISOLATION 1007
+#define ID_BTN_REFRESH   1001
+#define ID_BTN_LAUNCH    1003
+#define ID_BTN_SAVE_PROF  1005
+#define ID_BTN_LOAD_PROF  1006
+#define ID_BTN_ISOLATION  1007
 
 #define TIMER_FLASH_RESET 2001
 
@@ -32,6 +31,15 @@ Win32App::~Win32App() {
 }
 
 LRESULT CALLBACK Win32App::DeviceTileProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    VisualDeviceTile* tile = reinterpret_cast<VisualDeviceTile*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    if (uMsg == WM_LBUTTONDOWN) {
+        if (tile && g_appInstance) {
+            g_appInstance->moveTileToNextPartition(tile);
+        }
+        return 0;
+    }
+
     if (uMsg == WM_PAINT) {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -39,19 +47,37 @@ LRESULT CALLBACK Win32App::DeviceTileProc(HWND hwnd, UINT uMsg, WPARAM wParam, L
         RECT rect;
         GetClientRect(hwnd, &rect);
 
-        VisualDeviceTile* tile = reinterpret_cast<VisualDeviceTile*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         bool isFlashing = false;
         if (tile && tile->flashUntil > GetTickCount64()) {
             isFlashing = true;
         }
 
-        HBRUSH bgBrush = isFlashing ? CreateSolidBrush(RGB(34, 197, 94)) : CreateSolidBrush(RGB(30, 41, 59));
-        HPEN borderPen = isFlashing ? CreatePen(PS_SOLID, 2, RGB(74, 222, 128)) : CreatePen(PS_SOLID, 2, RGB(59, 130, 246));
+        // Color coding by partition owner
+        COLORREF bgCol = RGB(30, 41, 59); // Pool: Dark Slate
+        COLORREF borderCol = RGB(100, 116, 139);
+
+        if (tile) {
+            if (tile->owner == PartitionOwner::Player1) {
+                bgCol = RGB(15, 23, 42); // Player 1: Navy Blue
+                borderCol = RGB(59, 130, 246); // Accent Blue
+            } else if (tile->owner == PartitionOwner::Player2) {
+                bgCol = RGB(24, 15, 42); // Player 2: Purple Navy
+                borderCol = RGB(168, 85, 247); // Accent Purple
+            }
+        }
+
+        if (isFlashing) {
+            bgCol = RGB(34, 197, 94); // Flashing Green
+            borderCol = RGB(74, 222, 128);
+        }
+
+        HBRUSH bgBrush = CreateSolidBrush(bgCol);
+        HPEN borderPen = CreatePen(PS_SOLID, 2, borderCol);
 
         HGDIOBJ oldBrush = SelectObject(hdc, bgBrush);
         HGDIOBJ oldPen = SelectObject(hdc, borderPen);
 
-        RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, 10, 10);
+        RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, 12, 12);
 
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, isFlashing ? RGB(0, 0, 0) : RGB(248, 250, 252));
@@ -79,6 +105,20 @@ LRESULT CALLBACK Win32App::DeviceTileProc(HWND hwnd, UINT uMsg, WPARAM wParam, L
     return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
+void Win32App::moveTileToNextPartition(VisualDeviceTile* tile) {
+    if (!tile) return;
+
+    if (tile->owner == PartitionOwner::Pool) {
+        tile->owner = PartitionOwner::Player1;
+    } else if (tile->owner == PartitionOwner::Player1) {
+        tile->owner = PartitionOwner::Player2;
+    } else {
+        tile->owner = PartitionOwner::Pool;
+    }
+
+    layoutDeviceTiles();
+}
+
 bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
     INITCOMMONCONTROLSEX icex;
     icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
@@ -88,7 +128,7 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
     WNDCLASSEXW wcTile = { sizeof(WNDCLASSEXW) };
     wcTile.lpfnWndProc = Win32App::DeviceTileProc;
     wcTile.hInstance = hInstance;
-    wcTile.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wcTile.hCursor = LoadCursor(NULL, IDC_HAND);
     wcTile.hbrBackground = NULL;
     wcTile.lpszClassName = L"HydraSeatDeviceTileClass";
     RegisterClassExW(&wcTile);
@@ -106,9 +146,9 @@ bool Win32App::initialize(HINSTANCE hInstance, int nCmdShow) {
 
     m_hwnd = CreateWindowExW(
         0, L"HydraSeatMainWindowClass",
-        L"HydraSeat - ASTER-Style Multiseat Control Center",
+        L"HydraSeat - ASTER-Style Multiseat Partition Control Center",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1020, 760,
+        CW_USEDEFAULT, CW_USEDEFAULT, 980, 750,
         NULL, NULL, hInstance, NULL
     );
 
@@ -174,7 +214,7 @@ void Win32App::setupUI() {
     // Header Label
     HWND header = CreateWindowExW(0, L"STATIC", L"🎮 HydraSeat Multiseat Control Center",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        20, 15, 450, 30, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+        20, 15, 420, 30, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
     HFONT hFontHeader = CreateFontW(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
@@ -184,27 +224,22 @@ void Win32App::setupUI() {
     // Save Profile Button
     m_saveProfileBtn = CreateWindowExW(0, L"BUTTON", L"💾 Save Profile",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        510, 15, 110, 32, m_hwnd, (HMENU)ID_BTN_SAVE_PROF, GetModuleHandle(NULL), NULL);
+        450, 15, 110, 32, m_hwnd, (HMENU)ID_BTN_SAVE_PROF, GetModuleHandle(NULL), NULL);
 
     // Load Profile Button
     m_loadProfileBtn = CreateWindowExW(0, L"BUTTON", L"📂 Load Profile",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        630, 15, 110, 32, m_hwnd, (HMENU)ID_BTN_LOAD_PROF, GetModuleHandle(NULL), NULL);
+        570, 15, 110, 32, m_hwnd, (HMENU)ID_BTN_LOAD_PROF, GetModuleHandle(NULL), NULL);
 
     // Refresh Button
     m_refreshBtn = CreateWindowExW(0, L"BUTTON", L"🔄 Refresh",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        750, 15, 90, 32, m_hwnd, (HMENU)ID_BTN_REFRESH, GetModuleHandle(NULL), NULL);
-
-    // Add Workspace Button
-    m_addWsBtn = CreateWindowExW(0, L"BUTTON", L"➕ Add WS",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        850, 15, 100, 32, m_hwnd, (HMENU)ID_BTN_ADD_WS, GetModuleHandle(NULL), NULL);
+        690, 15, 90, 32, m_hwnd, (HMENU)ID_BTN_REFRESH, GetModuleHandle(NULL), NULL);
 
     // Status Label
     m_deviceStatusLabel = CreateWindowExW(0, L"STATIC", L"Detecting connected hardware...",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        20, 50, 930, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+        20, 50, 920, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
 
     HFONT hFontNormal = CreateFontW(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
@@ -213,21 +248,39 @@ void Win32App::setupUI() {
     SendMessageW(m_saveProfileBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
     SendMessageW(m_loadProfileBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
     SendMessageW(m_refreshBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
-    SendMessageW(m_addWsBtn, WM_SETFONT, (WPARAM)hFontNormal, TRUE);
 
-    // Initial Workspaces
-    addWorkspaceCard();
-    addWorkspaceCard();
+    // 3 PARTITIONS (ASTER LAYOUT):
+    // Partition 1: Unassigned System Devices Pool
+    m_poolGroup = CreateWindowExW(0, L"BUTTON", L"📦 System Hardware Pool (Click tile to assign)",
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        20, 80, 290, 540, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    // Partition 2: Player 1 Workspace
+    m_p1Group = CreateWindowExW(0, L"BUTTON", L"👤 Player 1 Workspace",
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        330, 80, 290, 540, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    // Partition 3: Player 2 Workspace
+    m_p2Group = CreateWindowExW(0, L"BUTTON", L"👤 Player 2 Workspace",
+        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+        640, 80, 290, 540, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+    HFONT hFontBold = CreateFontW(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(m_poolGroup, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+    SendMessageW(m_p1Group, WM_SETFONT, (WPARAM)hFontBold, TRUE);
+    SendMessageW(m_p2Group, WM_SETFONT, (WPARAM)hFontBold, TRUE);
 
     // Isolation Toggle Button
     m_isolationBtn = CreateWindowExW(0, L"BUTTON", L"🔒 Lock & Isolate Workspace Inputs: OFF",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        20, 650, 460, 42, m_hwnd, (HMENU)ID_BTN_ISOLATION, GetModuleHandle(NULL), NULL);
+        20, 642, 440, 42, m_hwnd, (HMENU)ID_BTN_ISOLATION, GetModuleHandle(NULL), NULL);
 
     // Launch Button at bottom
     m_launchBtn = CreateWindowExW(0, L"BUTTON", L"🚀 Launch Multiseat Game Session",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        490, 650, 460, 42, m_hwnd, (HMENU)ID_BTN_LAUNCH, GetModuleHandle(NULL), NULL);
+        490, 642, 440, 42, m_hwnd, (HMENU)ID_BTN_LAUNCH, GetModuleHandle(NULL), NULL);
 
     HFONT hFontBtn = CreateFontW(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
@@ -236,113 +289,33 @@ void Win32App::setupUI() {
     SendMessageW(m_launchBtn, WM_SETFONT, (WPARAM)hFontBtn, TRUE);
 }
 
-void Win32App::addWorkspaceCard() {
-    size_t index = m_workspaceGroupboxes.size() + 1;
-    int startY = 80 + static_cast<int>(index - 1) * 270;
+void Win32App::layoutDeviceTiles() {
+    int poolY = 110;
+    int p1Y = 110;
+    int p2Y = 110;
 
-    if (startY > 450) return;
-
-    std::wstring groupTitle = L"Player Workspace #" + std::to_wstring(index) + L" (Player " + std::to_wstring(index) + L")";
-
-    HWND group = CreateWindowExW(0, L"BUTTON", groupTitle.c_str(),
-        WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-        20, startY, 930, 255, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-
-    HFONT hFontBold = CreateFontW(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    SendMessageW(group, WM_SETFONT, (WPARAM)hFontBold, TRUE);
-
-    m_workspaceGroupboxes.push_back(group);
-
-    // Display Combobox
-    CreateWindowExW(0, L"STATIC", L"Display Output:", WS_CHILD | WS_VISIBLE, 40, startY + 30, 130, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-    HWND cbDisp = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 180, startY + 26, 740, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-
-    // Keyboard Combobox
-    CreateWindowExW(0, L"STATIC", L"Keyboard:", WS_CHILD | WS_VISIBLE, 40, startY + 65, 130, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-    HWND cbKbd = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 180, startY + 61, 740, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-
-    // Mouse Combobox
-    CreateWindowExW(0, L"STATIC", L"Mouse / Touchpad:", WS_CHILD | WS_VISIBLE, 40, startY + 100, 130, 22, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-    HWND cbMouse = CreateWindowExW(0, L"COMBOBOX", NULL, WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 180, startY + 96, 740, 200, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-
-    m_comboDisplays.push_back(cbDisp);
-    m_comboKeyboards.push_back(cbKbd);
-    m_comboMice.push_back(cbMouse);
-
-    refreshHardware();
-}
-
-void Win32App::rebuildVisualDeviceGrid() {
     for (auto& tilePtr : m_deviceTiles) {
-        if (tilePtr && tilePtr->hwndControl) {
-            DestroyWindow(tilePtr->hwndControl);
-        }
-    }
-    m_deviceTiles.clear();
-    m_handleToTileIndex.clear();
+        if (!tilePtr || !tilePtr->hwndControl) continue;
 
-    for (size_t i = 0; i < m_workspaceGroupboxes.size(); ++i) {
-        int startY = 80 + static_cast<int>(i) * 270;
+        int posX = 40;
+        int posY = 110;
 
-        // Display Tile
-        if (i < m_displays.size()) {
-            auto tile = std::make_unique<VisualDeviceTile>();
-            tile->name = L"Display " + std::to_wstring(i + 1) + L" (" + m_displays[i].name + L")";
-            tile->typeIcon = L"🖥️";
-            tile->workspaceId = static_cast<uint32_t>(i + 1);
-            tile->nativeHandle = m_displays[i].nativeHandle;
-
-            tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
-                WS_CHILD | WS_VISIBLE,
-                40, startY + 135, 260, 100, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-
-            SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
-            m_deviceTiles.push_back(std::move(tile));
+        if (tilePtr->owner == PartitionOwner::Pool) {
+            posX = 40;
+            posY = poolY;
+            poolY += 65;
+        } else if (tilePtr->owner == PartitionOwner::Player1) {
+            posX = 350;
+            posY = p1Y;
+            p1Y += 65;
+        } else if (tilePtr->owner == PartitionOwner::Player2) {
+            posX = 660;
+            posY = p2Y;
+            p2Y += 65;
         }
 
-        // Keyboard Tile
-        if (i < m_keyboards.size()) {
-            auto tile = std::make_unique<VisualDeviceTile>();
-            tile->name = m_keyboards[i].name;
-            tile->typeIcon = L"⌨️";
-            tile->workspaceId = static_cast<uint32_t>(i + 1);
-            tile->nativeHandle = m_keyboards[i].nativeHandle;
-
-            tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
-                WS_CHILD | WS_VISIBLE,
-                320, startY + 135, 280, 100, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-
-            SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
-            size_t tileIdx = m_deviceTiles.size();
-            uintptr_t handle = tile->nativeHandle;
-            m_deviceTiles.push_back(std::move(tile));
-            if (handle != 0) {
-                m_handleToTileIndex[handle] = tileIdx;
-            }
-        }
-
-        // Mouse Tile
-        if (i < m_mice.size()) {
-            auto tile = std::make_unique<VisualDeviceTile>();
-            tile->name = m_mice[i].name;
-            tile->typeIcon = L"🖱️";
-            tile->workspaceId = static_cast<uint32_t>(i + 1);
-            tile->nativeHandle = m_mice[i].nativeHandle;
-
-            tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
-                WS_CHILD | WS_VISIBLE,
-                620, startY + 135, 280, 100, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
-
-            SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
-            size_t tileIdx = m_deviceTiles.size();
-            uintptr_t handle = tile->nativeHandle;
-            m_deviceTiles.push_back(std::move(tile));
-            if (handle != 0) {
-                m_handleToTileIndex[handle] = tileIdx;
-            }
-        }
+        SetWindowPos(tilePtr->hwndControl, NULL, posX, posY, 250, 52, SWP_NOZORDER | SWP_SHOWWINDOW);
+        InvalidateRect(tilePtr->hwndControl, NULL, TRUE);
     }
 }
 
@@ -359,59 +332,100 @@ void Win32App::refreshHardware() {
 
     SetWindowTextW(m_deviceStatusLabel, statusText.c_str());
 
-    for (size_t i = 0; i < m_comboDisplays.size(); ++i) {
-        HWND cbDisp = m_comboDisplays[i];
-        HWND cbKbd = m_comboKeyboards[i];
-        HWND cbMouse = m_comboMice[i];
-
-        SendMessageW(cbDisp, CB_RESETCONTENT, 0, 0);
-        SendMessageW(cbKbd, CB_RESETCONTENT, 0, 0);
-        SendMessageW(cbMouse, CB_RESETCONTENT, 0, 0);
-
-        SendMessageW(cbDisp, CB_ADDSTRING, 0, (LPARAM)L"-- Select Display --");
-        for (const auto& d : m_displays) {
-            std::wstring label = d.name + L" (" + d.id + L")";
-            SendMessageW(cbDisp, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+    for (auto& tilePtr : m_deviceTiles) {
+        if (tilePtr && tilePtr->hwndControl) {
+            DestroyWindow(tilePtr->hwndControl);
         }
-        SendMessageW(cbDisp, CB_SETCURSEL, m_displays.empty() ? 0 : (i < m_displays.size() ? i + 1 : 1), 0);
+    }
+    m_deviceTiles.clear();
+    m_handleToTileIndex.clear();
 
-        SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)L"-- Select Keyboard --");
-        for (const auto& k : m_keyboards) {
-            std::wstring label = k.name + (k.devicePath.empty() ? L"" : (L" [" + k.devicePath + L"]"));
-            SendMessageW(cbKbd, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-        }
-        SendMessageW(cbKbd, CB_SETCURSEL, m_keyboards.empty() ? 0 : (i < m_keyboards.size() ? i + 1 : 1), 0);
+    // Populate Displays
+    for (size_t i = 0; i < m_displays.size(); ++i) {
+        auto tile = std::make_unique<VisualDeviceTile>();
+        tile->name = L"Display " + std::to_wstring(i + 1) + L" (" + m_displays[i].name + L")";
+        tile->typeIcon = L"🖥️";
+        tile->nativeHandle = m_displays[i].nativeHandle;
+        tile->devicePath = m_displays[i].devicePath;
+        tile->owner = (i == 0) ? PartitionOwner::Player1 : (i == 1 ? PartitionOwner::Player2 : PartitionOwner::Pool);
 
-        SendMessageW(cbMouse, CB_ADDSTRING, 0, (LPARAM)L"-- Select Mouse --");
-        for (const auto& m : m_mice) {
-            std::wstring label = m.name + (m.devicePath.empty() ? L"" : (L" [" + m.devicePath + L"]"));
-            SendMessageW(cbMouse, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-        }
-        SendMessageW(cbMouse, CB_SETCURSEL, m_mice.empty() ? 0 : (i < m_mice.size() ? i + 1 : 1), 0);
+        tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 250, 52, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+        SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
+        m_deviceTiles.push_back(std::move(tile));
     }
 
-    rebuildVisualDeviceGrid();
+    // Populate Keyboards
+    for (size_t i = 0; i < m_keyboards.size(); ++i) {
+        auto tile = std::make_unique<VisualDeviceTile>();
+        tile->name = m_keyboards[i].name;
+        tile->typeIcon = L"⌨️";
+        tile->nativeHandle = m_keyboards[i].nativeHandle;
+        tile->devicePath = m_keyboards[i].devicePath;
+
+        if (i == 0) tile->owner = PartitionOwner::Player1;
+        else if (i == 1) tile->owner = PartitionOwner::Player2;
+        else tile->owner = PartitionOwner::Pool;
+
+        tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 250, 52, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+        SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
+        size_t idx = m_deviceTiles.size();
+        uintptr_t handle = tile->nativeHandle;
+        m_deviceTiles.push_back(std::move(tile));
+        if (handle != 0) m_handleToTileIndex[handle] = idx;
+    }
+
+    // Populate Mice
+    for (size_t i = 0; i < m_mice.size(); ++i) {
+        auto tile = std::make_unique<VisualDeviceTile>();
+        tile->name = m_mice[i].name;
+        tile->typeIcon = L"🖱️";
+        tile->nativeHandle = m_mice[i].nativeHandle;
+        tile->devicePath = m_mice[i].devicePath;
+
+        if (i == 0) tile->owner = PartitionOwner::Player1;
+        else if (i == 1) tile->owner = PartitionOwner::Player2;
+        else tile->owner = PartitionOwner::Pool;
+
+        tile->hwndControl = CreateWindowExW(0, L"HydraSeatDeviceTileClass", L"",
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 250, 52, m_hwnd, NULL, GetModuleHandle(NULL), NULL);
+
+        SetWindowLongPtrW(tile->hwndControl, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(tile.get()));
+        size_t idx = m_deviceTiles.size();
+        uintptr_t handle = tile->nativeHandle;
+        m_deviceTiles.push_back(std::move(tile));
+        if (handle != 0) m_handleToTileIndex[handle] = idx;
+    }
+
+    layoutDeviceTiles();
 }
 
 void Win32App::saveWorkspaceProfile() {
-    for (size_t i = 0; i < m_comboDisplays.size(); ++i) {
-        uint32_t id = static_cast<uint32_t>(i + 1);
+    m_workspaceManager.createWorkspace(L"Player 1");
+    m_workspaceManager.createWorkspace(L"Player 2");
 
-        wchar_t dispText[256] = {0};
-        wchar_t kbdText[256] = {0};
-        wchar_t mouseText[256] = {0};
-
-        GetWindowTextW(m_comboDisplays[i], dispText, 256);
-        GetWindowTextW(m_comboKeyboards[i], kbdText, 256);
-        GetWindowTextW(m_comboMice[i], mouseText, 256);
-
-        m_workspaceManager.assignDisplay(id, dispText);
-        m_workspaceManager.assignKeyboard(id, kbdText);
-        m_workspaceManager.assignMouse(id, mouseText);
+    for (const auto& tilePtr : m_deviceTiles) {
+        if (!tilePtr) continue;
+        uint32_t wsId = (tilePtr->owner == PartitionOwner::Player1) ? 1 : (tilePtr->owner == PartitionOwner::Player2 ? 2 : 0);
+        if (wsId > 0) {
+            if (tilePtr->typeIcon == L"🖥️") {
+                m_workspaceManager.assignDisplay(wsId, tilePtr->name);
+            } else if (tilePtr->typeIcon == L"⌨️") {
+                m_workspaceManager.assignKeyboard(wsId, tilePtr->name);
+            } else if (tilePtr->typeIcon == L"🖱️") {
+                m_workspaceManager.assignMouse(wsId, tilePtr->name);
+            }
+        }
     }
 
     if (m_workspaceManager.saveToFile("workspace_config.json")) {
-        MessageBoxW(m_hwnd, L"Workspace profile saved to workspace_config.json!", L"HydraSeat Profile Manager", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(m_hwnd, L"Workspace partition assignments saved to workspace_config.json!", L"HydraSeat Profile Manager", MB_OK | MB_ICONINFORMATION);
     }
 }
 
@@ -447,8 +461,6 @@ LRESULT CALLBACK Win32App::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
         int wmId = LOWORD(wParam);
         if (wmId == ID_BTN_REFRESH && g_appInstance) {
             g_appInstance->refreshHardware();
-        } else if (wmId == ID_BTN_ADD_WS && g_appInstance) {
-            g_appInstance->addWorkspaceCard();
         } else if (wmId == ID_BTN_SAVE_PROF && g_appInstance) {
             g_appInstance->saveWorkspaceProfile();
         } else if (wmId == ID_BTN_LOAD_PROF && g_appInstance) {

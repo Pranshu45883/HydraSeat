@@ -15,12 +15,19 @@
 namespace hydra {
 namespace gui {
 
+enum class PartitionOwner {
+    Pool = 0,
+    Player1 = 1,
+    Player2 = 2
+};
+
 struct VisualDeviceTile {
     HWND hwndControl{nullptr};
     std::wstring name;
-    std::wstring typeIcon; // 🖥️, ⌨️, 🖱️
+    std::wstring typeIcon; // 🖥️, ⌨️, 🖱️, 🎮
     uintptr_t nativeHandle{0};
-    uint32_t workspaceId{1};
+    std::wstring devicePath;
+    PartitionOwner owner{PartitionOwner::Pool};
     uint64_t flashUntil{0};
 };
 
@@ -33,6 +40,7 @@ public:
     int run();
 
     void triggerDeviceFlash(uintptr_t handle, const std::wstring& devPath);
+    void moveTileToNextPartition(VisualDeviceTile* tile);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -40,27 +48,23 @@ private:
 
     void setupUI();
     void refreshHardware();
-    void rebuildVisualDeviceGrid();
-    void addWorkspaceCard();
+    void layoutDeviceTiles();
     void saveWorkspaceProfile();
     void loadWorkspaceProfile();
     void toggleIsolationMode();
     void launchMultiseat();
 
     HWND m_hwnd{nullptr};
-    HWND m_statusBtn{nullptr};
-    HWND m_addWsBtn{nullptr};
+    HWND m_poolGroup{nullptr};
+    HWND m_p1Group{nullptr};
+    HWND m_p2Group{nullptr};
+
     HWND m_saveProfileBtn{nullptr};
     HWND m_loadProfileBtn{nullptr};
-    HWND m_isolationBtn{nullptr};
     HWND m_refreshBtn{nullptr};
+    HWND m_isolationBtn{nullptr};
     HWND m_launchBtn{nullptr};
     HWND m_deviceStatusLabel{nullptr};
-
-    std::vector<HWND> m_workspaceGroupboxes;
-    std::vector<HWND> m_comboDisplays;
-    std::vector<HWND> m_comboKeyboards;
-    std::vector<HWND> m_comboMice;
 
     std::vector<std::unique_ptr<VisualDeviceTile>> m_deviceTiles;
     std::unordered_map<uintptr_t, size_t> m_handleToTileIndex;

@@ -13,9 +13,19 @@ void testHardwareDetector() {
 
     auto keyboards = detector.detectKeyboards();
     std::cout << "[Test] Keyboards detected: " << keyboards.size() << std::endl;
+    for (size_t i = 0; i < keyboards.size(); ++i) {
+        std::wcout << L"  KBD [" << i << L"]: handle=0x" << std::hex << keyboards[i].nativeHandle
+                   << L", name=" << keyboards[i].name
+                   << L", path=" << keyboards[i].devicePath << std::dec << std::endl;
+    }
 
     auto mice = detector.detectMice();
     std::cout << "[Test] Mice detected: " << mice.size() << std::endl;
+    for (size_t i = 0; i < mice.size(); ++i) {
+        std::wcout << L"  MOU [" << i << L"]: handle=0x" << std::hex << mice[i].nativeHandle
+                   << L", name=" << mice[i].name
+                   << L", path=" << mice[i].devicePath << std::dec << std::endl;
+    }
 }
 
 void testWorkspaceManager() {

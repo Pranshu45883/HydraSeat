@@ -21,14 +21,24 @@ enum class PartitionOwner {
     Player2 = 2
 };
 
+enum class DeviceCategory {
+    Display,
+    Keyboard,
+    Mouse,
+    Touchpad,
+    Gamepad
+};
+
 struct VisualDeviceTile {
     HWND hwndControl{nullptr};
     std::wstring name;
-    std::wstring typeIcon; // 🖥️, ⌨️, 🖱️, 🎮
+    std::wstring displayLabel; // e.g. "1.1", "1.2", "KBD 1", "MOU 1"
+    DeviceCategory type{DeviceCategory::Keyboard};
     uintptr_t nativeHandle{0};
     std::wstring devicePath;
     PartitionOwner owner{PartitionOwner::Pool};
     uint64_t flashUntil{0};
+    bool isDragging{false};
 };
 
 class Win32App {
@@ -39,8 +49,8 @@ public:
     bool initialize(HINSTANCE hInstance, int nCmdShow);
     int run();
 
-    void triggerDeviceFlash(uintptr_t handle, const std::wstring& devPath);
-    void moveTileToNextPartition(VisualDeviceTile* tile);
+    void triggerDeviceFlash(uintptr_t handle, const std::wstring& devPath, uint32_t rawDevType, bool isTouchpad);
+    void dropTileAtScreenPos(VisualDeviceTile* tile, POINT screenPt);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);

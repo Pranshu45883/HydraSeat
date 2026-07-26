@@ -8,6 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Include directories
 include_directories(include .)
 
+# Enable UTF-8 encoding for MSVC string literals
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
 if(WIN32)
     add_compile_definitions(_UNICODE UNICODE WIN32_LEAN_AND_MEAN)

@@ -23,7 +23,7 @@ bool InputRouter::postInputToWindow(uint64_t hwndVal, const RawInputEvent& evt) 
     if (!hwnd || !IsWindow(hwnd)) return false;
 
     if (evt.vkey > 0) {
-        UINT msg = (evt.messageType == WM_KEYDOWN) ? WM_KEYDOWN : WM_KEYUP;
+        UINT msg = (evt.messageType == WM_KEYDOWN || evt.messageType == WM_SYSKEYDOWN) ? WM_KEYDOWN : WM_KEYUP;
         WPARAM wParam = static_cast<WPARAM>(evt.vkey);
         LPARAM lParam = (msg == WM_KEYDOWN) ? 0x00010001 : 0xC0010001;
         PostMessageW(hwnd, msg, wParam, lParam);
@@ -46,7 +46,7 @@ bool InputRouter::postInputToWindow(uint64_t hwndVal, const RawInputEvent& evt) 
 LRESULT CALLBACK InputRouter::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_INPUT && g_routerInstance) {
         g_routerInstance->handleRawInput(reinterpret_cast<HRAWINPUT>(lParam));
-        return 0;
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
@@ -64,6 +64,7 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
     RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(lpb.data());
     RawInputEvent event{};
     event.deviceHandle = reinterpret_cast<uintptr_t>(raw->header.hDevice);
+    event.rawDevType = raw->header.dwType;
 
     if (raw->header.hDevice != NULL) {
         UINT nameSize = 0;
@@ -79,11 +80,37 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
     if (raw->header.dwType == RIM_TYPEKEYBOARD) {
         event.messageType = raw->data.keyboard.Message;
         event.vkey = raw->data.keyboard.VKey;
+        if (event.vkey == 0) {
+            event.vkey = raw->data.keyboard.MakeCode;
+        }
     } else if (raw->header.dwType == RIM_TYPEMOUSE) {
         event.messageType = WM_MOUSEMOVE;
         event.deltaX = raw->data.mouse.lLastX;
         event.deltaY = raw->data.mouse.lLastY;
         event.mouseButtons = raw->data.mouse.usButtonFlags;
+
+        // Detect if this mouse event is actually from a touchpad
+        // Windows Precision Touchpads route motion through RIM_TYPEMOUSE
+        if (!event.devicePath.empty()) {
+            std::wstring pathUp = event.devicePath;
+            for (auto& c : pathUp) c = ::towupper(c);
+            if (pathUp.find(L"ELAN") != std::wstring::npos ||
+                pathUp.find(L"SYN") != std::wstring::npos ||
+                pathUp.find(L"ITE") != std::wstring::npos ||
+                pathUp.find(L"ACPI") != std::wstring::npos ||
+                pathUp.find(L"MSFT0001") != std::wstring::npos ||
+                pathUp.find(L"PNP0C50") != std::wstring::npos) {
+                event.isTouchpad = true;
+            }
+        }
+
+        // CRITICAL: Windows Precision Touchpads frequently send RIM_TYPEMOUSE
+        // events with hDevice == NULL (handle = 0). Physical USB mice ALWAYS
+        // have valid non-zero handles. So if handle is NULL and type is MOUSE,
+        // this is almost certainly a touchpad event.
+        if (raw->header.hDevice == NULL) {
+            event.isTouchpad = true;
+        }
     } else if (raw->header.dwType == RIM_TYPEHID) {
         event.messageType = WM_MOUSEMOVE;
         event.isTouchpad = true;
@@ -136,7 +163,6 @@ bool InputRouter::registerRawInputDevices(bool backgroundSink) {
 #ifdef _WIN32
     if (!m_hwnd) return false;
 
-    // RIDEV_INPUTSINK bound to top-level window captures raw input without blocking system typing
     DWORD flags = backgroundSink ? (RIDEV_INPUTSINK | RIDEV_DEVNOTIFY) : RIDEV_DEVNOTIFY;
 
     RAWINPUTDEVICE rid[3];

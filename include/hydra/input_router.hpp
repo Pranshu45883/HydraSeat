@@ -17,6 +17,7 @@ struct RawInputEvent {
     uintptr_t deviceHandle{0};
     std::wstring devicePath;
     uint32_t messageType{0}; // WM_KEYDOWN, WM_KEYUP, WM_MOUSEMOVE, etc.
+    uint32_t rawDevType{0};  // RIM_TYPEKEYBOARD, RIM_TYPEMOUSE, RIM_TYPEHID
     uint32_t vkey{0};
     int32_t deltaX{0};
     int32_t deltaY{0};
@@ -54,6 +55,10 @@ public:
     // Process Win32 window message loop for Raw Input
     void processMessages();
 
+#ifdef _WIN32
+    void handleRawInput(HRAWINPUT hRawInput);
+#endif
+
     // Stop raw input hook
     void stop();
 
@@ -63,7 +68,6 @@ public:
 private:
 #ifdef _WIN32
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-    void handleRawInput(HRAWINPUT hRawInput);
     HWND m_hwnd{nullptr};
 #endif
 

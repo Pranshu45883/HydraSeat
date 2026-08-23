@@ -2,15 +2,15 @@
 
 ---
 
-## Phase 0: Research & Foundation (Current)
+## Phase 0: Research & Foundation (Complete)
 - [x] Establish C++20 / Qt 6 project workspace architecture
 - [x] Configure `.agents/AGENTS.md` autonomous iteration rules
 - [x] Document Windows input/display architectural design
-- [ ] Evaluate open-source libraries: Interception, HidHide, ViGEmBus, Virtual Display Driver (IDD)
+- [x] Evaluate open-source libraries: Interception, HidHide, ViGEmBus, Virtual Display Driver (IDD) ([research decisions](PHASE0_RESEARCH.md))
 
 ---
 
-## Phase 1: Hardware Detection
+## Phase 1: Hardware Detection (Current)
 - [ ] Implement `HardwareDetector` module
 - [ ] Detect and list physical display monitors & virtual displays
 - [ ] Differentiate distinct physical keyboards by HID device path (`RAWINPUTHEADER.hDevice`)

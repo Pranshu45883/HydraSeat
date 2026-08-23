@@ -54,6 +54,7 @@ set(HYDRA_HEADERS
     include/hydra/workspace_manager.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
+    include/hydra/hid_usage.hpp
     ${UI_HEADERS}
 )
 

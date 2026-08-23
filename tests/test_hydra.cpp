@@ -1,10 +1,25 @@
 #include "hydra/hardware_detector.hpp"
+#include "hydra/hid_usage.hpp"
 #include "hydra/display_manager.hpp"
 #include "hydra/workspace_manager.hpp"
 #include "hydra/input_router.hpp"
 
 #include <iostream>
 #include <cassert>
+
+static_assert(hydra::hid::classifyCollection(0x01, 0x02) == hydra::hid::CollectionKind::Mouse);
+static_assert(hydra::hid::classifyCollection(0x0D, 0x05) == hydra::hid::CollectionKind::Touchpad);
+static_assert(hydra::hid::classifyCollection(0x01, 0x06) == hydra::hid::CollectionKind::Keyboard);
+static_assert(hydra::hid::classifyCollection(0x01, 0x04) == hydra::hid::CollectionKind::Joystick);
+static_assert(hydra::hid::classifyCollection(0x01, 0x05) == hydra::hid::CollectionKind::Gamepad);
+static_assert(hydra::hid::classifyCollection(0x0C, 0x01) == hydra::hid::CollectionKind::Other);
+static_assert(hydra::hid::isMouseLikeCollection(0x01, 0x02));
+static_assert(hydra::hid::isMouseLikeCollection(0x0D, 0x05));
+static_assert(!hydra::hid::isMouseLikeCollection(0x01, 0x05));
+
+void testHidUsageClassification() {
+    std::cout << "[Test] HID usage classification tests passed." << std::endl;
+}
 
 void testHardwareDetector() {
     hydra::HardwareDetector detector;
@@ -49,6 +64,7 @@ void testWorkspaceManager() {
 
 int main() {
     std::cout << "Running HydraSeat Engine Tests..." << std::endl;
+    testHidUsageClassification();
     testHardwareDetector();
     testWorkspaceManager();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;

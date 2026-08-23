@@ -1,10 +1,13 @@
 #include "hydra/hardware_detector.hpp"
+#include "hydra/hid_usage.hpp"
 
 #include <iostream>
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <optional>
 #include <unordered_set>
+#include <utility>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -18,6 +21,24 @@
 #endif
 
 namespace hydra {
+
+#ifdef _WIN32
+static std::optional<std::pair<uint16_t, uint16_t>> getRawInputHidUsage(HANDLE deviceHandle) {
+    RID_DEVICE_INFO deviceInfo{};
+    deviceInfo.cbSize = sizeof(deviceInfo);
+    UINT deviceInfoSize = sizeof(deviceInfo);
+
+    if (GetRawInputDeviceInfoW(deviceHandle, RIDI_DEVICEINFO, &deviceInfo, &deviceInfoSize) == (UINT)-1 ||
+        deviceInfo.dwType != RIM_TYPEHID) {
+        return std::nullopt;
+    }
+
+    return std::pair<uint16_t, uint16_t>{
+        deviceInfo.hid.usUsagePage,
+        deviceInfo.hid.usUsage
+    };
+}
+#endif
 
 // Extract clean hardware ID key (strips HID sub-collections like &Col01, &Col02)
 static std::wstring getHardwareDeviceKey(const std::wstring& devPath) {
@@ -83,10 +104,18 @@ std::vector<DeviceInfo> HardwareDetector::detectKeyboards() {
 
     std::unordered_set<std::wstring> seenBaseIDs;
 
-    // First pass: collect base IDs of all MOUSE/HID devices to detect combo devices
+    // First pass: collect base IDs of actual mouse/touchpad collections to detect combo devices.
+    // Generic RIM_TYPEHID also includes gamepads and other unrelated HID collections.
     std::unordered_set<std::wstring> mouseBaseIDs;
     for (const auto& dev : rawList) {
-        if (dev.dwType == RIM_TYPEMOUSE || dev.dwType == RIM_TYPEHID) {
+        bool isMouseLike = (dev.dwType == RIM_TYPEMOUSE);
+        if (dev.dwType == RIM_TYPEHID) {
+            if (const auto usage = getRawInputHidUsage(dev.hDevice)) {
+                isMouseLike = hid::isMouseLikeCollection(usage->first, usage->second);
+            }
+        }
+
+        if (isMouseLike) {
             std::wstring devPath;
             UINT nameSize = 0;
             GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
@@ -206,7 +235,17 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
     int padCount = 0;
 
     for (const auto& dev : rawList) {
-        if (dev.dwType == RIM_TYPEMOUSE || dev.dwType == RIM_TYPEHID) {
+        bool isMouseLike = (dev.dwType == RIM_TYPEMOUSE);
+        bool isTouchpadUsage = false;
+        if (dev.dwType == RIM_TYPEHID) {
+            if (const auto usage = getRawInputHidUsage(dev.hDevice)) {
+                const auto kind = hid::classifyCollection(usage->first, usage->second);
+                isMouseLike = (kind == hid::CollectionKind::Mouse || kind == hid::CollectionKind::Touchpad);
+                isTouchpadUsage = (kind == hid::CollectionKind::Touchpad);
+            }
+        }
+
+        if (isMouseLike) {
             std::wstring devPath;
             UINT nameSize = 0;
             GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
@@ -234,12 +273,13 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
                 seenBaseIDs.insert(baseID);
             }
 
-            bool isTouchpad = (pathUpper.find(L"ELAN") != std::wstring::npos ||
-                               pathUpper.find(L"SYN") != std::wstring::npos ||
-                               pathUpper.find(L"MSFT0001") != std::wstring::npos ||
-                               pathUpper.find(L"PNP0C50") != std::wstring::npos ||
-                               pathUpper.find(L"ITE5570") != std::wstring::npos ||
-                               pathUpper.find(L"TOUCHPAD") != std::wstring::npos);
+            bool isTouchpad = isTouchpadUsage ||
+                               (pathUpper.find(L"ELAN") != std::wstring::npos ||
+                                pathUpper.find(L"SYN") != std::wstring::npos ||
+                                pathUpper.find(L"MSFT0001") != std::wstring::npos ||
+                                pathUpper.find(L"PNP0C50") != std::wstring::npos ||
+                                pathUpper.find(L"ITE5570") != std::wstring::npos ||
+                                pathUpper.find(L"TOUCHPAD") != std::wstring::npos);
 
             // Keep only ONE touchpad tile for the whole system
             if (isTouchpad && padCount > 0) {

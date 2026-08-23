@@ -2,6 +2,10 @@
 
 #include <iostream>
 
+#ifdef _WIN32
+#include <hidusage.h>
+#endif
+
 namespace hydra {
 
 static InputRouter* g_routerInstance = nullptr;
@@ -180,8 +184,8 @@ bool InputRouter::registerRawInputDevices(bool backgroundSink) {
     rid[1].hwndTarget = m_hwnd;
 
     // Touchpad / Precision Touchpad
-    rid[2].usUsagePage = 0x01; // Generic Desktop
-    rid[2].usUsage = 0x05;     // Touch Pad
+    rid[2].usUsagePage = HID_USAGE_PAGE_DIGITIZER;
+    rid[2].usUsage = HID_USAGE_DIGITIZER_TOUCH_PAD;
     rid[2].dwFlags = flags;
     rid[2].hwndTarget = m_hwnd;
 
@@ -220,7 +224,7 @@ void InputRouter::stop() {
         RAWINPUTDEVICE rid[3];
         rid[0].usUsagePage = 0x01; rid[0].usUsage = 0x06; rid[0].dwFlags = RIDEV_REMOVE; rid[0].hwndTarget = NULL;
         rid[1].usUsagePage = 0x01; rid[1].usUsage = 0x02; rid[1].dwFlags = RIDEV_REMOVE; rid[1].hwndTarget = NULL;
-        rid[2].usUsagePage = 0x01; rid[2].usUsage = 0x05; rid[2].dwFlags = RIDEV_REMOVE; rid[2].hwndTarget = NULL;
+        rid[2].usUsagePage = HID_USAGE_PAGE_DIGITIZER; rid[2].usUsage = HID_USAGE_DIGITIZER_TOUCH_PAD; rid[2].dwFlags = RIDEV_REMOVE; rid[2].hwndTarget = NULL;
         RegisterRawInputDevices(rid, 3, sizeof(RAWINPUTDEVICE));
 
         DestroyWindow(m_hwnd);

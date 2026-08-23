@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <hidusage.h>
 #include <iostream>
 
 int main() {
@@ -19,8 +20,8 @@ int main() {
     rid[1].hwndTarget = NULL;
 
     // Remove Touchpad Hook
-    rid[2].usUsagePage = 0x01;
-    rid[2].usUsage = 0x05;
+    rid[2].usUsagePage = HID_USAGE_PAGE_DIGITIZER;
+    rid[2].usUsage = HID_USAGE_DIGITIZER_TOUCH_PAD;
     rid[2].dwFlags = RIDEV_REMOVE;
     rid[2].hwndTarget = NULL;
 

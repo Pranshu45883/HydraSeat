@@ -2,6 +2,7 @@
 #include "hydra/display_manager.hpp"
 #include "hydra/workspace_manager.hpp"
 #include "hydra/input_router.hpp"
+#include "hydra/runtime_authority.hpp"
 
 #include <iostream>
 #include <cassert>
@@ -47,10 +48,58 @@ void testWorkspaceManager() {
     std::cout << "[Test] WorkspaceManager tests passed." << std::endl;
 }
 
+void testRuntimeAuthority() {
+    hydra::runtime::SessionController controller;
+
+    const auto first = controller.beginSeatActivation(1);
+    assert(first.valid());
+    assert(first.seatId == 1);
+
+    const hydra::runtime::ProcessIdentity process{4242, 1001};
+    assert(controller.publishProcess(first, process));
+    assert(!controller.bindTargetWindow(first, {4242, 1002}, 0x100));
+    assert(controller.bindTargetWindow(first, process, 0x100));
+
+    auto snapshot = controller.snapshot(1);
+    assert(snapshot.has_value());
+    assert(snapshot->active);
+    assert(snapshot->process == process);
+    assert(snapshot->targetHwnd == 0x100);
+
+    const auto second = controller.beginSeatActivation(1);
+    assert(second.valid());
+    assert(second.generation > first.generation);
+    assert(!controller.publishProcess(first, process));
+    assert(!controller.bindTargetWindow(first, process, 0x200));
+
+    const hydra::runtime::ProcessIdentity replacement{5252, 2002};
+    assert(controller.publishProcess(second, replacement));
+    assert(controller.bindTargetWindow(second, replacement, 0x200));
+
+    const auto otherSeat = controller.beginSeatActivation(2);
+    assert(otherSeat.valid());
+    assert(controller.publishProcess(otherSeat, {6262, 3003}));
+
+    assert(controller.endSeatActivation(second));
+    snapshot = controller.snapshot(1);
+    assert(snapshot.has_value());
+    assert(!snapshot->active);
+    assert(!snapshot->process.has_value());
+    assert(snapshot->targetHwnd == 0);
+
+    const auto seat2Snapshot = controller.snapshot(2);
+    assert(seat2Snapshot.has_value());
+    assert(seat2Snapshot->active);
+
+    assert(!controller.beginSeatActivation(3).valid());
+    std::cout << "[Test] RuntimeAuthority tests passed." << std::endl;
+}
+
 int main() {
     std::cout << "Running HydraSeat Engine Tests..." << std::endl;
     testHardwareDetector();
     testWorkspaceManager();
+    testRuntimeAuthority();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;
 }

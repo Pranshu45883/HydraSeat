@@ -14,7 +14,6 @@ struct WorkspaceConfig {
     std::wstring keyboardDevicePath;
     std::wstring mouseDevicePath;
     uint32_t controllerIndex{0};
-    uint64_t targetHwnd{0}; // Window handle of assigned game window
     bool active{true};
 };
 
@@ -40,9 +39,6 @@ public:
 
     // Assign gamepad controller to workspace
     bool assignController(uint32_t workspaceId, uint32_t controllerIndex);
-
-    // Set target window handle for workspace input isolation
-    bool assignTargetWindow(uint32_t workspaceId, uint64_t hwnd);
 
     // Get configuration for a specific workspace
     const WorkspaceConfig* getWorkspace(uint32_t workspaceId) const;

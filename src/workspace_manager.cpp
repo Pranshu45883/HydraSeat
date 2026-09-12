@@ -64,13 +64,6 @@ bool WorkspaceManager::assignController(uint32_t workspaceId, uint32_t controlle
     return true;
 }
 
-bool WorkspaceManager::assignTargetWindow(uint32_t workspaceId, uint64_t hwnd) {
-    auto it = m_workspaces.find(workspaceId);
-    if (it == m_workspaces.end()) return false;
-    it->second.targetHwnd = hwnd;
-    return true;
-}
-
 const WorkspaceConfig* WorkspaceManager::getWorkspace(uint32_t workspaceId) const {
     auto it = m_workspaces.find(workspaceId);
     if (it == m_workspaces.end()) return nullptr;

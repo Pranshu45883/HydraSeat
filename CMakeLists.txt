@@ -42,6 +42,7 @@ set(HYDRA_SOURCES
     src/input_router.cpp
     src/display_manager.cpp
     src/workspace_manager.cpp
+    src/runtime_authority.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
     ${UI_SOURCES}
@@ -52,6 +53,7 @@ set(HYDRA_HEADERS
     include/hydra/input_router.hpp
     include/hydra/display_manager.hpp
     include/hydra/workspace_manager.hpp
+    include/hydra/runtime_authority.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     ${UI_HEADERS}

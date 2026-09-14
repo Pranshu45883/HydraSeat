@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hydra/controller_identity.hpp"
+#include "hydra/controller_inventory.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -14,6 +14,7 @@ enum class IoStatus : std::uint8_t {
     Disconnected = 3,
     PlatformUnavailable = 4,
     NativeFailure = 5,
+    StaleBinding = 6,
 };
 
 struct GamepadState {
@@ -34,10 +35,10 @@ struct PollResult {
     std::optional<GamepadState> state;
 };
 
-// Executes only the runtime control surface declared by the binding. Stable
-// GameInput/DirectInput bindings never silently degrade to an XInput slot.
-PollResult pollBoundController(const SeatBinding& binding) noexcept;
+PollResult pollBoundController(const SeatBinding& binding,
+                               const InventorySnapshot& inventory) noexcept;
 IoStatus setBoundControllerVibration(const SeatBinding& binding,
+                                     const InventorySnapshot& inventory,
                                      std::uint16_t leftMotor,
                                      std::uint16_t rightMotor) noexcept;
 

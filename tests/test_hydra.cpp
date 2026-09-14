@@ -15,7 +15,6 @@ void testHardwareDetector() {
     hydra::HardwareDetector detector;
     auto displays = detector.detectDisplays();
     std::cout << "[Test] Displays detected: " << displays.size() << std::endl;
-
     auto keyboards = detector.detectKeyboards();
     std::cout << "[Test] Keyboards detected: " << keyboards.size() << std::endl;
     for (size_t i = 0; i < keyboards.size(); ++i) {
@@ -80,10 +79,31 @@ void testRuntimeAuthority() {
     assert(!controller.bindTargetWindow(first, {4242, 1002}, 0x100));
     assert(controller.bindTargetWindow(first, process, 0x100));
 
+    hydra::controller::InventorySnapshot controllerInventory;
+    controllerInventory.authoritative = true;
+
+    hydra::controller::SourceDescriptor stableSource;
+    stableSource.runtimeKey = "gameinput:pad-a";
+    stableSource.persistentId = std::wstring{L"container-a"};
+    stableSource.api = hydra::controller::ApiSurface::GameInput;
+    stableSource.identityQuality = hydra::controller::IdentityQuality::Stable;
+    stableSource.connected = true;
+    controllerInventory.sources.push_back(stableSource);
+
+    hydra::controller::SourceDescriptor xinputSource;
+    xinputSource.runtimeKey = "xinput-slot:0";
+    xinputSource.api = hydra::controller::ApiSurface::XInput;
+    xinputSource.identityQuality = hydra::controller::IdentityQuality::RuntimeOnly;
+    xinputSource.runtimeXInputSlot = std::uint8_t{0};
+    xinputSource.connected = true;
+    controllerInventory.sources.push_back(xinputSource);
+    controllerInventory.physicalControllers.push_back(
+        {L"container-a", L"Physical Pad A", L"hid-path-a"});
+
     const hydra::controller::SeatBinding seat1Controller{
         1, hydra::controller::ApiSurface::GameInput, "gameinput:pad-a",
-        std::wstring{L"container-a"}, std::nullopt};
-    assert(controller.bindController(first, seat1Controller));
+        std::wstring{L"container-a"}, std::nullopt, 0};
+    assert(controller.bindController(first, seat1Controller, controllerInventory));
 
     auto snapshot = controller.snapshot(1);
     assert(snapshot.has_value());
@@ -112,25 +132,34 @@ void testRuntimeAuthority() {
     assert(!controller.bindTargetWindow(otherSeat, otherProcess, 0x100));
     assert(controller.bindTargetWindow(otherSeat, otherProcess, 0x200));
 
-    // Same physical controller cannot be owned by both Seats even if the
-    // runtime-facing key differs.
     const hydra::controller::SeatBinding duplicateController{
-        2, hydra::controller::ApiSurface::GameInput, "gameinput:pad-a-second-view",
-        std::wstring{L"CONTAINER-A"}, std::nullopt};
-    assert(!controller.bindController(otherSeat, duplicateController));
+        2, hydra::controller::ApiSurface::GameInput, "gameinput:pad-a",
+        std::wstring{L"CONTAINER-A"}, std::nullopt, 0};
+    assert(!controller.bindController(
+        otherSeat, duplicateController, controllerInventory));
 
     const hydra::controller::SeatBinding seat2Controller{
         2, hydra::controller::ApiSurface::XInput, "xinput-slot:0",
-        std::nullopt, std::uint8_t{0}};
-    assert(controller.bindController(otherSeat, seat2Controller));
+        std::nullopt, std::uint8_t{0}, 0};
+    assert(controller.bindController(
+        otherSeat, seat2Controller, controllerInventory));
 
-    // GameInput is not silently downgraded to XInput.
-    const auto unsupportedPoll = controller.pollController(first);
+    const auto unsupportedPoll = controller.pollController(
+        first, controllerInventory);
     assert(unsupportedPoll.status == hydra::controller::IoStatus::UnsupportedApi);
 
-    const auto seat2Poll = controller.pollController(otherSeat);
+    auto staleInventory = controllerInventory;
+    ++staleInventory.sources[1].sourceGeneration;
+    assert(controller.pollController(otherSeat, staleInventory).status ==
+           hydra::controller::IoStatus::StaleBinding);
+    assert(controller.setControllerVibration(
+               otherSeat, staleInventory, std::uint16_t{0}, std::uint16_t{0}) ==
+           hydra::controller::IoStatus::StaleBinding);
+
+    const auto seat2Poll = controller.pollController(
+        otherSeat, controllerInventory);
     const auto seat2Vibration = controller.setControllerVibration(
-        otherSeat, std::uint16_t{0}, std::uint16_t{0});
+        otherSeat, controllerInventory, std::uint16_t{0}, std::uint16_t{0});
 #ifdef _WIN32
     assert(seat2Poll.status == hydra::controller::IoStatus::Ok ||
            seat2Poll.status == hydra::controller::IoStatus::Disconnected);
@@ -155,7 +184,8 @@ void testRuntimeAuthority() {
     assert(restarted.generation > first.generation);
     assert(!controller.publishProcess(first, process));
     assert(!controller.bindTargetWindow(first, process, 0x300));
-    assert(!controller.bindController(first, seat1Controller));
+    assert(!controller.bindController(
+        first, seat1Controller, controllerInventory));
     assert(!controller.endSeatActivation(first));
 
     const hydra::runtime::ProcessIdentity replacement{5252, 2002};
@@ -171,10 +201,11 @@ void testRuntimeAuthority() {
 
     assert(controller.endSeatActivation(restarted));
     assert(controller.endSeatActivation(otherSeat));
-    assert(controller.pollController(otherSeat).status ==
+    assert(controller.pollController(otherSeat, controllerInventory).status ==
            hydra::controller::IoStatus::InvalidBinding);
     assert(controller.setControllerVibration(
-               otherSeat, std::uint16_t{0}, std::uint16_t{0}) ==
+               otherSeat, controllerInventory,
+               std::uint16_t{0}, std::uint16_t{0}) ==
            hydra::controller::IoStatus::InvalidBinding);
     assert(!controller.beginSeatActivation(3).valid());
 

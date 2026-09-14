@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cwchar>
+#include <cwctype>
 #include <set>
 #include <string>
 #include <vector>
@@ -18,6 +19,11 @@
 
 namespace hydra::controller {
 namespace {
+
+std::wstring canonicalPersistentId(std::wstring value) {
+    for (auto& ch : value) ch = static_cast<wchar_t>(std::towupper(ch));
+    return value;
+}
 
 #if defined(_WIN32)
 
@@ -175,7 +181,7 @@ bool appendPhysicalControllers(std::vector<PhysicalControllerDescriptor>& output
 
 } // namespace
 
-InventorySnapshot scanControllerSources() noexcept {
+InventorySnapshot ControllerInventory::scan() noexcept {
     InventorySnapshot snapshot;
 
 #if defined(_WIN32)
@@ -192,6 +198,16 @@ InventorySnapshot scanControllerSources() noexcept {
             source.identityQuality = IdentityQuality::RuntimeOnly;
             source.runtimeXInputSlot = slot;
             source.connected = (result == ERROR_SUCCESS);
+
+            if (!seenSlots_[slot]) {
+                seenSlots_[slot] = true;
+                previousConnected_[slot] = source.connected;
+                generations_[slot] = source.connected ? 1u : 0u;
+            } else if (previousConnected_[slot] != source.connected) {
+                previousConnected_[slot] = source.connected;
+                ++generations_[slot];
+            }
+            source.sourceGeneration = generations_[slot];
             snapshot.sources.push_back(std::move(source));
         }
 
@@ -214,6 +230,95 @@ InventorySnapshot scanControllerSources() noexcept {
     snapshot.error = "native Windows controller inventory is unavailable on this platform";
     return snapshot;
 #endif
+}
+
+InventorySnapshot scanControllerSources() noexcept {
+    ControllerInventory inventory;
+    return inventory.scan();
+}
+
+PairingResult pairPhysicalControllerToXInput(
+    std::uint32_t seatId,
+    const std::wstring& persistentControllerId,
+    std::uint8_t runtimeSlot,
+    const InventorySnapshot& inventory) noexcept {
+    if (seatId != 1 && seatId != 2) {
+        return {PairingStatus::InvalidSeat, std::nullopt};
+    }
+    if (persistentControllerId.empty()) {
+        return {PairingStatus::InvalidPersistentId, std::nullopt};
+    }
+    if (runtimeSlot >= kXInputSlotCount) {
+        return {PairingStatus::RuntimeSlotOutOfRange, std::nullopt};
+    }
+
+    const auto wanted = canonicalPersistentId(persistentControllerId);
+    const PhysicalControllerDescriptor* physical = nullptr;
+    std::size_t physicalMatches = 0;
+    for (const auto& candidate : inventory.physicalControllers) {
+        if (canonicalPersistentId(candidate.persistentId) != wanted) continue;
+        ++physicalMatches;
+        physical = &candidate;
+    }
+    if (physicalMatches == 0) {
+        return {PairingStatus::PhysicalControllerNotFound, std::nullopt};
+    }
+    if (physicalMatches != 1 || physical == nullptr) {
+        return {PairingStatus::AmbiguousPhysicalController, std::nullopt};
+    }
+
+    const SourceDescriptor* runtime = nullptr;
+    std::size_t runtimeMatches = 0;
+    for (const auto& source : inventory.sources) {
+        if (source.api != ApiSurface::XInput || !source.runtimeXInputSlot ||
+            *source.runtimeXInputSlot != runtimeSlot) {
+            continue;
+        }
+        ++runtimeMatches;
+        runtime = &source;
+    }
+    if (runtimeMatches != 1 || runtime == nullptr) {
+        return {PairingStatus::RuntimeSourceNotFound, std::nullopt};
+    }
+    if (!runtime->connected) {
+        return {PairingStatus::RuntimeSourceDisconnected, std::nullopt};
+    }
+
+    SeatBinding binding;
+    binding.seatId = seatId;
+    binding.api = ApiSurface::XInput;
+    binding.runtimeKey = runtime->runtimeKey;
+    binding.persistentControllerId = physical->persistentId;
+    binding.runtimeXInputSlot = runtimeSlot;
+    binding.sourceGeneration = runtime->sourceGeneration;
+    return {PairingStatus::Ok, binding};
+}
+
+bool bindingMatchesInventory(const SeatBinding& binding,
+                             const InventorySnapshot& inventory) noexcept {
+    const SourceDescriptor* runtime = nullptr;
+    std::size_t runtimeMatches = 0;
+    for (const auto& source : inventory.sources) {
+        if (source.api != binding.api || source.runtimeKey != binding.runtimeKey) continue;
+        ++runtimeMatches;
+        runtime = &source;
+    }
+    if (runtimeMatches != 1 || runtime == nullptr || !runtime->connected ||
+        runtime->sourceGeneration != binding.sourceGeneration ||
+        runtime->runtimeXInputSlot != binding.runtimeXInputSlot) {
+        return false;
+    }
+
+    if (!binding.persistentControllerId) return true;
+
+    const auto wanted = canonicalPersistentId(*binding.persistentControllerId);
+    std::size_t physicalMatches = 0;
+    for (const auto& physical : inventory.physicalControllers) {
+        if (canonicalPersistentId(physical.persistentId) == wanted) {
+            ++physicalMatches;
+        }
+    }
+    return physicalMatches == 1;
 }
 
 } // namespace hydra::controller

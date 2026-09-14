@@ -63,6 +63,7 @@ set(HYDRA_SOURCES
     src/controller_inventory.cpp
     src/controller_io.cpp
     src/controller_pairing.cpp
+    src/controller_virtual_xinput.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
     ${UI_SOURCES}
@@ -86,6 +87,7 @@ set(HYDRA_HEADERS
     include/hydra/controller_inventory.hpp
     include/hydra/controller_io.hpp
     include/hydra/controller_pairing.hpp
+    include/hydra/controller_virtual_xinput.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     include/hydra/audio_endpoint_inventory.hpp

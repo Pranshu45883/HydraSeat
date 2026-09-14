@@ -6,6 +6,8 @@
 
 #include <iostream>
 #include <cassert>
+#include <cstdio>
+#include <fstream>
 
 void testControllerIdentity();
 
@@ -38,14 +40,31 @@ void testWorkspaceManager() {
 
     assert(ws1 == 1);
     assert(ws2 == 2);
+    assert(mgr.createWorkspace(L"Player 3") == 0);
     assert(mgr.getAllWorkspaces().size() == 2);
 
-    bool assigned = mgr.assignDisplay(ws1, L"\\\\.\\DISPLAY1");
-    assert(assigned);
+    assert(mgr.assignDisplay(ws1, L"\\\\.\\DISPLAY1"));
+    assert(mgr.assignController(ws1, L"container-a"));
 
     const auto* wsConfig = mgr.getWorkspace(ws1);
     assert(wsConfig != nullptr);
     assert(wsConfig->displayDeviceName == L"\\\\.\\DISPLAY1");
+    assert(wsConfig->controllerId == std::optional<std::wstring>{L"container-a"});
+
+    const char* profilePath = "workspace_config_test.json";
+    assert(mgr.saveToFile(profilePath));
+    std::ifstream profile(profilePath);
+    const std::string saved((std::istreambuf_iterator<char>(profile)),
+                            std::istreambuf_iterator<char>());
+    assert(saved.find("\"version\": \"1.1\"") != std::string::npos);
+    assert(saved.find("\"controllerId\": \"container-a\"") != std::string::npos);
+    std::remove(profilePath);
+
+    hydra::WorkspaceManager reused;
+    assert(reused.createWorkspace(L"Seat 1") == 1);
+    assert(reused.createWorkspace(L"Seat 2") == 2);
+    assert(reused.removeWorkspace(1));
+    assert(reused.createWorkspace(L"Seat 1 again") == 1);
 
     std::cout << "[Test] WorkspaceManager tests passed." << std::endl;
 }

@@ -1,4 +1,5 @@
 #include "hydra/controller_identity.hpp"
+#include "hydra/controller_inventory.hpp"
 
 #include <algorithm>
 #include <array>
@@ -78,4 +79,21 @@ void testControllerIdentity() {
     };
     assert(hasIssue(planSeatBindings(ambiguousRequest, ambiguous),
                     BindingIssueCode::AmbiguousSource));
+
+    const auto inventory = scanControllerSources();
+#if defined(_WIN32)
+    assert(inventory.authoritative);
+    assert(inventory.sources.size() == kXInputSlotCount);
+    for (std::uint8_t slot = 0; slot < kXInputSlotCount; ++slot) {
+        const auto& source = inventory.sources[slot];
+        assert(source.api == ApiSurface::XInput);
+        assert(source.identityQuality == IdentityQuality::RuntimeOnly);
+        assert(source.runtimeXInputSlot == std::optional<std::uint8_t>{slot});
+        assert(!source.persistentId.has_value());
+    }
+#else
+    assert(!inventory.authoritative);
+    assert(inventory.sources.empty());
+    assert(!inventory.error.empty());
+#endif
 }

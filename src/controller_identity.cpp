@@ -169,4 +169,13 @@ BindingPlan planSeatBindings(std::span<const SeatBindingRequest> requests,
     return plan;
 }
 
+bool sameControllerSource(const SeatBinding& left,
+                          const SeatBinding& right) noexcept {
+    if (left.persistentControllerId && right.persistentControllerId) {
+        return canonicalId(*left.persistentControllerId) ==
+               canonicalId(*right.persistentControllerId);
+    }
+    return !left.runtimeKey.empty() && left.runtimeKey == right.runtimeKey;
+}
+
 } // namespace hydra::controller

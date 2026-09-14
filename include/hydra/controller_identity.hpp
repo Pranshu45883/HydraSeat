@@ -84,4 +84,10 @@ struct BindingPlan {
 BindingPlan planSeatBindings(std::span<const SeatBindingRequest> requests,
                              std::span<const SourceDescriptor> sources);
 
+// A stable physical ID takes precedence over the current runtime surface. This
+// lets SessionController reject the same pad even if Windows exposes it through
+// a different runtime key later in the same session.
+bool sameControllerSource(const SeatBinding& left,
+                          const SeatBinding& right) noexcept;
+
 } // namespace hydra::controller

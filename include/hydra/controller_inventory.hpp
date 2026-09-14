@@ -36,6 +36,8 @@ enum class PairingStatus : std::uint8_t {
     RuntimeSlotOutOfRange = 5,
     RuntimeSourceNotFound = 6,
     RuntimeSourceDisconnected = 7,
+    PairingGestureNotDetected = 8,
+    PairingGestureAmbiguous = 9,
 };
 
 struct PairingResult {

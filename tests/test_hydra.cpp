@@ -7,6 +7,8 @@
 #include <iostream>
 #include <cassert>
 
+void testControllerIdentity();
+
 void testHardwareDetector() {
     hydra::HardwareDetector detector;
     auto displays = detector.detectDisplays();
@@ -100,6 +102,7 @@ int main() {
     testHardwareDetector();
     testWorkspaceManager();
     testRuntimeAuthority();
+    testControllerIdentity();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;
 }

@@ -19,7 +19,8 @@ bool validXInputBinding(const SeatBinding& binding, std::uint8_t& slot) noexcept
 
 } // namespace
 
-PollResult pollBoundController(const SeatBinding& binding) noexcept {
+PollResult pollBoundController(const SeatBinding& binding,
+                               const InventorySnapshot& inventory) noexcept {
     if (binding.api != ApiSurface::XInput) {
         return {IoStatus::UnsupportedApi, std::nullopt};
     }
@@ -27,6 +28,9 @@ PollResult pollBoundController(const SeatBinding& binding) noexcept {
     std::uint8_t slot = 0;
     if (!validXInputBinding(binding, slot)) {
         return {IoStatus::InvalidBinding, std::nullopt};
+    }
+    if (!bindingMatchesInventory(binding, inventory)) {
+        return {IoStatus::StaleBinding, std::nullopt};
     }
 
 #if defined(_WIN32)
@@ -56,12 +60,14 @@ PollResult pollBoundController(const SeatBinding& binding) noexcept {
 }
 
 IoStatus setBoundControllerVibration(const SeatBinding& binding,
+                                     const InventorySnapshot& inventory,
                                      std::uint16_t leftMotor,
                                      std::uint16_t rightMotor) noexcept {
     if (binding.api != ApiSurface::XInput) return IoStatus::UnsupportedApi;
 
     std::uint8_t slot = 0;
     if (!validXInputBinding(binding, slot)) return IoStatus::InvalidBinding;
+    if (!bindingMatchesInventory(binding, inventory)) return IoStatus::StaleBinding;
 
 #if defined(_WIN32)
     XINPUT_STATE state{};

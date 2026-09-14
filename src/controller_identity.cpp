@@ -154,7 +154,8 @@ BindingPlan planSeatBindings(std::span<const SeatBindingRequest> requests,
                                  request.persistentControllerId
                                      ? source->persistentId
                                      : std::nullopt,
-                                 source->runtimeXInputSlot});
+                                 source->runtimeXInputSlot,
+                                 source->sourceGeneration});
     }
 
     std::sort(plan.bindings.begin(), plan.bindings.end(),

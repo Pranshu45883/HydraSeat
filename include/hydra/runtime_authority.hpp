@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hydra/controller_io.hpp"
+#include "hydra/controller_virtual_xinput.hpp"
 
 #include <cstdint>
 #include <mutex>
@@ -89,6 +89,8 @@ public:
         const controller::InventorySnapshot& inventory,
         std::uint16_t lowFrequencyMotor,
         std::uint16_t highFrequencyMotor) noexcept;
+    std::optional<controller::VirtualXInputMapping> virtualXInputMapping(
+        const ActivationToken& token) const noexcept;
     bool endSeatActivation(const ActivationToken& token) noexcept;
     std::optional<SeatRuntimeSnapshot> snapshot(std::uint32_t seatId) const noexcept;
 

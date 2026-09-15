@@ -75,6 +75,13 @@ set(HYDRA_HEADERS
     ${UI_HEADERS}
 )
 
+set(XINPUT_PROBE_SUPPORT_SOURCES
+    src/xinput_probe.cpp
+)
+set(XINPUT_PROBE_SUPPORT_HEADERS
+    include/hydra/xinput_probe.hpp
+)
+
 # Core Executable target (Windows GUI subsystem)
 add_executable(HydraSeat WIN32 src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 
@@ -91,11 +98,37 @@ endif()
 add_executable(reset_input src/reset_input.cpp)
 if(WIN32)
     target_link_libraries(reset_input PRIVATE User32.lib)
+
+    add_executable(xinput_probe_game
+        tools/xinput_probe_game.cpp
+        ${XINPUT_PROBE_SUPPORT_SOURCES}
+        ${XINPUT_PROBE_SUPPORT_HEADERS}
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_pipe.cpp
+        src/virtual_xinput_service.cpp
+        src/controller_io.cpp
+        src/controller_inventory.cpp
+        src/controller_identity.cpp
+    )
+    target_link_libraries(xinput_probe_game PRIVATE ${WIN32_LIBS})
 endif()
 
 # Test Suite Executable Target
 enable_testing()
-add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp tests/test_controller_pairing.cpp tests/test_controller_virtual_xinput.cpp tests/test_virtual_xinput_protocol.cpp tests/test_virtual_xinput_service.cpp tests/test_virtual_xinput_pipe.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+add_executable(hydra_tests
+    tests/test_hydra.cpp
+    tests/test_controller_identity.cpp
+    tests/test_controller_pairing.cpp
+    tests/test_controller_virtual_xinput.cpp
+    tests/test_virtual_xinput_protocol.cpp
+    tests/test_virtual_xinput_service.cpp
+    tests/test_virtual_xinput_pipe.cpp
+    tests/test_xinput_probe_game.cpp
+    ${HYDRA_SOURCES}
+    ${HYDRA_HEADERS}
+    ${XINPUT_PROBE_SUPPORT_SOURCES}
+    ${XINPUT_PROBE_SUPPORT_HEADERS}
+)
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
 endif()

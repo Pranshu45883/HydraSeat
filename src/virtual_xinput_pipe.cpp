@@ -162,17 +162,29 @@ std::optional<ipc::VirtualXInputResponse> sendVirtualXInputRequest(
     const ipc::VirtualXInputRequest& request,
     std::uint32_t timeoutMs) noexcept {
 #if defined(_WIN32)
-    if (!WaitNamedPipeW(endpoint.c_str(), timeoutMs)) return std::nullopt;
+    const ULONGLONG start = GetTickCount64();
+    HANDLE pipeHandle = INVALID_HANDLE_VALUE;
+    for (;;) {
+        pipeHandle = CreateFileW(
+            endpoint.c_str(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED,
+            nullptr);
+        if (pipeHandle != INVALID_HANDLE_VALUE) break;
 
-    ScopedHandle pipe(CreateFileW(
-        endpoint.c_str(),
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_FLAG_OVERLAPPED,
-        nullptr));
-    if (!pipe.valid()) return std::nullopt;
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY) {
+            return std::nullopt;
+        }
+        if (timeoutMs == 0 || GetTickCount64() - start >= timeoutMs) {
+            return std::nullopt;
+        }
+        Sleep(1);
+    }
+    ScopedHandle pipe(pipeHandle);
 
     const auto requestBytes = ipc::encodeRequest(request);
     if (!writeExact(pipe.get(), requestBytes.data(), requestBytes.size(), timeoutMs)) {

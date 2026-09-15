@@ -12,7 +12,11 @@ int wmain(int argc, wchar_t* argv[]) {
 
     const auto options = hydra::controller::probe::parseProbeArgs(args);
     if (!options) return 2;
-    return hydra::controller::probe::runProbe(*options, std::cout);
+
+    const int result = hydra::controller::probe::runProbe(*options, std::cout);
+    std::cout.flush();
+    if (result != 0) return result;
+    return std::cout.good() ? 0 : 6;
 }
 #else
 int main() {

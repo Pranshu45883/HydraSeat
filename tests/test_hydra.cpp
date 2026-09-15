@@ -13,6 +13,7 @@ void testControllerIdentity();
 void testControllerPairing();
 void testControllerVirtualXInput();
 void testVirtualXInputProtocol();
+void testVirtualXInputService();
 
 void testHardwareDetector() {
     hydra::HardwareDetector detector;
@@ -224,6 +225,7 @@ int main() {
     testControllerPairing();
     testControllerVirtualXInput();
     testVirtualXInputProtocol();
+    testVirtualXInputService();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;
 }

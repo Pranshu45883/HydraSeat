@@ -50,6 +50,7 @@ set(HYDRA_SOURCES
     src/controller_virtual_xinput.cpp
     src/virtual_xinput_protocol.cpp
     src/virtual_xinput_service.cpp
+    src/virtual_xinput_pipe.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
     ${UI_SOURCES}
@@ -68,6 +69,7 @@ set(HYDRA_HEADERS
     include/hydra/controller_virtual_xinput.hpp
     include/hydra/virtual_xinput_protocol.hpp
     include/hydra/virtual_xinput_service.hpp
+    include/hydra/virtual_xinput_pipe.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     ${UI_HEADERS}
@@ -93,7 +95,7 @@ endif()
 
 # Test Suite Executable Target
 enable_testing()
-add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp tests/test_controller_pairing.cpp tests/test_controller_virtual_xinput.cpp tests/test_virtual_xinput_protocol.cpp tests/test_virtual_xinput_service.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp tests/test_controller_pairing.cpp tests/test_controller_virtual_xinput.cpp tests/test_virtual_xinput_protocol.cpp tests/test_virtual_xinput_service.cpp tests/test_virtual_xinput_pipe.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
 endif()

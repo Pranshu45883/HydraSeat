@@ -131,8 +131,26 @@ add_executable(hydra_tests
 )
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
+
+    add_executable(xinput_process_isolation
+        tests/test_xinput_process_isolation.cpp
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_service.cpp
+        src/virtual_xinput_pipe.cpp
+        src/controller_virtual_xinput.cpp
+        src/controller_io.cpp
+        src/controller_inventory.cpp
+        src/controller_identity.cpp
+    )
+    target_link_libraries(xinput_process_isolation PRIVATE ${WIN32_LIBS})
 endif()
 if(Qt6_FOUND)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
 endif()
 add_test(NAME EngineUnitTests COMMAND hydra_tests)
+if(WIN32)
+    add_test(
+        NAME XInputProcessIsolation
+        COMMAND xinput_process_isolation $<TARGET_FILE:xinput_probe_game>
+    )
+endif()

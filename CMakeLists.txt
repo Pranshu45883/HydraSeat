@@ -44,6 +44,7 @@ set(HYDRA_SOURCES
     src/workspace_manager.cpp
     src/runtime_authority.cpp
     src/controller_identity.cpp
+    src/controller_inventory.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
     ${UI_SOURCES}
@@ -56,6 +57,7 @@ set(HYDRA_HEADERS
     include/hydra/workspace_manager.hpp
     include/hydra/runtime_authority.hpp
     include/hydra/controller_identity.hpp
+    include/hydra/controller_inventory.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     ${UI_HEADERS}

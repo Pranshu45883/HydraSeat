@@ -158,12 +158,15 @@ add_executable(hydra_tests
     tests/test_virtual_xinput_service.cpp
     tests/test_virtual_xinput_pipe.cpp
     tests/test_xinput_probe_game.cpp
+    tests/test_xinput_adapter_session.cpp
     src/virtual_xinput_protocol.cpp
     src/virtual_xinput_service.cpp
     src/virtual_xinput_pipe.cpp
+    src/xinput_adapter_session.cpp
     include/hydra/virtual_xinput_protocol.hpp
     include/hydra/virtual_xinput_service.hpp
     include/hydra/virtual_xinput_pipe.hpp
+    include/hydra/xinput_adapter_session.hpp
     ${HYDRA_SOURCES}
     ${HYDRA_HEADERS}
     ${XINPUT_PROBE_SUPPORT_SOURCES}

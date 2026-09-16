@@ -181,6 +181,18 @@ if(WIN32)
         src/controller_identity.cpp
     )
     target_link_libraries(xinput_process_isolation PRIVATE ${WIN32_LIBS})
+
+    add_executable(xinput_adapter_process_isolation
+        tests/test_xinput_adapter_process_isolation.cpp
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_service.cpp
+        src/virtual_xinput_pipe.cpp
+        src/controller_virtual_xinput.cpp
+        src/controller_io.cpp
+        src/controller_inventory.cpp
+        src/controller_identity.cpp
+    )
+    target_link_libraries(xinput_adapter_process_isolation PRIVATE ${WIN32_LIBS})
 endif()
 if(Qt6_FOUND)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
@@ -194,5 +206,11 @@ if(WIN32)
     add_test(
         NAME XInputAdapterExports
         COMMAND xinput_adapter_exports $<TARGET_FILE:hydra_xinput_adapter>
+    )
+    add_test(
+        NAME XInputAdapterProcessIsolation
+        COMMAND xinput_adapter_process_isolation
+                $<TARGET_FILE:xinput_abi_probe_game>
+                $<TARGET_FILE:hydra_xinput_adapter>
     )
 endif()

@@ -51,6 +51,7 @@ set(HYDRA_SOURCES
     src/virtual_xinput_protocol.cpp
     src/virtual_xinput_service.cpp
     src/virtual_xinput_pipe.cpp
+    src/xinput_adapter_session.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
     ${UI_SOURCES}
@@ -70,6 +71,7 @@ set(HYDRA_HEADERS
     include/hydra/virtual_xinput_protocol.hpp
     include/hydra/virtual_xinput_service.hpp
     include/hydra/virtual_xinput_pipe.hpp
+    include/hydra/xinput_adapter_session.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     ${UI_HEADERS}
@@ -124,6 +126,7 @@ add_executable(hydra_tests
     tests/test_virtual_xinput_service.cpp
     tests/test_virtual_xinput_pipe.cpp
     tests/test_xinput_probe_game.cpp
+    tests/test_xinput_adapter_session.cpp
     ${HYDRA_SOURCES}
     ${HYDRA_HEADERS}
     ${XINPUT_PROBE_SUPPORT_SOURCES}

@@ -1,4 +1,5 @@
 #include "hydra/virtual_xinput_pipe.hpp"
+#include "hydra/virtual_xinput_service.hpp"
 
 #include <cassert>
 #include <chrono>

@@ -1,12 +1,14 @@
 #pragma once
 
-#include "hydra/virtual_xinput_service.hpp"
+#include "hydra/virtual_xinput_protocol.hpp"
 
 #include <cstdint>
 #include <optional>
 #include <string>
 
 namespace hydra::controller {
+
+class VirtualXInputService;
 
 struct PipeServerResult {
     bool served{false};

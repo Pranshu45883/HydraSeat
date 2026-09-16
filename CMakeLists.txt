@@ -113,6 +113,26 @@ if(WIN32)
         src/controller_identity.cpp
     )
     target_link_libraries(xinput_probe_game PRIVATE ${WIN32_LIBS})
+
+    add_executable(xinput_adapter_exports
+        tests/test_xinput_adapter_exports.cpp
+    )
+
+    add_library(hydra_xinput_adapter SHARED
+        src/xinput_adapter_dll.cpp
+        src/xinput_adapter_session.cpp
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_pipe.cpp
+        src/hydra_xinput_adapter.def
+        include/hydra/xinput_adapter_session.hpp
+        include/hydra/virtual_xinput_protocol.hpp
+        include/hydra/virtual_xinput_pipe.hpp
+    )
+    target_compile_definitions(
+        hydra_xinput_adapter PRIVATE HYDRA_VIRTUAL_XINPUT_CLIENT_ONLY=1)
+    set_target_properties(
+        hydra_xinput_adapter PROPERTIES OUTPUT_NAME "hydra_xinput_adapter")
+    add_dependencies(xinput_adapter_exports hydra_xinput_adapter)
 endif()
 
 # Test Suite Executable Target
@@ -155,5 +175,9 @@ if(WIN32)
     add_test(
         NAME XInputProcessIsolation
         COMMAND xinput_process_isolation $<TARGET_FILE:xinput_probe_game>
+    )
+    add_test(
+        NAME XInputAdapterExports
+        COMMAND xinput_adapter_exports $<TARGET_FILE:hydra_xinput_adapter>
     )
 endif()

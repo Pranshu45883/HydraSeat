@@ -1,4 +1,5 @@
 #include "hydra/xinput_probe.hpp"
+#include "hydra/controller_virtual_xinput.hpp"
 
 #include <limits>
 #include <ostream>

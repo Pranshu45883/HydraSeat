@@ -83,6 +83,12 @@ set(XINPUT_PROBE_SUPPORT_SOURCES
 set(XINPUT_PROBE_SUPPORT_HEADERS
     include/hydra/xinput_probe.hpp
 )
+set(XINPUT_ABI_PROBE_SUPPORT_SOURCES
+    src/xinput_abi_probe.cpp
+)
+set(XINPUT_ABI_PROBE_SUPPORT_HEADERS
+    include/hydra/xinput_abi_probe.hpp
+)
 
 # Core Executable target (Windows GUI subsystem)
 add_executable(HydraSeat WIN32 src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
@@ -118,6 +124,12 @@ if(WIN32)
         tests/test_xinput_adapter_exports.cpp
     )
 
+    add_executable(xinput_abi_probe_game
+        tools/xinput_abi_probe_game.cpp
+        ${XINPUT_ABI_PROBE_SUPPORT_SOURCES}
+        ${XINPUT_ABI_PROBE_SUPPORT_HEADERS}
+    )
+
     add_library(hydra_xinput_adapter SHARED
         src/xinput_adapter_dll.cpp
         src/xinput_adapter_session.cpp
@@ -147,10 +159,13 @@ add_executable(hydra_tests
     tests/test_virtual_xinput_pipe.cpp
     tests/test_xinput_probe_game.cpp
     tests/test_xinput_adapter_session.cpp
+    tests/test_xinput_abi_probe.cpp
     ${HYDRA_SOURCES}
     ${HYDRA_HEADERS}
     ${XINPUT_PROBE_SUPPORT_SOURCES}
     ${XINPUT_PROBE_SUPPORT_HEADERS}
+    ${XINPUT_ABI_PROBE_SUPPORT_SOURCES}
+    ${XINPUT_ABI_PROBE_SUPPORT_HEADERS}
 )
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})

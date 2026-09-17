@@ -74,6 +74,19 @@ add_executable(HydraSeat WIN32 src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 
 if(WIN32)
     target_link_libraries(HydraSeat PRIVATE ${WIN32_LIBS})
+
+    # HydraAudioTest (WASAPI sine wave generator)
+    add_executable(HydraAudioTest tests/hydra_audio_test.cpp)
+    target_link_libraries(HydraAudioTest PRIVATE ${WIN32_LIBS})
+
+    # HydraAudioRouter (CLI for undocumented AudioPolicyConfig)
+    add_executable(HydraAudioRouter 
+        tests/hydra_audio_router.cpp 
+        src/audio_routing_experiment.cpp 
+        src/audio_endpoint_inventory.cpp
+    )
+    target_include_directories(HydraAudioRouter PRIVATE include)
+    target_link_libraries(HydraAudioRouter PRIVATE ${WIN32_LIBS})
 endif()
 
 if(Qt6_FOUND)

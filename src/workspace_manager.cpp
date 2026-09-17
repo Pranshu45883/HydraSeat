@@ -23,10 +23,18 @@ static std::string wideToUtf8(const std::wstring& wstr) {
 }
 
 uint32_t WorkspaceManager::createWorkspace(const std::wstring& name) {
-    uint32_t id = m_nextId++;
+    uint32_t id = 0;
+    if (!m_workspaces.contains(1)) {
+        id = 1;
+    } else if (!m_workspaces.contains(2)) {
+        id = 2;
+    } else {
+        return 0;
+    }
+
     WorkspaceConfig ws{};
     ws.workspaceId = id;
-    ws.name = name.empty() ? (L"Player Workspace #" + std::to_wstring(id)) : name;
+    ws.name = name.empty() ? (L"Seat #" + std::to_wstring(id)) : name;
     ws.active = true;
     m_workspaces[id] = ws;
     return id;
@@ -57,10 +65,14 @@ bool WorkspaceManager::assignMouse(uint32_t workspaceId, const std::wstring& mou
     return true;
 }
 
-bool WorkspaceManager::assignController(uint32_t workspaceId, uint32_t controllerIndex) {
+bool WorkspaceManager::assignController(uint32_t workspaceId, const std::wstring& controllerId) {
     auto it = m_workspaces.find(workspaceId);
     if (it == m_workspaces.end()) return false;
-    it->second.controllerIndex = controllerIndex;
+    if (controllerId.empty()) {
+        it->second.controllerId.reset();
+    } else {
+        it->second.controllerId = controllerId;
+    }
     return true;
 }
 
@@ -73,7 +85,7 @@ const WorkspaceConfig* WorkspaceManager::getWorkspace(uint32_t workspaceId) cons
 uint32_t WorkspaceManager::findWorkspaceByKeyboardPath(const std::wstring& keyboardPath) const {
     if (keyboardPath.empty()) return 0;
     for (const auto& kv : m_workspaces) {
-        if (!kv.second.keyboardDevicePath.empty() && 
+        if (!kv.second.keyboardDevicePath.empty() &&
             (kv.second.keyboardDevicePath.find(keyboardPath) != std::wstring::npos ||
              keyboardPath.find(kv.second.keyboardDevicePath) != std::wstring::npos)) {
             return kv.first;
@@ -85,7 +97,7 @@ uint32_t WorkspaceManager::findWorkspaceByKeyboardPath(const std::wstring& keybo
 uint32_t WorkspaceManager::findWorkspaceByMousePath(const std::wstring& mousePath) const {
     if (mousePath.empty()) return 0;
     for (const auto& kv : m_workspaces) {
-        if (!kv.second.mouseDevicePath.empty() && 
+        if (!kv.second.mouseDevicePath.empty() &&
             (kv.second.mouseDevicePath.find(mousePath) != std::wstring::npos ||
              mousePath.find(kv.second.mouseDevicePath) != std::wstring::npos)) {
             return kv.first;
@@ -107,7 +119,7 @@ bool WorkspaceManager::saveToFile(const std::string& filePath) const {
     std::ofstream ofs(filePath);
     if (!ofs.is_open()) return false;
 
-    ofs << "{\n  \"version\": \"1.0\",\n  \"workspaces\": [\n";
+    ofs << "{\n  \"version\": \"1.1\",\n  \"workspaces\": [\n";
     bool first = true;
     for (const auto& kv : m_workspaces) {
         if (!first) ofs << ",\n";
@@ -117,6 +129,7 @@ bool WorkspaceManager::saveToFile(const std::string& filePath) const {
         std::string kbdUtf8 = wideToUtf8(w.keyboardDevicePath);
         std::string mouseUtf8 = wideToUtf8(w.mouseDevicePath);
         std::string dispUtf8 = wideToUtf8(w.displayDeviceName);
+        std::string controllerUtf8 = w.controllerId ? wideToUtf8(*w.controllerId) : std::string{};
 
         auto escapeJson = [](std::string s) {
             std::string res;
@@ -133,7 +146,7 @@ bool WorkspaceManager::saveToFile(const std::string& filePath) const {
             << "      \"display\": \"" << escapeJson(dispUtf8) << "\",\n"
             << "      \"keyboard\": \"" << escapeJson(kbdUtf8) << "\",\n"
             << "      \"mouse\": \"" << escapeJson(mouseUtf8) << "\",\n"
-            << "      \"controller\": " << w.controllerIndex << "\n"
+            << "      \"controllerId\": \"" << escapeJson(controllerUtf8) << "\"\n"
             << "    }";
     }
     ofs << "\n  ]\n}\n";

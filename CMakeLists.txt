@@ -43,6 +43,8 @@ set(HYDRA_SOURCES
     src/display_manager.cpp
     src/workspace_manager.cpp
     src/runtime_authority.cpp
+    src/controller_identity.cpp
+    src/controller_inventory.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
     src/audio_endpoint_inventory.cpp
@@ -56,6 +58,8 @@ set(HYDRA_HEADERS
     include/hydra/display_manager.hpp
     include/hydra/workspace_manager.hpp
     include/hydra/runtime_authority.hpp
+    include/hydra/controller_identity.hpp
+    include/hydra/controller_inventory.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     include/hydra/audio_endpoint_inventory.hpp
@@ -83,7 +87,7 @@ endif()
 
 # Test Suite Executable Target
 enable_testing()
-add_executable(hydra_tests tests/test_hydra.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
 endif()

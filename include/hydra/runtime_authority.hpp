@@ -1,13 +1,13 @@
 #pragma once
 
+#include "hydra/controller_io.hpp"
+
 #include <cstdint>
 #include <mutex>
 #include <optional>
 
 namespace hydra::runtime {
 
-// A PID alone is not an ownership identity because Windows may reuse it.
-// creationIdentity is the process creation timestamp/token observed by the host.
 struct ProcessIdentity {
     std::uint32_t pid{0};
     std::uint64_t creationIdentity{0};
@@ -19,8 +19,6 @@ struct ProcessIdentity {
     bool operator==(const ProcessIdentity&) const = default;
 };
 
-// Every Seat activation receives a new generation. Async/stale work must present
-// the exact token before it can publish process or window state.
 struct ActivationToken {
     std::uint32_t seatId{0};
     std::uint64_t generation{0};
@@ -38,12 +36,11 @@ struct SeatRuntimeSnapshot {
     bool active{false};
     std::optional<ProcessIdentity> process;
     std::uintptr_t targetHwnd{0};
+    std::optional<controller::SeatBinding> controllerBinding;
 
     bool operator==(const SeatRuntimeSnapshot&) const = default;
 };
 
-// Owns transient state for exactly one Seat. Persisted WorkspaceConfig must not
-// contain any of these values.
 class SeatRuntime final {
 public:
     explicit SeatRuntime(std::uint32_t seatId) noexcept;
@@ -54,6 +51,8 @@ public:
     bool bindTargetWindow(const ActivationToken& token,
                           const ProcessIdentity& owner,
                           std::uintptr_t hwnd) noexcept;
+    bool bindController(const ActivationToken& token,
+                        const controller::SeatBinding& binding) noexcept;
     bool endActivation(const ActivationToken& token) noexcept;
     SeatRuntimeSnapshot snapshot() const noexcept;
 
@@ -66,11 +65,9 @@ private:
     bool active_{false};
     std::optional<ProcessIdentity> process_;
     std::uintptr_t targetHwnd_{0};
+    std::optional<controller::SeatBinding> controllerBinding_;
 };
 
-// HydraSeat v1 has exactly two local gaming Seats. This is the single in-process
-// owner of their transient runtime state; UI/configuration code only carries
-// persisted configuration and user intent.
 class SessionController final {
 public:
     SessionController() noexcept = default;
@@ -81,6 +78,13 @@ public:
     bool bindTargetWindow(const ActivationToken& token,
                           const ProcessIdentity& owner,
                           std::uintptr_t hwnd) noexcept;
+    bool bindController(const ActivationToken& token,
+                        const controller::SeatBinding& binding) noexcept;
+    controller::PollResult pollController(const ActivationToken& token) noexcept;
+    controller::IoStatus setControllerVibration(
+        const ActivationToken& token,
+        std::uint16_t lowFrequencyMotor,
+        std::uint16_t highFrequencyMotor) noexcept;
     bool endSeatActivation(const ActivationToken& token) noexcept;
     std::optional<SeatRuntimeSnapshot> snapshot(std::uint32_t seatId) const noexcept;
 
@@ -91,8 +95,8 @@ private:
     const SeatRuntime* otherSeat(std::uint32_t seatId) const noexcept;
 
     // Serializes cross-Seat ownership decisions. SeatRuntime keeps its own lock
-    // for Seat-local state, while this lock makes process/window claims atomic
-    // across both v1 Seats.
+    // for Seat-local state, while this lock makes process/window/controller claims
+    // atomic across both v1 Seats.
     mutable std::mutex mutex_;
     SeatRuntime seat1_{1};
     SeatRuntime seat2_{2};

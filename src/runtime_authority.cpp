@@ -18,6 +18,7 @@ ActivationToken SeatRuntime::beginActivation() noexcept {
     active_ = true;
     process_.reset();
     targetHwnd_ = 0;
+    controllerBinding_.reset();
     return {seatId_, generation_};
 }
 
@@ -45,6 +46,18 @@ bool SeatRuntime::bindTargetWindow(const ActivationToken& token,
     return true;
 }
 
+bool SeatRuntime::bindController(const ActivationToken& token,
+                                 const controller::SeatBinding& binding) noexcept {
+    if (binding.seatId != seatId_ || binding.runtimeKey.empty()) return false;
+
+    std::lock_guard lock(mutex_);
+    if (!ownsTokenLocked(token)) return false;
+    if (controllerBinding_ && *controllerBinding_ != binding) return false;
+
+    controllerBinding_ = binding;
+    return true;
+}
+
 bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     if (!ownsTokenLocked(token)) return false;
@@ -52,12 +65,13 @@ bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
     active_ = false;
     process_.reset();
     targetHwnd_ = 0;
+    controllerBinding_.reset();
     return true;
 }
 
 SeatRuntimeSnapshot SeatRuntime::snapshot() const noexcept {
     std::lock_guard lock(mutex_);
-    return {seatId_, generation_, active_, process_, targetHwnd_};
+    return {seatId_, generation_, active_, process_, targetHwnd_, controllerBinding_};
 }
 
 bool SeatRuntime::ownsTokenLocked(const ActivationToken& token) const noexcept {
@@ -100,6 +114,60 @@ bool SessionController::bindTargetWindow(const ActivationToken& token,
     if (otherSnapshot.active && otherSnapshot.targetHwnd == hwnd) return false;
 
     return runtime->bindTargetWindow(token, owner, hwnd);
+}
+
+bool SessionController::bindController(
+    const ActivationToken& token,
+    const controller::SeatBinding& binding) noexcept {
+    if (binding.seatId != token.seatId || binding.runtimeKey.empty()) return false;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    const auto other = otherSeat(token.seatId);
+    if (!runtime || !other) return false;
+
+    const auto otherSnapshot = other->snapshot();
+    if (otherSnapshot.active && otherSnapshot.controllerBinding &&
+        controller::sameControllerSource(*otherSnapshot.controllerBinding, binding)) {
+        return false;
+    }
+
+    return runtime->bindController(token, binding);
+}
+
+controller::PollResult SessionController::pollController(
+    const ActivationToken& token) noexcept {
+    if (!token.valid()) return {controller::IoStatus::InvalidBinding, std::nullopt};
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return {controller::IoStatus::InvalidBinding, std::nullopt};
+
+    const auto current = runtime->snapshot();
+    if (!current.active || current.generation != token.generation ||
+        !current.controllerBinding) {
+        return {controller::IoStatus::InvalidBinding, std::nullopt};
+    }
+    return controller::pollBoundController(*current.controllerBinding);
+}
+
+controller::IoStatus SessionController::setControllerVibration(
+    const ActivationToken& token,
+    std::uint16_t lowFrequencyMotor,
+    std::uint16_t highFrequencyMotor) noexcept {
+    if (!token.valid()) return controller::IoStatus::InvalidBinding;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return controller::IoStatus::InvalidBinding;
+
+    const auto current = runtime->snapshot();
+    if (!current.active || current.generation != token.generation ||
+        !current.controllerBinding) {
+        return controller::IoStatus::InvalidBinding;
+    }
+    return controller::setBoundControllerVibration(
+        *current.controllerBinding, lowFrequencyMotor, highFrequencyMotor);
 }
 
 bool SessionController::endSeatActivation(const ActivationToken& token) noexcept {

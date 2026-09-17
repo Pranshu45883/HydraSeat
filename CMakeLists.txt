@@ -16,7 +16,7 @@ endif()
 # Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
 if(WIN32)
     add_compile_definitions(_UNICODE UNICODE WIN32_LEAN_AND_MEAN)
-    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib)
+    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib Ole32.lib Mmdevapi.lib runtimeobject.lib)
 endif()
 
 # Find Qt6 components if available
@@ -47,6 +47,9 @@ set(HYDRA_SOURCES
     src/controller_inventory.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
+    src/audio_endpoint_inventory.cpp
+    src/audio_session_observer.cpp
+    src/audio_routing_experiment.cpp
     ${UI_SOURCES}
 )
 
@@ -60,6 +63,9 @@ set(HYDRA_HEADERS
     include/hydra/controller_inventory.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
+    include/hydra/audio_endpoint_inventory.hpp
+    include/hydra/audio_session_observer.hpp
+    include/hydra/audio_routing_experiment.hpp
     ${UI_HEADERS}
 )
 

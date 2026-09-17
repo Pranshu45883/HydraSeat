@@ -87,7 +87,13 @@ public:
 private:
     SeatRuntime* seat(std::uint32_t seatId) noexcept;
     const SeatRuntime* seat(std::uint32_t seatId) const noexcept;
+    SeatRuntime* otherSeat(std::uint32_t seatId) noexcept;
+    const SeatRuntime* otherSeat(std::uint32_t seatId) const noexcept;
 
+    // Serializes cross-Seat ownership decisions. SeatRuntime keeps its own lock
+    // for Seat-local state, while this lock makes process/window claims atomic
+    // across both v1 Seats.
+    mutable std::mutex mutex_;
     SeatRuntime seat1_{1};
     SeatRuntime seat2_{2};
 };

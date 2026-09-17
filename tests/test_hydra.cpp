@@ -7,6 +7,10 @@
 
 #include <iostream>
 #include <cassert>
+#include <cstdio>
+#include <fstream>
+
+void testControllerIdentity();
 
 void testHardwareDetector() {
     hydra::HardwareDetector detector;
@@ -37,14 +41,31 @@ void testWorkspaceManager() {
 
     assert(ws1 == 1);
     assert(ws2 == 2);
+    assert(mgr.createWorkspace(L"Player 3") == 0);
     assert(mgr.getAllWorkspaces().size() == 2);
 
-    bool assigned = mgr.assignDisplay(ws1, L"\\\\.\\DISPLAY1");
-    assert(assigned);
+    assert(mgr.assignDisplay(ws1, L"\\\\.\\DISPLAY1"));
+    assert(mgr.assignController(ws1, L"container-a"));
 
     const auto* wsConfig = mgr.getWorkspace(ws1);
     assert(wsConfig != nullptr);
     assert(wsConfig->displayDeviceName == L"\\\\.\\DISPLAY1");
+    assert(wsConfig->controllerId == std::optional<std::wstring>{L"container-a"});
+
+    const char* profilePath = "workspace_config_test.json";
+    assert(mgr.saveToFile(profilePath));
+    std::ifstream profile(profilePath);
+    const std::string saved((std::istreambuf_iterator<char>(profile)),
+                            std::istreambuf_iterator<char>());
+    assert(saved.find("\"version\": \"1.1\"") != std::string::npos);
+    assert(saved.find("\"controllerId\": \"container-a\"") != std::string::npos);
+    std::remove(profilePath);
+
+    hydra::WorkspaceManager reused;
+    assert(reused.createWorkspace(L"Seat 1") == 1);
+    assert(reused.createWorkspace(L"Seat 2") == 2);
+    assert(reused.removeWorkspace(1));
+    assert(reused.createWorkspace(L"Seat 1 again") == 1);
 
     std::cout << "[Test] WorkspaceManager tests passed." << std::endl;
 }
@@ -67,31 +88,52 @@ void testRuntimeAuthority() {
     assert(snapshot->process == process);
     assert(snapshot->targetHwnd == 0x100);
 
-    const auto second = controller.beginSeatActivation(1);
-    assert(second.valid());
-    assert(second.generation > first.generation);
-    assert(!controller.publishProcess(first, process));
-    assert(!controller.bindTargetWindow(first, process, 0x200));
-
-    const hydra::runtime::ProcessIdentity replacement{5252, 2002};
-    assert(controller.publishProcess(second, replacement));
-    assert(controller.bindTargetWindow(second, replacement, 0x200));
+    // Starting a new generation must never silently forget a live Seat.
+    const auto overlapping = controller.beginSeatActivation(1);
+    assert(!overlapping.valid());
+    snapshot = controller.snapshot(1);
+    assert(snapshot.has_value());
+    assert(snapshot->generation == first.generation);
+    assert(snapshot->process == process);
+    assert(snapshot->targetHwnd == 0x100);
 
     const auto otherSeat = controller.beginSeatActivation(2);
     assert(otherSeat.valid());
-    assert(controller.publishProcess(otherSeat, {6262, 3003}));
 
-    assert(controller.endSeatActivation(second));
+    // Machine-wide ownership is exclusive across both Seats.
+    assert(!controller.publishProcess(otherSeat, process));
+    const hydra::runtime::ProcessIdentity otherProcess{6262, 3003};
+    assert(controller.publishProcess(otherSeat, otherProcess));
+    assert(!controller.bindTargetWindow(otherSeat, otherProcess, 0x100));
+    assert(controller.bindTargetWindow(otherSeat, otherProcess, 0x200));
+
+    assert(controller.endSeatActivation(first));
     snapshot = controller.snapshot(1);
     assert(snapshot.has_value());
     assert(!snapshot->active);
     assert(!snapshot->process.has_value());
     assert(snapshot->targetHwnd == 0);
 
+    // Restart is stop -> verified cleanup -> new generation.
+    const auto restarted = controller.beginSeatActivation(1);
+    assert(restarted.valid());
+    assert(restarted.generation > first.generation);
+    assert(!controller.publishProcess(first, process));
+    assert(!controller.bindTargetWindow(first, process, 0x300));
+    assert(!controller.endSeatActivation(first));
+
+    const hydra::runtime::ProcessIdentity replacement{5252, 2002};
+    assert(controller.publishProcess(restarted, replacement));
+    assert(controller.bindTargetWindow(restarted, replacement, 0x300));
+
     const auto seat2Snapshot = controller.snapshot(2);
     assert(seat2Snapshot.has_value());
     assert(seat2Snapshot->active);
+    assert(seat2Snapshot->process == otherProcess);
+    assert(seat2Snapshot->targetHwnd == 0x200);
 
+    assert(controller.endSeatActivation(restarted));
+    assert(controller.endSeatActivation(otherSeat));
     assert(!controller.beginSeatActivation(3).valid());
     std::cout << "[Test] RuntimeAuthority tests passed." << std::endl;
 }
@@ -273,6 +315,7 @@ int main() {
     testAudioEndpointInventory();
     testAudioSessionObserver();
     testAudioRoutingFeasibility();
+    testControllerIdentity();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;
 }

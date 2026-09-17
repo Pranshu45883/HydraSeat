@@ -213,6 +213,58 @@ void testAudioSessionObserver() {
     std::cout << "[Test] AudioSessionObserver tests passed." << std::endl;
 }
 
+#include "hydra/audio_routing_experiment.hpp"
+
+void testAudioRoutingFeasibility() {
+    using namespace hydra::windows;
+
+    // Initialize COM for the test thread
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(hr)) {
+        std::cerr << "[Test] Failed to initialize COM for routing test." << std::endl;
+        return;
+    }
+
+    // 1. Enumerate endpoints to pick a target (any valid endpoint).
+    auto inventory = AudioEndpointInventory::enumerateRenderEndpoints();
+    std::wstring targetEndpoint = L"";
+    if (inventory.isSuccess() && !inventory.endpoints->empty()) {
+        targetEndpoint = inventory.endpoints->front().endpointId;
+    }
+
+    // 2. Create identity for the current test process.
+    DWORD pid = GetCurrentProcessId();
+    hydra::runtime::ProcessIdentity identity;
+
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (hProcess) {
+        FILETIME ct, et, kt, ut;
+        if (GetProcessTimes(hProcess, &ct, &et, &kt, &ut)) {
+            uint64_t cid = (static_cast<uint64_t>(ct.dwHighDateTime) << 32) | static_cast<uint64_t>(ct.dwLowDateTime);
+            identity = {pid, cid};
+        }
+        CloseHandle(hProcess);
+    }
+
+    // 3. Run the experiment.
+    std::cout << "[Test] Running AudioRoutingFeasibility Experiment..." << std::endl;
+    auto evidence = AudioRoutingExperiment::runPolicyConfigExperiment(identity, targetEndpoint);
+
+    std::cout << "  Status: " << (int)evidence.status << std::endl;
+    std::cout << "  Mechanism: " << evidence.mechanism << std::endl;
+    std::cout << "  Windows Version: " << evidence.windowsVersion << std::endl;
+    std::cout << "  Global Default Changed: " << (evidence.globalDefaultChanged ? "YES" : "NO") << std::endl;
+    std::cout << "  Rollback Verified: " << (evidence.rollbackVerified ? "YES" : "NO") << std::endl;
+    std::cout << "  Notes: " << evidence.notes << std::endl;
+
+    // The feasibility test should gracefully report its findings without crashing the test suite
+    // even if unsupported on this machine.
+    assert(!evidence.globalDefaultChanged && "Experiment failed safety boundary! Global default changed!");
+
+    CoUninitialize();
+    std::cout << "[Test] AudioRoutingFeasibility experiment completed safely." << std::endl;
+}
+
 int main() {
     std::cout << "Running HydraSeat Engine Tests..." << std::endl;
     testHardwareDetector();
@@ -220,6 +272,7 @@ int main() {
     testRuntimeAuthority();
     testAudioEndpointInventory();
     testAudioSessionObserver();
+    testAudioRoutingFeasibility();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;
 }

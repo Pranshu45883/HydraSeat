@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audiopolicy.h>
+#include <functiondiscoverykeys_devpkey.h>
 
 namespace hydra::windows {
 
@@ -98,23 +99,11 @@ static std::optional<hydra::runtime::ProcessIdentity> resolveProcessIdentity(std
     return std::nullopt;
 }
 
-ProcessOwnershipMatch AudioSessionObserver::matchIdentity(
-    const std::optional<hydra::runtime::ProcessIdentity>& observed, 
-    const hydra::runtime::ProcessIdentity& expected) noexcept 
-{
-    if (!observed.has_value() || !observed->valid() || !expected.valid()) {
-        return ProcessOwnershipMatch::Unknown;
-    }
 
-    if (*observed == expected) {
-        return ProcessOwnershipMatch::Match;
-    }
-
-    return ProcessOwnershipMatch::Mismatch;
-}
 
 AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
     AudioSessionInventoryResult result;
+    result.isComplete = true;
 
     ComPtr<IMMDeviceEnumerator> pEnumerator;
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
@@ -150,41 +139,56 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
     for (UINT i = 0; i < endpointCount; ++i) {
         ComPtr<IMMDevice> pEndpoint;
         hr = pCollection->Item(i, &pEndpoint);
-        if (FAILED(hr) || !pEndpoint) {
-            // Fail closed on endpoint read failure rather than silently skipping.
-            result.error = AudioSessionObserverError{AudioSessionObserverError::Code::EndpointReadFailed, hr};
-            return result;
+        ScopedCoTaskMem pwszID;
+        hr = pEndpoint->GetId(&pwszID);
+        if (FAILED(hr) || !pwszID.str) {
+            result.isComplete = false;
+            continue;
         }
+        std::wstring endpointId(pwszID.str);
+
+        std::optional<std::wstring> endpointStableId = std::nullopt;
+#ifdef HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID
+        ComPtr<IPropertyStore> pProps;
+        if (SUCCEEDED(pEndpoint->OpenPropertyStore(STGM_READ, &pProps)) && pProps) {
+            PROPVARIANT varStableId;
+            PropVariantInit(&varStableId);
+            if (SUCCEEDED(pProps->GetValue(PKEY_AudioEndpoint_StableId, &varStableId)) && varStableId.vt == VT_LPWSTR && varStableId.pwszVal) {
+                endpointStableId = varStableId.pwszVal;
+            }
+            PropVariantClear(&varStableId);
+        }
+#endif
 
         ComPtr<IAudioSessionManager2> pSessionManager;
         hr = pEndpoint->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, (void**)&pSessionManager);
         if (FAILED(hr)) {
             // Some endpoints (e.g., disconnected or unsupported) may fail to activate the session manager.
-            // This is expected Windows behavior; we continue to the next endpoint.
+            // This is expected Windows behavior; we continue to the next endpoint but mark as incomplete.
+            result.isComplete = false;
             continue;
         }
 
         ComPtr<IAudioSessionEnumerator> pSessionEnum;
         hr = pSessionManager->GetSessionEnumerator(&pSessionEnum);
         if (FAILED(hr) || !pSessionEnum) {
-            // Failure to enumerate sessions on a valid manager is an error.
-            result.error = AudioSessionObserverError{AudioSessionObserverError::Code::SessionEnumerationFailed, hr};
-            return result;
+            result.isComplete = false;
+            continue;
         }
 
         int sessionCount = 0;
         hr = pSessionEnum->GetCount(&sessionCount);
         if (FAILED(hr)) {
-            result.error = AudioSessionObserverError{AudioSessionObserverError::Code::SessionEnumerationFailed, hr};
-            return result;
+            result.isComplete = false;
+            continue;
         }
 
         for (int j = 0; j < sessionCount; ++j) {
             ComPtr<IAudioSessionControl> pSessionControl;
             hr = pSessionEnum->GetSession(j, &pSessionControl);
             if (FAILED(hr) || !pSessionControl) {
-                result.error = AudioSessionObserverError{AudioSessionObserverError::Code::InvalidSessionData, hr};
-                return result;
+                result.isComplete = false;
+                continue;
             }
 
             ComPtr<IAudioSessionControl2> pSessionControl2;
@@ -198,8 +202,8 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
             hr = pSessionControl2->GetProcessId(&pid);
             if (FAILED(hr)) {
                 // If we cannot get the PID, the session observation is fundamentally incomplete.
-                result.error = AudioSessionObserverError{AudioSessionObserverError::Code::InvalidSessionData, hr};
-                return result;
+                result.isComplete = false;
+                continue;
             }
 
             ::AudioSessionState rawState;
@@ -229,6 +233,8 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
             auto processIdentity = resolveProcessIdentity(pid);
 
             sessions.push_back({
+                std::move(endpointId),
+                std::move(endpointStableId),
                 pid,
                 std::move(processIdentity),
                 mappedState,

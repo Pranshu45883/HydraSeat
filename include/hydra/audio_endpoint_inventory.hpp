@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <optional>
-#include <windows.h> // For HRESULT
 
 namespace hydra::windows {
 
@@ -45,7 +44,7 @@ struct AudioEndpointInventoryError {
     };
 
     Code code;
-    HRESULT hresult;
+    std::int32_t hresult;
 };
 
 // Encapsulates either a successful list of endpoints or an explicit failure.

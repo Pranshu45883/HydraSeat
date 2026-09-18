@@ -10,7 +10,6 @@ void printUsage() {
     std::cout << "Usage:" << std::endl;
     std::cout << "  hydra_audio_router --list" << std::endl;
     std::cout << "  hydra_audio_router --route <PID> <EndpointID>" << std::endl;
-    std::cout << "  hydra_audio_router --clear" << std::endl;
 }
 
 int main(int argc, char** argv) {
@@ -59,15 +58,6 @@ int main(int argc, char** argv) {
             std::cout << "SUCCESS (HRESULT: " << std::hex << routeHr << ")" << std::endl;
         } else {
             std::cerr << "FAILED (HRESULT: " << std::hex << routeHr << ")" << std::endl;
-        }
-    }
-    else if (command == "--clear") {
-        std::cout << "Clearing all persisted application routing..." << std::endl;
-        HRESULT clearHr = hydra::windows::AudioRoutingExperiment::manualClear();
-        if (SUCCEEDED(clearHr)) {
-            std::cout << "SUCCESS (HRESULT: " << std::hex << clearHr << ")" << std::endl;
-        } else {
-            std::cerr << "FAILED (HRESULT: " << std::hex << clearHr << ")" << std::endl;
         }
     }
     else {

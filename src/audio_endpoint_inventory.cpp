@@ -8,12 +8,6 @@
 
 namespace hydra::windows {
 
-// Fallback for older SDKs that do not define PKEY_AudioEndpoint_StableId.
-// Using a placeholder property key allows compilation. At runtime, the property store
-// will safely fail to find this key and return std::nullopt as required by the contract.
-static const PROPERTYKEY HYDRA_PKEY_AudioEndpoint_StableId = {
-    { 0x1da5d803, 0xd492, 0x4edd, { 0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e } }, 9999
-};
 
 // Helper to safely map Windows device states to our focused inventory state.
 static AudioEndpointState mapDeviceState(DWORD dwState) {
@@ -172,10 +166,12 @@ AudioInventoryResult AudioEndpointInventory::enumerateRenderEndpoints() {
                 friendlyName = varName.var.pwszVal;
             }
 
+#ifdef HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID
             ScopedPropVariant varStableId;
-            if (SUCCEEDED(pProps->GetValue(HYDRA_PKEY_AudioEndpoint_StableId, varStableId.get())) && varStableId.var.vt == VT_LPWSTR && varStableId.var.pwszVal) {
+            if (SUCCEEDED(pProps->GetValue(PKEY_AudioEndpoint_StableId, varStableId.get())) && varStableId.var.vt == VT_LPWSTR && varStableId.var.pwszVal) {
                 stableId = varStableId.var.pwszVal;
             }
+#endif
         }
 
         endpoints.push_back({

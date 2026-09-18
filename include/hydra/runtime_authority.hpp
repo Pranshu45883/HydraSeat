@@ -4,20 +4,9 @@
 #include <mutex>
 #include <optional>
 
+#include "hydra/process_identity.hpp"
+
 namespace hydra::runtime {
-
-// A PID alone is not an ownership identity because Windows may reuse it.
-// creationIdentity is the process creation timestamp/token observed by the host.
-struct ProcessIdentity {
-    std::uint32_t pid{0};
-    std::uint64_t creationIdentity{0};
-
-    bool valid() const noexcept {
-        return pid != 0 && creationIdentity != 0;
-    }
-
-    bool operator==(const ProcessIdentity&) const = default;
-};
 
 // Every Seat activation receives a new generation. Async/stale work must present
 // the exact token before it can publish process or window state.

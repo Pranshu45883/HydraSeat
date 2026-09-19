@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "hydra/hardware_detector.hpp"
 #include "hydra/display_manager.hpp"
 #include "hydra/workspace_manager.hpp"
@@ -182,6 +186,13 @@ void testRuntimeAuthority() {
 }
 
 int main() {
+    bool assertionProbe = false;
+    assert((assertionProbe = true));
+    if (!assertionProbe) {
+        std::cerr << "[FAIL] assertions are disabled in hydra_tests" << std::endl;
+        return 2;
+    }
+
     std::cout << "Running HydraSeat Engine Tests..." << std::endl;
     testHardwareDetector();
     testWorkspaceManager();

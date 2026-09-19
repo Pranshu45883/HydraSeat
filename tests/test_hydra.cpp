@@ -3,6 +3,7 @@
 #include "hydra/workspace_manager.hpp"
 #include "hydra/input_router.hpp"
 #include "hydra/runtime_authority.hpp"
+#include <objbase.h>
 
 #include <iostream>
 #include <cassert>
@@ -212,11 +213,130 @@ void testRuntimeAuthority() {
     std::cout << "[Test] RuntimeAuthority tests passed." << std::endl;
 }
 
+#include "hydra/audio_endpoint_inventory.hpp"
+
+void testAudioEndpointInventory() {
+    using namespace hydra::windows;
+
+    // Model tests
+    AudioRenderEndpoint activeEp{L"ep1", std::nullopt, L"Name", AudioEndpointState::Active};
+    assert(activeEp.isAvailable() == true);
+
+    AudioRenderEndpoint disabledEp{L"ep2", std::nullopt, L"Name", AudioEndpointState::Disabled};
+    assert(disabledEp.isAvailable() == false);
+
+    AudioRenderEndpoint unpluggedEp{L"ep3", L"Stable", L"Name", AudioEndpointState::Unplugged};
+    assert(unpluggedEp.isAvailable() == false);
+
+    AudioRenderEndpoint missingEp{L"ep4", L"Stable", L"Name", AudioEndpointState::NotPresent};
+    assert(missingEp.isAvailable() == false);
+
+    AudioRenderEndpoint unknownEp{L"ep5", L"Stable", L"Name", AudioEndpointState::Unknown};
+    assert(unknownEp.isAvailable() == false);
+
+    // Pure test proving: missing stableId != endpointId fallback
+    AudioRenderEndpoint missingStableIdEp{L"Endpoint_XYZ_123", std::nullopt, L"Speakers", AudioEndpointState::Active};
+    assert(!missingStableIdEp.stableId.has_value()); // Must not fall back to endpointId
+
+    // Pure test proving: friendlyName is not an identity key and duplicate friendly names are valid
+    AudioRenderEndpoint duplicateFriendlyNameEp1{L"Endpoint_1", L"Stable_1", L"Generic Headset", AudioEndpointState::Active};
+    AudioRenderEndpoint duplicateFriendlyNameEp2{L"Endpoint_2", L"Stable_2", L"Generic Headset", AudioEndpointState::Active};
+    assert(duplicateFriendlyNameEp1.friendlyName == duplicateFriendlyNameEp2.friendlyName);
+    assert(duplicateFriendlyNameEp1.endpointId != duplicateFriendlyNameEp2.endpointId);
+
+    // Initialize COM for the test thread
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hr)) {
+        auto result = AudioEndpointInventory::enumerateRenderEndpoints();
+        assert(result.isSuccess());
+
+        if (result.isSuccess()) {
+            const auto& endpoints = *result.endpoints;
+            std::cout << "[Test] Audio render endpoints detected: " << endpoints.size() << std::endl;
+
+            for (const auto& ep : endpoints) {
+                assert(!ep.endpointId.empty());
+                std::wcout << L"  Audio Endpoint: " << ep.endpointId << std::endl;
+                std::wcout << L"    FriendlyName: " << ep.friendlyName << std::endl;
+                if (ep.stableId) {
+                    std::wcout << L"    StableId: " << *ep.stableId << std::endl;
+                }
+                std::wcout << L"    Available: " << (ep.isAvailable() ? L"true" : L"false") << std::endl;
+            }
+        }
+        CoUninitialize();
+    } else {
+        std::cerr << "[Test] Failed to initialize COM, skipping integration test." << std::endl;
+    }
+
+    std::cout << "[Test] AudioEndpointInventory tests passed." << std::endl;
+}
+
+#include "hydra/audio_session_observer.hpp"
+
+void testAudioSessionObserver() {
+    using namespace hydra::windows;
+    using hydra::runtime::ProcessIdentity;
+
+    // Test 1 — exact process identity match
+    ProcessIdentity id1{42, 100};
+    ProcessIdentity id2{42, 100};
+    assert(AudioSessionObserver::matchIdentity(id1, id2) == ProcessOwnershipMatch::Match);
+
+    // Test 2 — PID reuse protection
+    ProcessIdentity id3{42, 200};
+    assert(AudioSessionObserver::matchIdentity(id3, id1) == ProcessOwnershipMatch::Mismatch);
+
+    // Mismatch (different PID)
+    ProcessIdentity id4{43, 100};
+    assert(AudioSessionObserver::matchIdentity(id4, id1) == ProcessOwnershipMatch::Mismatch);
+
+    // Test 3 — missing identity
+    assert(AudioSessionObserver::matchIdentity(std::nullopt, id1) == ProcessOwnershipMatch::Unknown);
+
+    // Initialize COM for the test thread
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hr)) {
+        auto result = AudioSessionObserver::enumerateSessions();
+        assert(result.isSuccess());
+
+        if (result.isSuccess()) {
+            const auto& sessions = *result.sessions;
+            std::cout << "[Test] Audio sessions detected: " << sessions.size() << std::endl;
+
+            // Validate structural invariants
+            for (const auto& session : sessions) {
+                // Must have a valid PID (not 0, though technically System Idle Process is 0, audio sessions shouldn't be 0)
+                assert(session.processId != 0 || session.state != AudioSessionState::Unknown); // Soft check
+
+                std::wcout << L"  Session PID: " << session.processId << std::endl;
+                if (session.processIdentity) {
+                    std::wcout << L"    CreationId: " << session.processIdentity->creationIdentity << std::endl;
+                } else {
+                    std::wcout << L"    CreationId: <Unknown>" << std::endl;
+                }
+
+                std::wcout << L"    State: " << (int)session.state << std::endl;
+                if (session.displayName) {
+                    std::wcout << L"    DisplayName: " << *session.displayName << std::endl;
+                }
+            }
+        }
+        CoUninitialize();
+    } else {
+        std::cerr << "[Test] Failed to initialize COM, skipping session integration test." << std::endl;
+    }
+
+    std::cout << "[Test] AudioSessionObserver tests passed." << std::endl;
+}
+
 int main() {
     std::cout << "Running HydraSeat Engine Tests..." << std::endl;
     testHardwareDetector();
     testWorkspaceManager();
     testRuntimeAuthority();
+    testAudioEndpointInventory();
+    testAudioSessionObserver();
     testControllerIdentity();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;

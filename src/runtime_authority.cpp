@@ -118,8 +118,12 @@ bool SessionController::bindTargetWindow(const ActivationToken& token,
 
 bool SessionController::bindController(
     const ActivationToken& token,
-    const controller::SeatBinding& binding) noexcept {
-    if (binding.seatId != token.seatId || binding.runtimeKey.empty()) return false;
+    const controller::SeatBinding& binding,
+    const controller::InventorySnapshot& inventory) noexcept {
+    if (binding.seatId != token.seatId || binding.runtimeKey.empty() ||
+        !controller::bindingMatchesInventory(binding, inventory)) {
+        return false;
+    }
 
     std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
@@ -136,7 +140,8 @@ bool SessionController::bindController(
 }
 
 controller::PollResult SessionController::pollController(
-    const ActivationToken& token) noexcept {
+    const ActivationToken& token,
+    const controller::InventorySnapshot& inventory) noexcept {
     if (!token.valid()) return {controller::IoStatus::InvalidBinding, std::nullopt};
 
     std::lock_guard lock(mutex_);
@@ -148,11 +153,12 @@ controller::PollResult SessionController::pollController(
         !current.controllerBinding) {
         return {controller::IoStatus::InvalidBinding, std::nullopt};
     }
-    return controller::pollBoundController(*current.controllerBinding);
+    return controller::pollBoundController(*current.controllerBinding, inventory);
 }
 
 controller::IoStatus SessionController::setControllerVibration(
     const ActivationToken& token,
+    const controller::InventorySnapshot& inventory,
     std::uint16_t lowFrequencyMotor,
     std::uint16_t highFrequencyMotor) noexcept {
     if (!token.valid()) return controller::IoStatus::InvalidBinding;
@@ -167,7 +173,8 @@ controller::IoStatus SessionController::setControllerVibration(
         return controller::IoStatus::InvalidBinding;
     }
     return controller::setBoundControllerVibration(
-        *current.controllerBinding, lowFrequencyMotor, highFrequencyMotor);
+        *current.controllerBinding, inventory,
+        lowFrequencyMotor, highFrequencyMotor);
 }
 
 bool SessionController::endSeatActivation(const ActivationToken& token) noexcept {

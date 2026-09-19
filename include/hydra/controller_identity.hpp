@@ -29,6 +29,7 @@ struct SourceDescriptor {
     IdentityQuality identityQuality{IdentityQuality::RuntimeOnly};
     std::optional<std::uint8_t> runtimeXInputSlot;
     bool connected{false};
+    std::uint64_t sourceGeneration{0};
 
     bool operator==(const SourceDescriptor&) const = default;
 };
@@ -48,6 +49,7 @@ struct SeatBinding {
     std::string runtimeKey;
     std::optional<std::wstring> persistentControllerId;
     std::optional<std::uint8_t> runtimeXInputSlot;
+    std::uint64_t sourceGeneration{0};
 
     bool operator==(const SeatBinding&) const = default;
 };
@@ -79,14 +81,9 @@ struct BindingPlan {
     std::vector<BindingIssue> issues;
 };
 
-// Stable physical IDs and runtime-only XInput slots are intentionally distinct.
-// XInput user indices are accepted only as explicit current-session hints.
 BindingPlan planSeatBindings(std::span<const SeatBindingRequest> requests,
                              std::span<const SourceDescriptor> sources);
 
-// A stable physical ID takes precedence over the current runtime surface. This
-// lets SessionController reject the same pad even if Windows exposes it through
-// a different runtime key later in the same session.
 bool sameControllerSource(const SeatBinding& left,
                           const SeatBinding& right) noexcept;
 

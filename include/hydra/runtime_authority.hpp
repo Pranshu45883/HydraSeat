@@ -79,10 +79,14 @@ public:
                           const ProcessIdentity& owner,
                           std::uintptr_t hwnd) noexcept;
     bool bindController(const ActivationToken& token,
-                        const controller::SeatBinding& binding) noexcept;
-    controller::PollResult pollController(const ActivationToken& token) noexcept;
+                        const controller::SeatBinding& binding,
+                        const controller::InventorySnapshot& inventory) noexcept;
+    controller::PollResult pollController(
+        const ActivationToken& token,
+        const controller::InventorySnapshot& inventory) noexcept;
     controller::IoStatus setControllerVibration(
         const ActivationToken& token,
+        const controller::InventorySnapshot& inventory,
         std::uint16_t lowFrequencyMotor,
         std::uint16_t highFrequencyMotor) noexcept;
     bool endSeatActivation(const ActivationToken& token) noexcept;

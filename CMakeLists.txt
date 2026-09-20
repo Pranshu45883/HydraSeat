@@ -221,6 +221,7 @@ if(WIN32)
         src/controller_identity.cpp
     )
     target_link_libraries(xinput_process_isolation PRIVATE ${WIN32_LIBS})
+    add_dependencies(xinput_process_isolation xinput_probe_game)
 
     add_executable(xinput_adapter_process_isolation
         tests/test_xinput_adapter_process_isolation.cpp
@@ -233,6 +234,10 @@ if(WIN32)
         src/controller_identity.cpp
     )
     target_link_libraries(xinput_adapter_process_isolation PRIVATE ${WIN32_LIBS})
+    add_dependencies(
+        xinput_adapter_process_isolation
+        xinput_abi_probe_game
+        hydra_xinput_adapter)
 endif()
 if(Qt6_FOUND)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)

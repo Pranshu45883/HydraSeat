@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "hydra/xinput_abi_probe.hpp"
 
 #include <cassert>

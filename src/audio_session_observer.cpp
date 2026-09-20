@@ -233,8 +233,8 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
             auto processIdentity = resolveProcessIdentity(pid);
 
             sessions.push_back({
-                std::move(endpointId),
-                std::move(endpointStableId),
+                endpointId,
+                endpointStableId,
                 pid,
                 std::move(processIdentity),
                 mappedState,

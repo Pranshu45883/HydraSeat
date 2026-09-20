@@ -98,6 +98,7 @@ if(WIN32)
         tests/hydra_audio_router.cpp 
         src/audio_routing_experiment.cpp 
         src/audio_endpoint_inventory.cpp
+        src/audio_session_observer.cpp
     )
     target_include_directories(HydraAudioRouter PRIVATE include)
     target_link_libraries(HydraAudioRouter PRIVATE ${WIN32_LIBS})

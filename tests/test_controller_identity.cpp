@@ -1,0 +1,121 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
+#include "hydra/controller_identity.hpp"
+#include "hydra/controller_inventory.hpp"
+#include "hydra/controller_io.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <vector>
+
+namespace {
+
+bool hasIssue(const hydra::controller::BindingPlan& plan,
+              hydra::controller::BindingIssueCode code) {
+    return std::any_of(plan.issues.begin(), plan.issues.end(),
+                       [code](const auto& issue) { return issue.code == code; });
+}
+
+} // namespace
+
+void testControllerIdentity() {
+    using namespace hydra::controller;
+
+    const SourceDescriptor stablePad{
+        "gameinput:pad-a", std::wstring{L"container-a"}, L"Stable Pad A",
+        ApiSurface::GameInput, IdentityQuality::Stable, std::nullopt, true};
+    const SourceDescriptor runtimePad{
+        "xinput-slot:0", std::nullopt, L"Runtime XInput Slot 0",
+        ApiSurface::XInput, IdentityQuality::RuntimeOnly, std::uint8_t{0}, true};
+    const std::array sources{stablePad, runtimePad};
+
+    const std::array requests{
+        SeatBindingRequest{1, ApiSurface::GameInput,
+                           std::wstring{L"CONTAINER-A"}, std::nullopt},
+        SeatBindingRequest{2, ApiSurface::XInput,
+                           std::nullopt, std::uint8_t{0}},
+    };
+    const auto validPlan = planSeatBindings(requests, sources);
+    assert(validPlan.valid);
+    assert(validPlan.bindings.size() == 2);
+
+    InventorySnapshot pairingInventory;
+    pairingInventory.authoritative = true;
+    pairingInventory.sources.push_back(runtimePad);
+    pairingInventory.physicalControllers.push_back(
+        {L"container-a", L"Physical Pad A", L"hid-path-a"});
+
+    const auto paired = pairPhysicalControllerToXInput(
+        1, L"CONTAINER-A", 0, pairingInventory);
+    assert(paired.status == PairingStatus::Ok);
+    assert(paired.binding.has_value());
+    assert(paired.binding->persistentControllerId ==
+           std::optional<std::wstring>{L"container-a"});
+    assert(paired.binding->runtimeKey == "xinput-slot:0");
+    assert(paired.binding->sourceGeneration == runtimePad.sourceGeneration);
+
+    auto disconnected = pairingInventory;
+    disconnected.sources[0].connected = false;
+    assert(pairPhysicalControllerToXInput(
+               1, L"container-a", 0, disconnected).status ==
+           PairingStatus::RuntimeSourceDisconnected);
+
+    auto stale = pairingInventory;
+    ++stale.sources[0].sourceGeneration;
+    assert(!bindingMatchesInventory(*paired.binding, stale));
+    assert(pollBoundController(*paired.binding, stale).status ==
+           IoStatus::StaleBinding);
+    assert(setBoundControllerVibration(*paired.binding, stale, 0, 0) ==
+           IoStatus::StaleBinding);
+
+    const std::array missingIdentity{
+        SeatBindingRequest{1, ApiSurface::XInput, std::nullopt, std::nullopt},
+    };
+    assert(hasIssue(planSeatBindings(missingIdentity, sources),
+                    BindingIssueCode::MissingPersistentIdentity));
+
+    const std::array duplicateSource{
+        SeatBindingRequest{1, ApiSurface::GameInput,
+                           std::wstring{L"container-a"}, std::nullopt},
+        SeatBindingRequest{2, ApiSurface::GameInput,
+                           std::wstring{L"container-a"}, std::nullopt},
+    };
+    assert(hasIssue(planSeatBindings(duplicateSource, sources),
+                    BindingIssueCode::SourceAlreadyAssigned));
+
+    const std::array invalidSlot{
+        SeatBindingRequest{1, ApiSurface::XInput,
+                           std::nullopt, std::uint8_t{4}},
+    };
+    assert(hasIssue(planSeatBindings(invalidSlot, sources),
+                    BindingIssueCode::RuntimeSlotOutOfRange));
+
+    std::vector<SourceDescriptor> ambiguous{stablePad, runtimePad, stablePad};
+    ambiguous.back().runtimeKey = "gameinput:pad-a-duplicate";
+    const std::array ambiguousRequest{
+        SeatBindingRequest{1, ApiSurface::GameInput,
+                           std::wstring{L"container-a"}, std::nullopt},
+    };
+    assert(hasIssue(planSeatBindings(ambiguousRequest, ambiguous),
+                    BindingIssueCode::AmbiguousSource));
+
+    const auto inventory = scanControllerSources();
+#if defined(_WIN32)
+    assert(inventory.authoritative);
+    assert(inventory.sources.size() == kXInputSlotCount);
+    for (std::uint8_t slot = 0; slot < kXInputSlotCount; ++slot) {
+        const auto& source = inventory.sources[slot];
+        assert(source.api == ApiSurface::XInput);
+        assert(source.identityQuality == IdentityQuality::RuntimeOnly);
+        assert(source.runtimeXInputSlot == std::optional<std::uint8_t>{slot});
+        assert(!source.persistentId.has_value());
+    }
+#else
+    assert(!inventory.authoritative);
+    assert(inventory.sources.empty());
+    assert(!inventory.error.empty());
+#endif
+}

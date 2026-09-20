@@ -9,6 +9,7 @@ SeatRuntime::SeatRuntime(std::uint32_t seatId) noexcept : seatId_(seatId) {}
 ActivationToken SeatRuntime::beginActivation() noexcept {
     std::lock_guard lock(mutex_);
     if ((seatId_ != 1 && seatId_ != 2) ||
+        active_ ||
         generation_ == std::numeric_limits<std::uint64_t>::max()) {
         return {};
     }
@@ -17,6 +18,7 @@ ActivationToken SeatRuntime::beginActivation() noexcept {
     active_ = true;
     process_.reset();
     targetHwnd_ = 0;
+    controllerBinding_.reset();
     return {seatId_, generation_};
 }
 
@@ -44,6 +46,18 @@ bool SeatRuntime::bindTargetWindow(const ActivationToken& token,
     return true;
 }
 
+bool SeatRuntime::bindController(const ActivationToken& token,
+                                 const controller::SeatBinding& binding) noexcept {
+    if (binding.seatId != seatId_ || binding.runtimeKey.empty()) return false;
+
+    std::lock_guard lock(mutex_);
+    if (!ownsTokenLocked(token)) return false;
+    if (controllerBinding_ && *controllerBinding_ != binding) return false;
+
+    controllerBinding_ = binding;
+    return true;
+}
+
 bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     if (!ownsTokenLocked(token)) return false;
@@ -51,12 +65,13 @@ bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
     active_ = false;
     process_.reset();
     targetHwnd_ = 0;
+    controllerBinding_.reset();
     return true;
 }
 
 SeatRuntimeSnapshot SeatRuntime::snapshot() const noexcept {
     std::lock_guard lock(mutex_);
-    return {seatId_, generation_, active_, process_, targetHwnd_};
+    return {seatId_, generation_, active_, process_, targetHwnd_, controllerBinding_};
 }
 
 bool SeatRuntime::ownsTokenLocked(const ActivationToken& token) const noexcept {
@@ -65,24 +80,105 @@ bool SeatRuntime::ownsTokenLocked(const ActivationToken& token) const noexcept {
 }
 
 ActivationToken SessionController::beginSeatActivation(std::uint32_t seatId) noexcept {
+    std::lock_guard lock(mutex_);
     const auto runtime = seat(seatId);
     return runtime ? runtime->beginActivation() : ActivationToken{};
 }
 
 bool SessionController::publishProcess(const ActivationToken& token,
                                        const ProcessIdentity& process) noexcept {
+    if (!process.valid()) return false;
+
+    std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
-    return runtime && runtime->publishProcess(token, process);
+    const auto other = otherSeat(token.seatId);
+    if (!runtime || !other) return false;
+
+    const auto otherSnapshot = other->snapshot();
+    if (otherSnapshot.active && otherSnapshot.process == process) return false;
+
+    return runtime->publishProcess(token, process);
 }
 
 bool SessionController::bindTargetWindow(const ActivationToken& token,
                                          const ProcessIdentity& owner,
                                          std::uintptr_t hwnd) noexcept {
+    if (!owner.valid() || hwnd == 0) return false;
+
+    std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
-    return runtime && runtime->bindTargetWindow(token, owner, hwnd);
+    const auto other = otherSeat(token.seatId);
+    if (!runtime || !other) return false;
+
+    const auto otherSnapshot = other->snapshot();
+    if (otherSnapshot.active && otherSnapshot.targetHwnd == hwnd) return false;
+
+    return runtime->bindTargetWindow(token, owner, hwnd);
+}
+
+bool SessionController::bindController(
+    const ActivationToken& token,
+    const controller::SeatBinding& binding,
+    const controller::InventorySnapshot& inventory) noexcept {
+    if (binding.seatId != token.seatId || binding.runtimeKey.empty() ||
+        !controller::bindingMatchesInventory(binding, inventory)) {
+        return false;
+    }
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    const auto other = otherSeat(token.seatId);
+    if (!runtime || !other) return false;
+
+    const auto otherSnapshot = other->snapshot();
+    if (otherSnapshot.active && otherSnapshot.controllerBinding &&
+        controller::sameControllerSource(*otherSnapshot.controllerBinding, binding)) {
+        return false;
+    }
+
+    return runtime->bindController(token, binding);
+}
+
+controller::PollResult SessionController::pollController(
+    const ActivationToken& token,
+    const controller::InventorySnapshot& inventory) noexcept {
+    if (!token.valid()) return {controller::IoStatus::InvalidBinding, std::nullopt};
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return {controller::IoStatus::InvalidBinding, std::nullopt};
+
+    const auto current = runtime->snapshot();
+    if (!current.active || current.generation != token.generation ||
+        !current.controllerBinding) {
+        return {controller::IoStatus::InvalidBinding, std::nullopt};
+    }
+    return controller::pollBoundController(*current.controllerBinding, inventory);
+}
+
+controller::IoStatus SessionController::setControllerVibration(
+    const ActivationToken& token,
+    const controller::InventorySnapshot& inventory,
+    std::uint16_t lowFrequencyMotor,
+    std::uint16_t highFrequencyMotor) noexcept {
+    if (!token.valid()) return controller::IoStatus::InvalidBinding;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return controller::IoStatus::InvalidBinding;
+
+    const auto current = runtime->snapshot();
+    if (!current.active || current.generation != token.generation ||
+        !current.controllerBinding) {
+        return controller::IoStatus::InvalidBinding;
+    }
+    return controller::setBoundControllerVibration(
+        *current.controllerBinding, inventory,
+        lowFrequencyMotor, highFrequencyMotor);
 }
 
 bool SessionController::endSeatActivation(const ActivationToken& token) noexcept {
+    std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
     return runtime && runtime->endActivation(token);
 }
@@ -103,6 +199,18 @@ SeatRuntime* SessionController::seat(std::uint32_t seatId) noexcept {
 const SeatRuntime* SessionController::seat(std::uint32_t seatId) const noexcept {
     if (seatId == 1) return &seat1_;
     if (seatId == 2) return &seat2_;
+    return nullptr;
+}
+
+SeatRuntime* SessionController::otherSeat(std::uint32_t seatId) noexcept {
+    if (seatId == 1) return &seat2_;
+    if (seatId == 2) return &seat1_;
+    return nullptr;
+}
+
+const SeatRuntime* SessionController::otherSeat(std::uint32_t seatId) const noexcept {
+    if (seatId == 1) return &seat2_;
+    if (seatId == 2) return &seat1_;
     return nullptr;
 }
 

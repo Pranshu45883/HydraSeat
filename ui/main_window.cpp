@@ -18,7 +18,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_inputRouter.initialize();
     refreshHardware();
 
-    // Add default Player 1 and Player 2 workspaces
+    // Add default Seat 1 and Seat 2
     onAddWorkspaceClicked();
     onAddWorkspaceClicked();
 }
@@ -31,7 +31,6 @@ void MainWindow::setupUi() {
     mainLayout->setContentsMargins(16, 16, 16, 16);
     mainLayout->setSpacing(12);
 
-    // Header layout
     auto* headerLayout = new QHBoxLayout();
     auto* titleLabel = new QLabel("🎮 HydraSeat Multiseat Control Center", this);
     titleLabel->setStyleSheet("font-size: 20px; font-weight: bold; color: #38BDF8;");
@@ -46,7 +45,7 @@ void MainWindow::setupUi() {
     connect(refreshBtn, &QPushButton::clicked, this, &MainWindow::onRefreshHardwareClicked);
     headerLayout->addWidget(refreshBtn);
 
-    auto* addWsBtn = new QPushButton("➕ Add Workspace", this);
+    auto* addWsBtn = new QPushButton("➕ Add Seat", this);
     addWsBtn->setStyleSheet(
         "QPushButton { background-color: #2563EB; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: bold; }"
         "QPushButton:hover { background-color: #1D4ED8; }"
@@ -56,7 +55,6 @@ void MainWindow::setupUi() {
 
     mainLayout->addLayout(headerLayout);
 
-    // Workspace scroll container
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
@@ -71,7 +69,6 @@ void MainWindow::setupUi() {
     scrollArea->setWidget(scrollContent);
     mainLayout->addWidget(scrollArea, 1);
 
-    // Action Footer
     auto* footerLayout = new QHBoxLayout();
     m_statusLabel = new QLabel("Ready.", this);
     m_statusLabel->setStyleSheet("color: #94A3B8; font-size: 13px;");
@@ -87,7 +84,6 @@ void MainWindow::setupUi() {
     footerLayout->addWidget(launchBtn);
 
     mainLayout->addLayout(footerLayout);
-
     statusBar()->showMessage("HydraSeat Engine v0.1.0 Ready.");
 }
 
@@ -111,13 +107,27 @@ void MainWindow::refreshHardware() {
 }
 
 void MainWindow::onAddWorkspaceClicked() {
-    uint32_t id = m_workspaceManager.createWorkspace(L"Player Workspace");
+    uint32_t id = m_workspaceManager.createWorkspace(L"Seat");
+    if (id == 0) {
+        QMessageBox::information(this, "Seat Limit",
+                                 "HydraSeat v1 supports exactly two Seats.");
+        return;
+    }
+
     auto* widget = new WorkspaceWidget(id, this);
     widget->updateDeviceLists(m_cachedDisplays, m_cachedKeyboards, m_cachedMice, m_cachedControllers);
 
     connect(widget, &WorkspaceWidget::removeRequested, this, &MainWindow::onRemoveWorkspaceRequested);
+    connect(widget, &WorkspaceWidget::configChanged, this,
+            [this, widget](uint32_t workspaceId) {
+                const auto config = widget->getCurrentConfig();
+                m_workspaceManager.assignDisplay(workspaceId, config.displayDeviceName);
+                m_workspaceManager.assignKeyboard(workspaceId, config.keyboardDevicePath);
+                m_workspaceManager.assignMouse(workspaceId, config.mouseDevicePath);
+                m_workspaceManager.assignController(
+                    workspaceId, config.controllerId.value_or(std::wstring{}));
+            });
 
-    // Insert before bottom stretch
     int stretchIndex = m_workspaceContainerLayout->count() - 1;
     m_workspaceContainerLayout->insertWidget(stretchIndex, widget);
     m_workspaceWidgets.insert(id, widget);
@@ -139,11 +149,11 @@ void MainWindow::onRefreshHardwareClicked() {
 
 void MainWindow::onLaunchGameClicked() {
     if (m_workspaceWidgets.isEmpty()) {
-        QMessageBox::warning(this, "No Workspaces", "Please create at least one player workspace before launching.");
+        QMessageBox::warning(this, "No Seats", "Please create at least one Seat before launching.");
         return;
     }
 
-    QMessageBox::information(this, "HydraSeat Launcher", "Multiseat inputs routed! Launching workspace games...");
+    QMessageBox::information(this, "HydraSeat Launcher", "Multiseat inputs routed! Launching Seat games...");
 }
 
 } // namespace ui

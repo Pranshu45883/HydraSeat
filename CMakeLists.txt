@@ -43,6 +43,9 @@ set(HYDRA_SOURCES
     src/display_manager.cpp
     src/workspace_manager.cpp
     src/runtime_authority.cpp
+    src/controller_identity.cpp
+    src/controller_inventory.cpp
+    src/controller_io.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
     src/audio_endpoint_inventory.cpp
@@ -55,6 +58,10 @@ set(HYDRA_HEADERS
     include/hydra/display_manager.hpp
     include/hydra/workspace_manager.hpp
     include/hydra/runtime_authority.hpp
+    include/hydra/process_identity.hpp
+    include/hydra/controller_identity.hpp
+    include/hydra/controller_inventory.hpp
+    include/hydra/controller_io.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     include/hydra/audio_endpoint_inventory.hpp
@@ -81,7 +88,7 @@ endif()
 
 # Test Suite Executable Target
 enable_testing()
-add_executable(hydra_tests tests/test_hydra.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
 endif()
@@ -89,3 +96,22 @@ if(Qt6_FOUND)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
 endif()
 add_test(NAME EngineUnitTests COMMAND hydra_tests)
+
+if(WIN32)
+    add_executable(hydra_process_owner_child
+        tests/process_owner_child.cpp
+    )
+
+    add_executable(game_launcher_process_ownership
+        tests/test_game_launcher_process_ownership.cpp
+        src/game_launcher.cpp
+        src/runtime_authority.cpp
+        src/controller_identity.cpp
+        src/controller_io.cpp
+    )
+    target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib)
+    add_test(
+        NAME GameLauncherProcessOwnership
+        COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>
+    )
+endif()

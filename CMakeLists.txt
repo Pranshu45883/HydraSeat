@@ -64,10 +64,15 @@ set(HYDRA_SOURCES
     src/controller_io.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
-    src/audio_endpoint_inventory.cpp
-    src/audio_session_observer.cpp
     ${UI_SOURCES}
 )
+
+if(WIN32)
+    list(APPEND HYDRA_SOURCES
+        src/audio_endpoint_inventory.cpp
+        src/audio_session_observer.cpp
+    )
+endif()
 
 set(HYDRA_HEADERS
     include/hydra/hardware_detector.hpp

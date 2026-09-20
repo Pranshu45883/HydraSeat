@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "hydra/controller_identity.hpp"
 #include "hydra/controller_inventory.hpp"
 #include "hydra/controller_io.hpp"

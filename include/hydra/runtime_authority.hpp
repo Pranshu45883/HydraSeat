@@ -9,6 +9,8 @@
 
 namespace hydra::runtime {
 
+// Every Seat activation receives a new generation. Async/stale work must present
+// the exact token before it can publish process or window state.
 struct ActivationToken {
     std::uint32_t seatId{0};
     std::uint64_t generation{0};

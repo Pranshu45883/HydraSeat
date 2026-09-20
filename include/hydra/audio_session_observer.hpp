@@ -1,12 +1,11 @@
 #pragma once
 
-#include "hydra/runtime_authority.hpp"
+#include "hydra/process_identity.hpp"
 
 #include <cstdint>
 #include <string>
 #include <vector>
 #include <optional>
-#include <windows.h> // For HRESULT
 
 namespace hydra::windows {
 
@@ -20,6 +19,8 @@ enum class AudioSessionState {
 
 // Represents a read-only snapshot of an audio session.
 struct AudioSessionObservation {
+    std::wstring endpointId;
+    std::optional<std::wstring> endpointStableId;
     std::uint32_t processId;
     std::optional<hydra::runtime::ProcessIdentity> processIdentity;
     AudioSessionState state;
@@ -27,12 +28,7 @@ struct AudioSessionObservation {
     std::optional<std::wstring> groupingParam;
 };
 
-// Represents the pure result of comparing an observed identity to an expected identity.
-enum class ProcessOwnershipMatch {
-    Match,
-    Mismatch,
-    Unknown
-};
+
 
 // Detailed error representation for session observation failures.
 struct AudioSessionObserverError {
@@ -49,16 +45,17 @@ struct AudioSessionObserverError {
     };
 
     Code code;
-    HRESULT hresult;
+    std::int32_t hresult;
 };
 
 // Encapsulates either a successful list of sessions or an explicit failure.
 struct AudioSessionInventoryResult {
-    std::optional<std::vector<AudioSessionObservation>> sessions;
+    std::vector<AudioSessionObservation> sessions;
+    bool isComplete;
     std::optional<AudioSessionObserverError> error;
 
     bool isSuccess() const noexcept {
-        return sessions.has_value();
+        return !error.has_value();
     }
 };
 
@@ -68,11 +65,6 @@ public:
     // Enumerates all current audio sessions across all render endpoints.
     // The calling thread MUST have a valid COM apartment.
     static AudioSessionInventoryResult enumerateSessions();
-
-    // Pure helper to compare an observed identity with an expected one.
-    static ProcessOwnershipMatch matchIdentity(
-        const std::optional<hydra::runtime::ProcessIdentity>& observed, 
-        const hydra::runtime::ProcessIdentity& expected) noexcept;
 };
 
 } // namespace hydra::windows

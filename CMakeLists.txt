@@ -16,7 +16,23 @@ endif()
 # Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
 if(WIN32)
     add_compile_definitions(_UNICODE UNICODE WIN32_LEAN_AND_MEAN)
-    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib Ole32.lib Mmdevapi.lib)
+    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib Ole32.lib Mmdevapi.lib runtimeobject.lib)
+
+    # Check for PKEY_AudioEndpoint_StableId availability in the current SDK
+    include(CheckCXXSourceCompiles)
+    check_cxx_source_compiles("
+        #include <windows.h>
+        #include <mmdeviceapi.h>
+        #include <functiondiscoverykeys_devpkey.h>
+        int main() {
+            (void)PKEY_AudioEndpoint_StableId;
+            return 0;
+        }
+    " HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID)
+
+    if(HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID)
+        add_compile_definitions(HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID=1)
+    endif()
 endif()
 
 # Find Qt6 components if available
@@ -75,6 +91,20 @@ add_executable(HydraSeat WIN32 src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 
 if(WIN32)
     target_link_libraries(HydraSeat PRIVATE ${WIN32_LIBS})
+
+    # HydraAudioTest (WASAPI sine wave generator)
+    add_executable(HydraAudioTest tests/hydra_audio_test.cpp)
+    target_link_libraries(HydraAudioTest PRIVATE ${WIN32_LIBS})
+
+    # HydraAudioRouter (CLI for undocumented AudioPolicyConfig)
+    add_executable(HydraAudioRouter 
+        tests/hydra_audio_router.cpp 
+        src/audio_routing_experiment.cpp 
+        src/audio_endpoint_inventory.cpp
+        src/audio_session_observer.cpp
+    )
+    target_include_directories(HydraAudioRouter PRIVATE include)
+    target_link_libraries(HydraAudioRouter PRIVATE ${WIN32_LIBS})
 endif()
 
 if(Qt6_FOUND)

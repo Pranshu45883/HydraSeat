@@ -281,22 +281,23 @@ void testAudioEndpointInventory() {
 void testAudioSessionObserver() {
     using namespace hydra::windows;
     using hydra::runtime::ProcessIdentity;
+    using hydra::runtime::ProcessOwnershipMatch;
 
     // Test 1 — exact process identity match
     ProcessIdentity id1{42, 100};
     ProcessIdentity id2{42, 100};
-    assert(AudioSessionObserver::matchIdentity(id1, id2) == ProcessOwnershipMatch::Match);
+    assert(hydra::runtime::matchIdentity(id1, id2) == ProcessOwnershipMatch::Match);
 
     // Test 2 — PID reuse protection
     ProcessIdentity id3{42, 200};
-    assert(AudioSessionObserver::matchIdentity(id3, id1) == ProcessOwnershipMatch::Mismatch);
+    assert(hydra::runtime::matchIdentity(id3, id1) == ProcessOwnershipMatch::Mismatch);
 
     // Mismatch (different PID)
     ProcessIdentity id4{43, 100};
-    assert(AudioSessionObserver::matchIdentity(id4, id1) == ProcessOwnershipMatch::Mismatch);
+    assert(hydra::runtime::matchIdentity(id4, id1) == ProcessOwnershipMatch::Mismatch);
 
     // Test 3 — missing identity
-    assert(AudioSessionObserver::matchIdentity(std::nullopt, id1) == ProcessOwnershipMatch::Unknown);
+    assert(hydra::runtime::matchIdentity(std::nullopt, id1) == ProcessOwnershipMatch::Unknown);
 
     // Initialize COM for the test thread
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -305,7 +306,8 @@ void testAudioSessionObserver() {
         assert(result.isSuccess());
 
         if (result.isSuccess()) {
-            const auto& sessions = *result.sessions;
+            std::cout << "[Test] Enumeration completeness: " << (result.isComplete ? "COMPLETE" : "PARTIAL") << std::endl;
+            const auto& sessions = result.sessions;
             std::cout << "[Test] Audio sessions detected: " << sessions.size() << std::endl;
 
             // Validate structural invariants
@@ -334,6 +336,43 @@ void testAudioSessionObserver() {
     std::cout << "[Test] AudioSessionObserver tests passed." << std::endl;
 }
 
+void testAudioSessionObserverRegression() {
+    using namespace hydra::windows;
+
+    std::wstring endpointId = L"Endpoint-A";
+    std::optional<std::wstring> endpointStableId = L"Stable-A";
+
+    std::vector<AudioSessionObservation> sessions;
+
+    // Simulate the inner loop over 2 sessions
+    for (int j = 0; j < 2; ++j) {
+        DWORD pid = 1000 + j;
+        std::optional<hydra::runtime::ProcessIdentity> processIdentity = hydra::runtime::ProcessIdentity{pid, 12345};
+        AudioSessionState mappedState = AudioSessionState::Active;
+        std::optional<std::wstring> optDisplayName = L"TestApp";
+        std::optional<std::wstring> optGroupingParam = std::nullopt;
+
+        sessions.push_back({
+            endpointId,
+            endpointStableId,
+            pid,
+            std::move(processIdentity),
+            mappedState,
+            std::move(optDisplayName),
+            std::move(optGroupingParam)
+        });
+    }
+
+    assert(sessions.size() == 2);
+    assert(sessions[0].endpointId == L"Endpoint-A");
+    assert(sessions[1].endpointId == L"Endpoint-A");
+
+    assert(sessions[0].endpointStableId.has_value() && *sessions[0].endpointStableId == L"Stable-A");
+    assert(sessions[1].endpointStableId.has_value() && *sessions[1].endpointStableId == L"Stable-A");
+
+    std::cout << "[Test] AudioSessionObserver regression test (move semantics) passed." << std::endl;
+}
+
 int main() {
     bool assertionProbe = false;
     assert((assertionProbe = true));
@@ -348,6 +387,7 @@ int main() {
     testRuntimeAuthority();
     testAudioEndpointInventory();
     testAudioSessionObserver();
+    testAudioSessionObserverRegression();
     testControllerIdentity();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;

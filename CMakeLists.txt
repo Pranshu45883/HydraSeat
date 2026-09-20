@@ -108,7 +108,7 @@ if(WIN32)
         src/controller_inventory.cpp
         src/controller_io.cpp
     )
-    target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib)
+    target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib Setupapi.lib Hid.lib)
     add_test(
         NAME GameLauncherProcessOwnership
         COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>

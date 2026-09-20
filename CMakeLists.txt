@@ -93,3 +93,22 @@ if(Qt6_FOUND)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
 endif()
 add_test(NAME EngineUnitTests COMMAND hydra_tests)
+
+if(WIN32)
+    add_executable(hydra_process_owner_child
+        tests/process_owner_child.cpp
+    )
+
+    add_executable(game_launcher_process_ownership
+        tests/test_game_launcher_process_ownership.cpp
+        src/game_launcher.cpp
+        src/runtime_authority.cpp
+        src/controller_identity.cpp
+        src/controller_io.cpp
+    )
+    target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib)
+    add_test(
+        NAME GameLauncherProcessOwnership
+        COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>
+    )
+endif()

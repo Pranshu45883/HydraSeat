@@ -35,6 +35,12 @@ void testControllerPairing() {
     assert(paired.binding->runtimeXInputSlot ==
            std::optional<std::uint8_t>{0});
 
+    auto nonAuthoritative = inventory;
+    nonAuthoritative.authoritative = false;
+    assert(pairPhysicalControllerFromButtonPress(
+               1, L"container-a", before, after, nonAuthoritative).status ==
+           PairingStatus::InventoryNotAuthoritative);
+
     auto analogOnly = after;
     analogOnly.slots[0].state.buttons = 0;
     analogOnly.slots[0].state.thumbLX = 100;

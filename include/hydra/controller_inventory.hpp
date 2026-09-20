@@ -38,6 +38,7 @@ enum class PairingStatus : std::uint8_t {
     RuntimeSourceDisconnected = 7,
     PairingGestureNotDetected = 8,
     PairingGestureAmbiguous = 9,
+    InventoryNotAuthoritative = 10,
 };
 
 struct PairingResult {

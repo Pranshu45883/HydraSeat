@@ -57,6 +57,7 @@ set(HYDRA_HEADERS
     include/hydra/display_manager.hpp
     include/hydra/workspace_manager.hpp
     include/hydra/runtime_authority.hpp
+    include/hydra/process_identity.hpp
     include/hydra/controller_identity.hpp
     include/hydra/controller_inventory.hpp
     include/hydra/controller_io.hpp

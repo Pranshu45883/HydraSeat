@@ -29,10 +29,12 @@ inline ProcessOwnershipMatch matchIdentity(
     const std::optional<ProcessIdentity>& observed,
     const ProcessIdentity& expected) noexcept
 {
-    if (!observed) return ProcessOwnershipMatch::Unknown;
-    if (observed->pid != expected.pid) return ProcessOwnershipMatch::Mismatch;
-    if (observed->creationIdentity != expected.creationIdentity) return ProcessOwnershipMatch::Mismatch;
-    return ProcessOwnershipMatch::Match;
+    if (!observed.has_value() || !observed->valid() || !expected.valid()) {
+        return ProcessOwnershipMatch::Unknown;
+    }
+    return *observed == expected
+        ? ProcessOwnershipMatch::Match
+        : ProcessOwnershipMatch::Mismatch;
 }
 
 } // namespace hydra::runtime

@@ -7,7 +7,9 @@
 #include "hydra/workspace_manager.hpp"
 #include "hydra/input_router.hpp"
 #include "hydra/runtime_authority.hpp"
+#ifdef _WIN32
 #include <objbase.h>
+#endif
 
 #include <iostream>
 #include <cassert>
@@ -248,7 +250,8 @@ void testAudioEndpointInventory() {
     assert(duplicateFriendlyNameEp1.friendlyName == duplicateFriendlyNameEp2.friendlyName);
     assert(duplicateFriendlyNameEp1.endpointId != duplicateFriendlyNameEp2.endpointId);
 
-    // Initialize COM for the test thread
+#ifdef _WIN32
+    // Integration coverage belongs to the Windows backend only.
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (SUCCEEDED(hr)) {
         auto result = AudioEndpointInventory::enumerateRenderEndpoints();
@@ -272,6 +275,7 @@ void testAudioEndpointInventory() {
     } else {
         std::cerr << "[Test] Failed to initialize COM, skipping integration test." << std::endl;
     }
+#endif
 
     std::cout << "[Test] AudioEndpointInventory tests passed." << std::endl;
 }
@@ -296,10 +300,13 @@ void testAudioSessionObserver() {
     ProcessIdentity id4{43, 100};
     assert(hydra::runtime::matchIdentity(id4, id1) == ProcessOwnershipMatch::Mismatch);
 
-    // Test 3 — missing identity
+    // Test 3 — missing or invalid identity stays Unknown.
     assert(hydra::runtime::matchIdentity(std::nullopt, id1) == ProcessOwnershipMatch::Unknown);
+    assert(hydra::runtime::matchIdentity(ProcessIdentity{}, id1) == ProcessOwnershipMatch::Unknown);
+    assert(hydra::runtime::matchIdentity(id1, ProcessIdentity{}) == ProcessOwnershipMatch::Unknown);
 
-    // Initialize COM for the test thread
+#ifdef _WIN32
+    // Integration coverage belongs to the Windows backend only.
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (SUCCEEDED(hr)) {
         auto result = AudioSessionObserver::enumerateSessions();
@@ -332,6 +339,7 @@ void testAudioSessionObserver() {
     } else {
         std::cerr << "[Test] Failed to initialize COM, skipping session integration test." << std::endl;
     }
+#endif
 
     std::cout << "[Test] AudioSessionObserver tests passed." << std::endl;
 }
@@ -346,7 +354,7 @@ void testAudioSessionObserverRegression() {
 
     // Simulate the inner loop over 2 sessions
     for (int j = 0; j < 2; ++j) {
-        DWORD pid = 1000 + j;
+        std::uint32_t pid = 1000 + j;
         std::optional<hydra::runtime::ProcessIdentity> processIdentity = hydra::runtime::ProcessIdentity{pid, 12345};
         AudioSessionState mappedState = AudioSessionState::Active;
         std::optional<std::wstring> optDisplayName = L"TestApp";

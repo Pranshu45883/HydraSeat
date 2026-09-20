@@ -8,11 +8,9 @@
 #include <winstring.h>
 #include <combaseapi.h>
 #include <inspectable.h>
-#include <iostream>
 
 namespace hydra::windows {
 
-// RAII wrapper for COM interfaces
 template <typename T>
 struct ComPtr {
     T* ptr{nullptr};
@@ -22,20 +20,52 @@ struct ComPtr {
     explicit operator bool() const { return ptr != nullptr; }
 };
 
-// RAII wrapper for HSTRING
-struct ScopedHString {
-    HSTRING hstr{nullptr};
-    ScopedHString(const std::wstring& str) {
-        WindowsCreateString(str.c_str(), static_cast<UINT32>(str.length()), &hstr);
+struct ScopedHandle {
+    HANDLE handle{nullptr};
+    ~ScopedHandle() {
+        if (handle && handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle);
+        }
     }
-    ~ScopedHString() {
-        if (hstr) WindowsDeleteString(hstr);
-    }
-    operator HSTRING() const { return hstr; }
 };
 
+struct ScopedHString {
+    HSTRING value{nullptr};
+    HRESULT hr{E_FAIL};
+
+    explicit ScopedHString(const std::wstring& text) {
+        hr = WindowsCreateString(
+            text.c_str(),
+            static_cast<UINT32>(text.size()),
+            &value);
+    }
+
+    ~ScopedHString() {
+        if (value) WindowsDeleteString(value);
+    }
+
+    explicit operator bool() const noexcept {
+        return SUCCEEDED(hr) && value != nullptr;
+    }
+};
+
+struct OwnedHString {
+    HSTRING value{nullptr};
+    ~OwnedHString() {
+        if (value) WindowsDeleteString(value);
+    }
+};
+
+static std::wstring copyHString(HSTRING value) {
+    if (!value) return {};
+    UINT32 length = 0;
+    const wchar_t* raw = WindowsGetStringRawBuffer(value, &length);
+    return raw ? std::wstring(raw, length) : std::wstring{};
+}
+
 // Undocumented Windows 10/11 interface for per-app audio routing.
-// Pre-21H2 Variant
+// The final method remains declared only to preserve the reverse-engineered
+// vtable shape; HydraSeat never calls the global clear operation.
 MIDL_INTERFACE("2a59116d-6c4f-45e0-a74f-707e3fef9258")
 IAudioPolicyConfigFactoryDownlevel : public IInspectable
 {
@@ -58,12 +88,13 @@ IAudioPolicyConfigFactoryDownlevel : public IInspectable
     virtual HRESULT STDMETHODCALLTYPE dummy17() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy18() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy19() = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetPersistedDefaultAudioEndpoint(DWORD processId, EDataFlow flow, ERole role, HSTRING deviceId) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetPersistedDefaultAudioEndpoint(DWORD processId, EDataFlow flow, ERole role, HSTRING* deviceId) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetPersistedDefaultAudioEndpoint(
+        DWORD processId, EDataFlow flow, ERole role, HSTRING deviceId) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetPersistedDefaultAudioEndpoint(
+        DWORD processId, EDataFlow flow, ERole role, HSTRING* deviceId) = 0;
     virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
 };
 
-// 21H2 and later Variant
 MIDL_INTERFACE("ab3d4648-e242-459f-b02f-541c70306324")
 IAudioPolicyConfigFactory21H2 : public IInspectable
 {
@@ -86,127 +117,265 @@ IAudioPolicyConfigFactory21H2 : public IInspectable
     virtual HRESULT STDMETHODCALLTYPE dummy17() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy18() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy19() = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetPersistedDefaultAudioEndpoint(DWORD processId, EDataFlow flow, ERole role, HSTRING deviceId) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetPersistedDefaultAudioEndpoint(DWORD processId, EDataFlow flow, ERole role, HSTRING* deviceId) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetPersistedDefaultAudioEndpoint(
+        DWORD processId, EDataFlow flow, ERole role, HSTRING deviceId) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetPersistedDefaultAudioEndpoint(
+        DWORD processId, EDataFlow flow, ERole role, HSTRING* deviceId) = 0;
     virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
 };
 
-// Deterministically constructs the full PnP device interface path required by the undocumented routing API.
-// The raw IMMDevice::GetId() string (e.g., "{0.0...}.{GUID}") is rejected with E_INVALIDARG.
-// The API mandates the SWD enumerator prefix and the audio render interface class GUID suffix.
-static std::wstring resolveRenderDeviceInterfacePath(const std::wstring& endpointId) {
-    // DEVINTERFACE_AUDIO_RENDER GUID: {e6327cad-dcec-4949-ae8a-991e976a79d2}
-    return L"\\\\?\\SWD#MMDEVAPI#" + endpointId + L"#{e6327cad-dcec-4949-ae8a-991e976a79d2}";
+static AudioRoutingProbeResult makeResult(
+    AudioRoutingProbeStatus status,
+    HRESULT hr,
+    bool targetVerified = false,
+    bool rollbackVerified = false)
+{
+    return {
+        status,
+        static_cast<std::int32_t>(hr),
+        targetVerified,
+        rollbackVerified
+    };
 }
 
-// Validates that the process actually exists and has an enumerated audio session.
-// This enforces the requirement: "Do not accept an arbitrary PID as proof of ownership."
-static bool validateProcessOwnsAudioSession(DWORD pid) {
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!hProcess) {
-        return false;
-    }
-    CloseHandle(hProcess);
+static std::wstring resolveRenderDeviceInterfacePath(
+    const std::wstring& endpointId)
+{
+    // DEVINTERFACE_AUDIO_RENDER GUID:
+    // {e6327cad-dcec-4949-ae8a-991e976a79d2}
+    return L"\\\\?\\SWD#MMDEVAPI#" + endpointId +
+           L"#{e6327cad-dcec-4949-ae8a-991e976a79d2}";
+}
 
-    auto result = AudioSessionObserver::enumerateSessions();
-    if (!result.isSuccess()) {
+static bool openExactProcess(
+    const hydra::runtime::ProcessIdentity& expected,
+    ScopedHandle& process)
+{
+    if (!expected.valid()) return false;
+
+    process.handle = OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE,
+        static_cast<DWORD>(expected.pid));
+    if (!process.handle) return false;
+
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (!GetProcessTimes(
+            process.handle, &creation, &exit, &kernel, &user)) {
         return false;
     }
+
+    const std::uint64_t creationIdentity =
+        (static_cast<std::uint64_t>(creation.dwHighDateTime) << 32) |
+        static_cast<std::uint64_t>(creation.dwLowDateTime);
+
+    return creationIdentity == expected.creationIdentity;
+}
+
+static bool hasExactObservedAudioSession(
+    const hydra::runtime::ProcessIdentity& expected)
+{
+    const auto result = AudioSessionObserver::enumerateSessions();
+    if (!result.isSuccess() || !result.isComplete) return false;
 
     for (const auto& session : result.sessions) {
-        if (session.processId == pid) {
+        if (hydra::runtime::matchIdentity(
+                session.processIdentity, expected) ==
+            hydra::runtime::ProcessOwnershipMatch::Match) {
             return true;
         }
     }
+
     return false;
 }
 
-// Validates that the endpoint actually exists in the Windows audio system.
 static bool validateEndpointExists(const std::wstring& endpointId) {
-    ComPtr<IMMDeviceEnumerator> pEnumerator;
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&pEnumerator);
-    if (FAILED(hr) || !pEnumerator) return false;
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    HRESULT hr = CoCreateInstance(
+        __uuidof(MMDeviceEnumerator),
+        nullptr,
+        CLSCTX_ALL,
+        __uuidof(IMMDeviceEnumerator),
+        reinterpret_cast<void**>(&enumerator));
+    if (FAILED(hr) || !enumerator) return false;
 
-    ComPtr<IMMDevice> pDevice;
-    hr = pEnumerator->GetDevice(endpointId.c_str(), &pDevice);
-    return SUCCEEDED(hr) && pDevice;
+    ComPtr<IMMDevice> device;
+    hr = enumerator->GetDevice(endpointId.c_str(), &device);
+    return SUCCEEDED(hr) && device;
 }
 
-HRESULT AudioRoutingExperiment::manualRoute(DWORD pid, const std::wstring& targetEndpointId) {
-    if (!validateProcessOwnsAudioSession(pid)) {
-        std::wcerr << L"HydraAudioRouter: Target process PID " << pid << L" does not exist or has no active audio session." << std::endl;
-        return E_INVALIDARG;
+template <typename Factory>
+static AudioRoutingProbeResult probeWithFactory(
+    Factory* factory,
+    const hydra::runtime::ProcessIdentity& targetProcess,
+    const std::wstring& targetEndpointId)
+{
+    OwnedHString previousRaw;
+    HRESULT hr = factory->GetPersistedDefaultAudioEndpoint(
+        static_cast<DWORD>(targetProcess.pid),
+        eRender,
+        eConsole,
+        &previousRaw.value);
+
+    // Without an exact prior mapping there is no target-scoped rollback
+    // contract that we can prove safe. Refuse to mutate.
+    const std::wstring previousMapping =
+        SUCCEEDED(hr) ? copyHString(previousRaw.value) : std::wstring{};
+    if (FAILED(hr) || previousMapping.empty()) {
+        return makeResult(
+            AudioRoutingProbeStatus::UnsafeWithoutRestorableBaseline,
+            FAILED(hr) ? hr : HRESULT_FROM_WIN32(ERROR_NOT_FOUND));
     }
 
-    if (!validateEndpointExists(targetEndpointId)) {
-        std::wcerr << L"HydraAudioRouter: Target endpoint ID '" << targetEndpointId << L"' does not exist." << std::endl;
-        return E_INVALIDARG;
+    const std::wstring targetMapping =
+        resolveRenderDeviceInterfacePath(targetEndpointId);
+    ScopedHString target(targetMapping);
+    if (!target) {
+        return makeResult(
+            AudioRoutingProbeStatus::ApplyFailed,
+            target.hr);
     }
 
-    std::wstring pnpInterfacePath = resolveRenderDeviceInterfacePath(targetEndpointId);
-
-    std::wcout << L"HydraAudioRouter: Resolving IMMDevice ID to PnP interface path..." << std::endl;
-    std::wcout << L"  Supplied PID: " << pid << std::endl;
-    std::wcout << L"  Supplied Endpoint ID: " << targetEndpointId << std::endl;
-    std::wcout << L"  Resolved PnP Path:    " << pnpInterfacePath << std::endl;
-
-    ScopedHString className(L"Windows.Media.Internal.AudioPolicyConfig");
-    ScopedHString deviceId(pnpInterfacePath);
-
-    ComPtr<IInspectable> factoryBase;
-    HRESULT hr = RoGetActivationFactory(className, __uuidof(IInspectable), (void**)&factoryBase);
-    if (FAILED(hr) || !factoryBase) return hr;
-
-    ComPtr<IAudioPolicyConfigFactory21H2> factory21H2;
-    ComPtr<IAudioPolicyConfigFactoryDownlevel> factoryDownlevel;
-
-    bool is21H2 = SUCCEEDED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactory21H2), (void**)&factory21H2));
-    if (!is21H2) {
-        if (FAILED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactoryDownlevel), (void**)&factoryDownlevel))) {
-            return E_NOINTERFACE;
-        }
+    hr = factory->SetPersistedDefaultAudioEndpoint(
+        static_cast<DWORD>(targetProcess.pid),
+        eRender,
+        eConsole,
+        target.value);
+    if (FAILED(hr)) {
+        return makeResult(AudioRoutingProbeStatus::ApplyFailed, hr);
     }
 
-    if (is21H2) {
-        return factory21H2->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
-    } else {
-        return factoryDownlevel->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
+    OwnedHString appliedRaw;
+    const HRESULT verifyApplyHr =
+        factory->GetPersistedDefaultAudioEndpoint(
+            static_cast<DWORD>(targetProcess.pid),
+            eRender,
+            eConsole,
+            &appliedRaw.value);
+    const bool targetVerified =
+        SUCCEEDED(verifyApplyHr) &&
+        copyHString(appliedRaw.value) == targetMapping;
+
+    // Restore the exact HSTRING returned by Windows. Reusing the captured
+    // value avoids any normalization or allocation step during rollback.
+    const HRESULT restoreHr =
+        factory->SetPersistedDefaultAudioEndpoint(
+            static_cast<DWORD>(targetProcess.pid),
+            eRender,
+            eConsole,
+            previousRaw.value);
+    if (FAILED(restoreHr)) {
+        return makeResult(
+            AudioRoutingProbeStatus::RestoreFailed,
+            restoreHr,
+            targetVerified,
+            false);
     }
+
+    OwnedHString restoredRaw;
+    const HRESULT verifyRestoreHr =
+        factory->GetPersistedDefaultAudioEndpoint(
+            static_cast<DWORD>(targetProcess.pid),
+            eRender,
+            eConsole,
+            &restoredRaw.value);
+    const bool rollbackVerified =
+        SUCCEEDED(verifyRestoreHr) &&
+        copyHString(restoredRaw.value) == previousMapping;
+
+    if (!rollbackVerified) {
+        return makeResult(
+            AudioRoutingProbeStatus::RestoreVerificationFailed,
+            FAILED(verifyRestoreHr) ? verifyRestoreHr : E_FAIL,
+            targetVerified,
+            false);
+    }
+
+    if (!targetVerified) {
+        return makeResult(
+            AudioRoutingProbeStatus::ApplyVerificationFailed,
+            FAILED(verifyApplyHr) ? verifyApplyHr : E_FAIL,
+            false,
+            true);
+    }
+
+    return makeResult(
+        AudioRoutingProbeStatus::PersistedPolicyRoundTripVerified,
+        S_OK,
+        true,
+        true);
 }
 
-HRESULT AudioRoutingExperiment::manualReset(DWORD pid) {
-    if (!validateProcessOwnsAudioSession(pid)) {
-        std::wcerr << L"HydraAudioRouter: Target process PID " << pid << L" does not exist or has no active audio session." << std::endl;
-        return E_INVALIDARG;
+AudioRoutingProbeResult AudioRoutingExperiment::probePersistedRoute(
+    const hydra::runtime::ProcessIdentity& targetProcess,
+    const std::wstring& targetEndpointId)
+{
+    ScopedHandle process;
+    if (!openExactProcess(targetProcess, process)) {
+        return makeResult(
+            AudioRoutingProbeStatus::InvalidTargetProcess,
+            E_INVALIDARG);
     }
 
-    std::wcout << L"HydraAudioRouter: Attempting to reset per-process routing..." << std::endl;
-    std::wcout << L"  Supplied PID: " << pid << std::endl;
+    // Keep the exact process handle alive through apply and rollback so the
+    // PID cannot silently become ownership evidence for a different process.
+    if (!hasExactObservedAudioSession(targetProcess)) {
+        return makeResult(
+            AudioRoutingProbeStatus::TargetAudioSessionNotObserved,
+            E_INVALIDARG);
+    }
 
-    ScopedHString className(L"Windows.Media.Internal.AudioPolicyConfig");
-    
-    // Passing L"" (empty string) clears the assignment
-    ScopedHString emptyDeviceId(L"");
+    if (targetEndpointId.empty() ||
+        !validateEndpointExists(targetEndpointId)) {
+        return makeResult(
+            AudioRoutingProbeStatus::TargetEndpointUnavailable,
+            E_INVALIDARG);
+    }
+
+    ScopedHString className(
+        L"Windows.Media.Internal.AudioPolicyConfig");
+    if (!className) {
+        return makeResult(
+            AudioRoutingProbeStatus::FactoryUnavailable,
+            className.hr);
+    }
 
     ComPtr<IInspectable> factoryBase;
-    HRESULT hr = RoGetActivationFactory(className, __uuidof(IInspectable), (void**)&factoryBase);
-    if (FAILED(hr) || !factoryBase) return hr;
+    HRESULT hr = RoGetActivationFactory(
+        className.value,
+        __uuidof(IInspectable),
+        reinterpret_cast<void**>(&factoryBase));
+    if (FAILED(hr) || !factoryBase) {
+        return makeResult(
+            AudioRoutingProbeStatus::FactoryUnavailable,
+            hr);
+    }
 
     ComPtr<IAudioPolicyConfigFactory21H2> factory21H2;
+    if (SUCCEEDED(factoryBase->QueryInterface(
+            __uuidof(IAudioPolicyConfigFactory21H2),
+            reinterpret_cast<void**>(&factory21H2))) &&
+        factory21H2) {
+        return probeWithFactory(
+            factory21H2.ptr,
+            targetProcess,
+            targetEndpointId);
+    }
+
     ComPtr<IAudioPolicyConfigFactoryDownlevel> factoryDownlevel;
-
-    bool is21H2 = SUCCEEDED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactory21H2), (void**)&factory21H2));
-    if (!is21H2) {
-        if (FAILED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactoryDownlevel), (void**)&factoryDownlevel))) {
-            return E_NOINTERFACE;
-        }
+    hr = factoryBase->QueryInterface(
+        __uuidof(IAudioPolicyConfigFactoryDownlevel),
+        reinterpret_cast<void**>(&factoryDownlevel));
+    if (FAILED(hr) || !factoryDownlevel) {
+        return makeResult(
+            AudioRoutingProbeStatus::FactoryUnavailable,
+            hr);
     }
 
-    if (is21H2) {
-        return factory21H2->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, emptyDeviceId);
-    } else {
-        return factoryDownlevel->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, emptyDeviceId);
-    }
+    return probeWithFactory(
+        factoryDownlevel.ptr,
+        targetProcess,
+        targetEndpointId);
 }
 
 } // namespace hydra::windows

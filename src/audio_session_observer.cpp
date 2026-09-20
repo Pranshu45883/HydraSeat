@@ -139,6 +139,11 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
     for (UINT i = 0; i < endpointCount; ++i) {
         ComPtr<IMMDevice> pEndpoint;
         hr = pCollection->Item(i, &pEndpoint);
+        if (FAILED(hr) || !pEndpoint) {
+            result.isComplete = false;
+            continue;
+        }
+
         ScopedCoTaskMem pwszID;
         hr = pEndpoint->GetId(&pwszID);
         if (FAILED(hr) || !pwszID.str) {
@@ -194,7 +199,8 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
             ComPtr<IAudioSessionControl2> pSessionControl2;
             hr = pSessionControl->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&pSessionControl2);
             if (FAILED(hr) || !pSessionControl2) {
-                // Must support IAudioSessionControl2 to retrieve the PID.
+                // Skipping a session makes absence non-authoritative.
+                result.isComplete = false;
                 continue;
             }
 

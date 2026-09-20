@@ -16,7 +16,7 @@ endif()
 # Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
 if(WIN32)
     add_compile_definitions(_UNICODE UNICODE WIN32_LEAN_AND_MEAN)
-    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib)
+    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib Ole32.lib Mmdevapi.lib)
 endif()
 
 # Find Qt6 components if available
@@ -48,6 +48,7 @@ set(HYDRA_SOURCES
     src/controller_io.cpp
     src/game_launcher.cpp
     src/gui_win32.cpp
+    src/audio_endpoint_inventory.cpp
     ${UI_SOURCES}
 )
 
@@ -63,6 +64,7 @@ set(HYDRA_HEADERS
     include/hydra/controller_io.hpp
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
+    include/hydra/audio_endpoint_inventory.hpp
     ${UI_HEADERS}
 )
 
@@ -105,9 +107,10 @@ if(WIN32)
         src/game_launcher.cpp
         src/runtime_authority.cpp
         src/controller_identity.cpp
+        src/controller_inventory.cpp
         src/controller_io.cpp
     )
-    target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib)
+    target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib Setupapi.lib Hid.lib)
     add_test(
         NAME GameLauncherProcessOwnership
         COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>

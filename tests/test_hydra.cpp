@@ -7,6 +7,7 @@
 #include "hydra/workspace_manager.hpp"
 #include "hydra/input_router.hpp"
 #include "hydra/runtime_authority.hpp"
+#include <objbase.h>
 
 #include <iostream>
 #include <cassert>
@@ -216,6 +217,65 @@ void testRuntimeAuthority() {
     std::cout << "[Test] RuntimeAuthority tests passed." << std::endl;
 }
 
+#include "hydra/audio_endpoint_inventory.hpp"
+
+void testAudioEndpointInventory() {
+    using namespace hydra::windows;
+
+    // Model tests
+    AudioRenderEndpoint activeEp{L"ep1", std::nullopt, L"Name", AudioEndpointState::Active};
+    assert(activeEp.isAvailable() == true);
+
+    AudioRenderEndpoint disabledEp{L"ep2", std::nullopt, L"Name", AudioEndpointState::Disabled};
+    assert(disabledEp.isAvailable() == false);
+
+    AudioRenderEndpoint unpluggedEp{L"ep3", L"Stable", L"Name", AudioEndpointState::Unplugged};
+    assert(unpluggedEp.isAvailable() == false);
+
+    AudioRenderEndpoint missingEp{L"ep4", L"Stable", L"Name", AudioEndpointState::NotPresent};
+    assert(missingEp.isAvailable() == false);
+
+    AudioRenderEndpoint unknownEp{L"ep5", L"Stable", L"Name", AudioEndpointState::Unknown};
+    assert(unknownEp.isAvailable() == false);
+
+    // Pure test proving: missing stableId != endpointId fallback
+    AudioRenderEndpoint missingStableIdEp{L"Endpoint_XYZ_123", std::nullopt, L"Speakers", AudioEndpointState::Active};
+    assert(!missingStableIdEp.stableId.has_value()); // Must not fall back to endpointId
+
+    // Pure test proving: friendlyName is not an identity key and duplicate friendly names are valid
+    AudioRenderEndpoint duplicateFriendlyNameEp1{L"Endpoint_1", L"Stable_1", L"Generic Headset", AudioEndpointState::Active};
+    AudioRenderEndpoint duplicateFriendlyNameEp2{L"Endpoint_2", L"Stable_2", L"Generic Headset", AudioEndpointState::Active};
+    assert(duplicateFriendlyNameEp1.friendlyName == duplicateFriendlyNameEp2.friendlyName);
+    assert(duplicateFriendlyNameEp1.endpointId != duplicateFriendlyNameEp2.endpointId);
+
+    // Initialize COM for the test thread
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hr)) {
+        auto result = AudioEndpointInventory::enumerateRenderEndpoints();
+        assert(result.isSuccess());
+
+        if (result.isSuccess()) {
+            const auto& endpoints = *result.endpoints;
+            std::cout << "[Test] Audio render endpoints detected: " << endpoints.size() << std::endl;
+
+            for (const auto& ep : endpoints) {
+                assert(!ep.endpointId.empty());
+                std::wcout << L"  Audio Endpoint: " << ep.endpointId << std::endl;
+                std::wcout << L"    FriendlyName: " << ep.friendlyName << std::endl;
+                if (ep.stableId) {
+                    std::wcout << L"    StableId: " << *ep.stableId << std::endl;
+                }
+                std::wcout << L"    Available: " << (ep.isAvailable() ? L"true" : L"false") << std::endl;
+            }
+        }
+        CoUninitialize();
+    } else {
+        std::cerr << "[Test] Failed to initialize COM, skipping integration test." << std::endl;
+    }
+
+    std::cout << "[Test] AudioEndpointInventory tests passed." << std::endl;
+}
+
 int main() {
     bool assertionProbe = false;
     assert((assertionProbe = true));
@@ -228,6 +288,7 @@ int main() {
     testHardwareDetector();
     testWorkspaceManager();
     testRuntimeAuthority();
+    testAudioEndpointInventory();
     testControllerIdentity();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;

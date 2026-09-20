@@ -190,8 +190,10 @@ SessionController::virtualXInputMapping(const ActivationToken& token) const noex
         !current.controllerBinding) {
         return std::nullopt;
     }
-    return controller::VirtualXInputMapping{
+    controller::VirtualXInputMapping mapping{
         token.seatId, token.generation, *current.controllerBinding};
+    if (!mapping.valid()) return std::nullopt;
+    return mapping;
 }
 
 bool SessionController::endSeatActivation(const ActivationToken& token) noexcept {

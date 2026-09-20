@@ -28,6 +28,21 @@ void testControllerVirtualXInput() {
     assert(mapping->seatId == 1);
     assert(mapping->activationGeneration == token.generation);
 
+    auto wrongApi = *mapping;
+    wrongApi.source.api = controller::ApiSurface::GameInput;
+    assert(!wrongApi.valid());
+    assert(controller::pollVirtualXInput(
+               wrongApi, controller::kSeatLogicalXInputSlot, inventory).status ==
+           controller::IoStatus::InvalidBinding);
+
+    auto missingRuntimeSlot = *mapping;
+    missingRuntimeSlot.source.runtimeXInputSlot.reset();
+    assert(!missingRuntimeSlot.valid());
+
+    auto zeroSourceGeneration = *mapping;
+    zeroSourceGeneration.source.sourceGeneration = 0;
+    assert(!zeroSourceGeneration.valid());
+
     assert(controller::pollVirtualXInput(
                *mapping, std::uint8_t{1}, inventory).status ==
            controller::IoStatus::Disconnected);
@@ -44,4 +59,24 @@ void testControllerVirtualXInput() {
 
     assert(session.endSeatActivation(token));
     assert(!session.virtualXInputMapping(token).has_value());
+
+    controller::InventorySnapshot gameInputInventory;
+    gameInputInventory.authoritative = true;
+    gameInputInventory.sources.push_back({
+        "gameinput:pad-a", std::wstring{L"container-a"}, L"Stable Pad A",
+        controller::ApiSurface::GameInput,
+        controller::IdentityQuality::Stable,
+        std::nullopt, true, std::uint64_t{1}});
+    gameInputInventory.physicalControllers.push_back(
+        {L"container-a", L"Stable Pad A", L"hid-path-a"});
+
+    const auto gameInputActivation = session.beginSeatActivation(1);
+    assert(gameInputActivation.valid());
+    const controller::SeatBinding gameInputBinding{
+        1, controller::ApiSurface::GameInput, "gameinput:pad-a",
+        std::wstring{L"container-a"}, std::nullopt, std::uint64_t{1}};
+    assert(session.bindController(
+        gameInputActivation, gameInputBinding, gameInputInventory));
+    assert(!session.virtualXInputMapping(gameInputActivation).has_value());
+    assert(session.endSeatActivation(gameInputActivation));
 }

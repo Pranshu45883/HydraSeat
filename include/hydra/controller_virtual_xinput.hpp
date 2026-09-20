@@ -14,8 +14,14 @@ struct VirtualXInputMapping {
     SeatBinding source;
 
     bool valid() const noexcept {
-        return (seatId == 1 || seatId == 2) && activationGeneration != 0 &&
-               source.seatId == seatId && !source.runtimeKey.empty();
+        return (seatId == 1 || seatId == 2) &&
+               activationGeneration != 0 &&
+               source.seatId == seatId &&
+               source.api == ApiSurface::XInput &&
+               source.runtimeXInputSlot.has_value() &&
+               *source.runtimeXInputSlot < kXInputSlotCount &&
+               source.sourceGeneration != 0 &&
+               !source.runtimeKey.empty();
     }
 
     bool operator==(const VirtualXInputMapping&) const = default;

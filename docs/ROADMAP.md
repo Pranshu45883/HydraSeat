@@ -1,57 +1,138 @@
-# HydraSeat Development Roadmap
+# HydraSeat Roadmap
 
----
+This roadmap follows the current ownership architecture rather than the old Phase 0–7 prototype sequence. It describes integration order, not a promise that controlled tests equal production readiness.
 
-## Phase 0: Research & Foundation (Current)
-- [x] Establish C++20 / Qt 6 project workspace architecture
-- [x] Configure `.agents/AGENTS.md` autonomous iteration rules
-- [x] Document Windows input/display architectural design
-- [ ] Evaluate open-source libraries: Interception, HidHide, ViGEmBus, Virtual Display Driver (IDD)
+See [STATUS.md](STATUS.md) for the dated implementation snapshot.
 
----
+## 1. Merged foundation
 
-## Phase 1: Hardware Detection
-- [ ] Implement `HardwareDetector` module
-- [ ] Detect and list physical display monitors & virtual displays
-- [ ] Differentiate distinct physical keyboards by HID device path (`RAWINPUTHEADER.hDevice`)
-- [ ] Differentiate distinct mice and touchpads
-- [ ] Differentiate controllers (XInput, DualSense, HID)
-- [ ] Build CLI hardware detection tool for verification
+The current upstream baseline already establishes:
 
----
+- [x] v1 limited to Seat 1 and Seat 2;
+- [x] stable controller identity separated from runtime XInput slot identity;
+- [x] stable controller IDs persisted in the two-Seat configuration;
+- [x] UI/controller selection expressed in Seat terms;
+- [x] activation-generation-scoped `SeatRuntime` state;
+- [x] cross-Seat exact process/window/controller ownership checks;
+- [x] Seat-owned transient controller bindings;
+- [x] fail-closed runtime ownership rules.
 
-## Phase 2: Device Assignment UI & Workspace Matrix
-- [ ] Build Qt 6 drag-and-drop workspace assignment UI
-- [ ] Implement `WorkspaceManager` state machine
-- [ ] Save and load workspace profiles to JSON
+These are foundation contracts. They do not by themselves prove complete multiseat gameplay.
 
----
+## 2. Controller and process integration sequence
 
-## Phase 3: Raw Input Router Core
-- [ ] Implement Win32 Raw Input sink window & hook loop
-- [ ] Intercept individual physical keyboard events independently
-- [ ] Intercept individual physical mouse events independently
-- [ ] Route input events to target window handles without OS merging
+Move validated controller/process work into `main` in dependency order. Each upstream PR should be immediately mergeable on the current base; dependent work may remain on contributor branches until its prerequisite is merged.
 
----
+1. **Reconnect-safe controller binding**
+   - track source generation across disconnect/reconnect;
+   - invalidate stale bindings rather than trusting an old runtime slot.
 
-## Phase 4: Display Routing & Virtual Display Management
-- [ ] Integrate Virtual Display Driver (IDD) / SpaceDesk / Sunshine adapters
-- [ ] Auto-create virtual display outputs for secondary devices (e.g. Android phone)
+2. **Explicit controller pairing**
+   - pair stable physical identity with the current runtime XInput source using explicit user evidence;
+   - never infer physical-to-XInput mapping from enumeration order.
 
----
+3. **Seat-local virtual XInput contract**
+   - expose a Seat-private logical XInput namespace;
+   - logical slot 0 maps to the Seat source; unrelated slots remain disconnected;
+   - stale activation/source generations fail closed.
 
-## Phase 5: Prototype Game Support (MVP)
-- [ ] Launch single local co-op target game with 2 independent displays & input devices
-- [ ] Verify low latency, zero input bleeding between workspaces
+4. **Controlled process-isolation evidence**
+   - run independent child processes against isolated Seat mappings;
+   - verify state and vibration do not cross Seat boundaries;
+   - preserve no-popup/noninteractive failure behavior for automated Windows tests.
 
----
+5. **Process-local XInput ABI adapter**
+   - expose the required XInput ABI without falling back to system-global controller state;
+   - keep injection/interposition strategy separate from ABI correctness.
 
-## Phase 6: Game Launcher & Profile Manager
-- [ ] Game profiles (Steam, Epic, EA, GOG, Custom Executables)
-- [ ] Automatic workspace restoration on game launch
+6. **Launch/process ownership**
+   - create the Seat process suspended;
+   - retain exact process identity and process handle;
+   - publish ownership before resume;
+   - make stop/failure rollback Seat-local.
 
----
+7. **Process-tree ownership and launcher handoff**
+   - own normal descendants with Job/process-tree evidence;
+   - accept out-of-tree launcher handoff only through a bounded explicit contract;
+   - never recover ownership by scanning for a familiar process name.
 
-## Phase 7: Plugin SDK & Extensions
-- [ ] Community plugin SDK for custom controllers, display drivers, and game hooks
+8. **Host/client authority split**
+   - move production mutation authority into `hydra_host.exe`;
+   - keep UI as a bounded client rather than a second state machine.
+
+## 3. Windows audio track
+
+Audio proceeds in parallel as a separate Windows subsystem until a safe Seat integration contract is proven.
+
+1. **Endpoint inventory**
+   - read-only render endpoint enumeration;
+   - stable/opaque endpoint identity and availability state;
+   - no global-default mutation.
+
+2. **Session observation**
+   - read-only observation across endpoints;
+   - preserve endpoint context;
+   - use exact process creation identity, not PID alone;
+   - report whether an observation is complete/authoritative.
+
+3. **Routing feasibility**
+   - experiments remain outside the production path;
+   - undocumented mechanisms are not considered supported merely because an API call returns success;
+   - prove the target session actually moved to the intended endpoint;
+   - prove another process/Seat was not affected;
+   - rollback must restore only the exact owned prior state, never clear unrelated application/global audio policy.
+
+4. **Seat integration**
+   - only after a routing mechanism has target-scoped apply/verify/rollback evidence;
+   - integrate in the direction `SessionController -> SeatRuntime -> audio contract -> Windows backend`.
+
+## 4. Keyboard/mouse and display isolation
+
+After authority and process ownership are reliable:
+
+- [ ] prove two physical keyboard/mouse streams can be attributed without cross-input bleed;
+- [ ] introduce only the minimum compatibility/interposition needed by a selected target;
+- [ ] verify cursor/focus/clip behavior where required;
+- [ ] bind target windows to exact owned processes;
+- [ ] place each Seat window/display without disturbing the other Seat;
+- [ ] keep display/input rollback targeted and reversible.
+
+Synthetic Raw Input or window tests remain lower-layer evidence until repeated with physical devices and real targets.
+
+## 5. LaunchTarget and compatibility
+
+- [ ] keep Game/catalog identity separate from `LaunchTarget`;
+- [ ] support direct executables and custom launchers as first-class targets;
+- [ ] make discovery optional UX rather than launch authority;
+- [ ] select compatibility capabilities explicitly from validated requirements;
+- [ ] keep game-specific compatibility at the runtime edge;
+- [ ] fail unsupported/ambiguous isolation closed rather than using global fallback;
+- [ ] preserve third-party license/provenance records for adapted behavior or code.
+
+## 6. Recovery and packaging
+
+Before calling the product operationally safe:
+
+- [ ] crash-safe Seat rollback;
+- [ ] independent watchdog/emergency reset path;
+- [ ] reboot recovery and stale-state cleanup;
+- [ ] clean-machine install/uninstall evidence;
+- [ ] privilege boundaries documented and minimized;
+- [ ] release signing and artifact verification.
+
+## 7. Production acceptance gates
+
+HydraSeat is not production-ready until physical/manual evidence covers at least:
+
+- [ ] two independent physical keyboard/mouse assignments;
+- [ ] two controller assignments with reconnect/replug behavior;
+- [ ] independent audio on two physical render endpoints;
+- [ ] Seat 1 stop/restart/change without Seat 2 interruption;
+- [ ] two different real games;
+- [ ] lawful same-title/two-instance scenarios where the title supports them;
+- [ ] custom executable and custom-launcher handoff;
+- [ ] crash/recovery returning Windows to a verified safe state;
+- [ ] clean-machine setup and uninstall;
+- [ ] unsupported protected/anti-cheat scenarios refusing activation safely.
+
+Controlled/synthetic results remain useful engineering evidence, but they are not promoted to physical or commercial-game evidence.

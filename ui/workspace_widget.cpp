@@ -4,9 +4,9 @@ namespace hydra {
 namespace ui {
 
 WorkspaceWidget::WorkspaceWidget(uint32_t workspaceId, QWidget* parent)
-    : QGroupBox(parent), m_workspaceId(workspaceId) 
+    : QGroupBox(parent), m_workspaceId(workspaceId)
 {
-    setTitle(QString("Workspace #%1 (Player %2)").arg(workspaceId).arg(workspaceId));
+    setTitle(QString("Seat #%1").arg(workspaceId));
     setStyleSheet(
         "QGroupBox { font-weight: bold; border: 2px solid #3B82F6; border-radius: 8px; margin-top: 10px; padding: 12px; background-color: #1E293B; color: #F8FAFC; }"
         "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 4px; color: #60A5FA; }"
@@ -19,38 +19,33 @@ WorkspaceWidget::WorkspaceWidget(uint32_t workspaceId, QWidget* parent)
 
     auto* mainLayout = new QVBoxLayout(this);
 
-    // Display
     auto* displayLayout = new QHBoxLayout();
     displayLayout->addWidget(new QLabel("Display Output:", this));
     m_displayCombo = new QComboBox(this);
     displayLayout->addWidget(m_displayCombo, 1);
     mainLayout->addLayout(displayLayout);
 
-    // Keyboard
     auto* kbdLayout = new QHBoxLayout();
     kbdLayout->addWidget(new QLabel("Keyboard:", this));
     m_keyboardCombo = new QComboBox(this);
     kbdLayout->addWidget(m_keyboardCombo, 1);
     mainLayout->addLayout(kbdLayout);
 
-    // Mouse
     auto* mouseLayout = new QHBoxLayout();
     mouseLayout->addWidget(new QLabel("Mouse / Touchpad:", this));
     m_mouseCombo = new QComboBox(this);
     mouseLayout->addWidget(m_mouseCombo, 1);
     mainLayout->addLayout(mouseLayout);
 
-    // Controller
     auto* ctrlLayout = new QHBoxLayout();
     ctrlLayout->addWidget(new QLabel("Gamepad:", this));
     m_controllerCombo = new QComboBox(this);
     ctrlLayout->addWidget(m_controllerCombo, 1);
     mainLayout->addLayout(ctrlLayout);
 
-    // Bottom controls
     auto* bottomLayout = new QHBoxLayout();
     bottomLayout->addStretch();
-    m_removeBtn = new QPushButton("Remove Workspace", this);
+    m_removeBtn = new QPushButton("Remove Seat", this);
     bottomLayout->addWidget(m_removeBtn);
     mainLayout->addLayout(bottomLayout);
 
@@ -58,16 +53,16 @@ WorkspaceWidget::WorkspaceWidget(uint32_t workspaceId, QWidget* parent)
     connect(m_keyboardCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &WorkspaceWidget::onSelectionChanged);
     connect(m_mouseCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &WorkspaceWidget::onSelectionChanged);
     connect(m_controllerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &WorkspaceWidget::onSelectionChanged);
-    
+
     connect(m_removeBtn, &QPushButton::clicked, this, [this]() {
         emit removeRequested(m_workspaceId);
     });
 }
 
 void WorkspaceWidget::updateDeviceLists(const std::vector<DeviceInfo>& displays,
-                                       const std::vector<DeviceInfo>& keyboards,
-                                       const std::vector<DeviceInfo>& mice,
-                                       const std::vector<DeviceInfo>& controllers) {
+                                        const std::vector<DeviceInfo>& keyboards,
+                                        const std::vector<DeviceInfo>& mice,
+                                        const std::vector<DeviceInfo>& controllers) {
     m_displayCombo->blockSignals(true);
     m_keyboardCombo->blockSignals(true);
     m_mouseCombo->blockSignals(true);
@@ -95,7 +90,7 @@ void WorkspaceWidget::updateDeviceLists(const std::vector<DeviceInfo>& displays,
 
     m_controllerCombo->addItem("-- None --", QString());
     for (const auto& c : controllers) {
-        m_controllerCombo->addItem(QString::fromStdWString(c.name), static_cast<uint>(c.nativeHandle));
+        m_controllerCombo->addItem(QString::fromStdWString(c.name), QString::fromStdWString(c.id));
     }
 
     m_displayCombo->blockSignals(false);
@@ -110,7 +105,10 @@ WorkspaceConfig WorkspaceWidget::getCurrentConfig() const {
     config.displayDeviceName = m_displayCombo->currentData().toString().toStdWString();
     config.keyboardDevicePath = m_keyboardCombo->currentData().toString().toStdWString();
     config.mouseDevicePath = m_mouseCombo->currentData().toString().toStdWString();
-    config.controllerIndex = m_controllerCombo->currentData().toUInt();
+    const auto controllerId = m_controllerCombo->currentData().toString();
+    if (!controllerId.isEmpty()) {
+        config.controllerId = controllerId.toStdWString();
+    }
     return config;
 }
 

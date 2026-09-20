@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <optional>
 
 namespace hydra {
 
@@ -13,7 +14,7 @@ struct WorkspaceConfig {
     std::wstring displayDeviceName;
     std::wstring keyboardDevicePath;
     std::wstring mouseDevicePath;
-    uint32_t controllerIndex{0};
+    std::optional<std::wstring> controllerId;
     bool active{true};
 };
 
@@ -37,8 +38,8 @@ public:
     // Assign physical mouse to workspace
     bool assignMouse(uint32_t workspaceId, const std::wstring& mouseDevicePath);
 
-    // Assign gamepad controller to workspace
-    bool assignController(uint32_t workspaceId, uint32_t controllerIndex);
+    // Assign stable physical gamepad identity to workspace
+    bool assignController(uint32_t workspaceId, const std::wstring& controllerId);
 
     // Get configuration for a specific workspace
     const WorkspaceConfig* getWorkspace(uint32_t workspaceId) const;
@@ -59,7 +60,6 @@ public:
     bool loadFromFile(const std::string& filePath = "workspace_config.json");
 
 private:
-    uint32_t m_nextId{1};
     std::unordered_map<uint32_t, WorkspaceConfig> m_workspaces;
 };
 

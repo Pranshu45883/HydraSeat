@@ -1,4 +1,5 @@
 #include "hydra/hardware_detector.hpp"
+#include "hydra/controller_inventory.hpp"
 
 #include <iostream>
 #include <vector>
@@ -294,20 +295,18 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
 std::vector<DeviceInfo> HardwareDetector::detectControllers() {
     std::vector<DeviceInfo> result;
 
-#ifdef _WIN32
-    for (DWORD i = 0; i < 4; ++i) {
-        XINPUT_STATE state;
-        ZeroMemory(&state, sizeof(XINPUT_STATE));
-        if (XInputGetState(i, &state) == ERROR_SUCCESS) {
-            DeviceInfo info;
-            info.id = L"Controller_XInput_" + std::to_wstring(i + 1);
-            info.name = L"Xbox / XInput Controller #" + std::to_wstring(i + 1);
-            info.type = DeviceType::Controller;
-            info.nativeHandle = static_cast<uintptr_t>(i);
-            result.push_back(info);
-        }
+    const auto inventory = controller::scanControllerSources();
+    if (!inventory.authoritative) return result;
+
+    result.reserve(inventory.physicalControllers.size());
+    for (const auto& controllerInfo : inventory.physicalControllers) {
+        DeviceInfo info;
+        info.id = controllerInfo.persistentId;
+        info.name = controllerInfo.displayName;
+        info.devicePath = controllerInfo.devicePath;
+        info.type = DeviceType::Controller;
+        result.push_back(std::move(info));
     }
-#endif
 
     return result;
 }

@@ -23,11 +23,5 @@ jobs:
     - name: Build Project
       run: cmake --build build --config Release
 
-    - name: Run Engine Unit Tests
-      run: |
-        if (Test-Path "build/Release/hydra_tests.exe") {
-            & "build/Release/hydra_tests.exe"
-        }
-        if (Test-Path "build/hydra_tests.exe") {
-            & "build/hydra_tests.exe"
-        }
+    - name: Run registered CTest suite
+      run: ctest --test-dir build --build-config Release --output-on-failure

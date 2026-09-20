@@ -174,6 +174,39 @@ HRESULT AudioRoutingExperiment::manualRoute(DWORD pid, const std::wstring& targe
     }
 }
 
+HRESULT AudioRoutingExperiment::manualReset(DWORD pid) {
+    if (!validateProcessOwnsAudioSession(pid)) {
+        std::wcerr << L"HydraAudioRouter: Target process PID " << pid << L" does not exist or has no active audio session." << std::endl;
+        return E_INVALIDARG;
+    }
 
+    std::wcout << L"HydraAudioRouter: Attempting to reset per-process routing..." << std::endl;
+    std::wcout << L"  Supplied PID: " << pid << std::endl;
+
+    ScopedHString className(L"Windows.Media.Internal.AudioPolicyConfig");
+    
+    // Passing L"" (empty string) clears the assignment
+    ScopedHString emptyDeviceId(L"");
+
+    ComPtr<IInspectable> factoryBase;
+    HRESULT hr = RoGetActivationFactory(className, __uuidof(IInspectable), (void**)&factoryBase);
+    if (FAILED(hr) || !factoryBase) return hr;
+
+    ComPtr<IAudioPolicyConfigFactory21H2> factory21H2;
+    ComPtr<IAudioPolicyConfigFactoryDownlevel> factoryDownlevel;
+
+    bool is21H2 = SUCCEEDED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactory21H2), (void**)&factory21H2));
+    if (!is21H2) {
+        if (FAILED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactoryDownlevel), (void**)&factoryDownlevel))) {
+            return E_NOINTERFACE;
+        }
+    }
+
+    if (is21H2) {
+        return factory21H2->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, emptyDeviceId);
+    } else {
+        return factoryDownlevel->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, emptyDeviceId);
+    }
+}
 
 } // namespace hydra::windows

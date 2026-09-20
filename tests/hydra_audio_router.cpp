@@ -13,6 +13,7 @@ void printUsage() {
     std::cout << "  hydra_audio_router --list" << std::endl;
     std::cout << "  hydra_audio_router --inspect <PID>" << std::endl;
     std::cout << "  hydra_audio_router --route <PID> <EndpointID>" << std::endl;
+    std::cout << "  hydra_audio_router --reset <PID>" << std::endl;
 }
 
 int main(int argc, char** argv) {
@@ -94,8 +95,24 @@ int main(int argc, char** argv) {
             std::wcerr << L"FAILED (HRESULT: 0x" << std::hex << routeHr << L")" << std::endl;
         }
     }
+    else if (command == "--reset") {
+        if (argc < 3) {
+            std::cerr << "Missing PID." << std::endl;
+            printUsage();
+            return 1;
+        }
+        
+        DWORD pid = std::stoul(argv[2]);
+        std::wcout << L"Attempting to reset PID " << pid << L" to default audio routing..." << std::endl;
+        HRESULT resetHr = hydra::windows::AudioRoutingExperiment::manualReset(pid);
+        if (SUCCEEDED(resetHr)) {
+            std::wcout << L"SUCCESS (HRESULT: 0x" << std::hex << resetHr << L") - Note: This is an API-level success." << std::endl;
+        } else {
+            std::wcerr << L"FAILED (HRESULT: 0x" << std::hex << resetHr << L")" << std::endl;
+        }
+    }
     else {
-        std::cerr << "Unknown command." << std::endl;
+        std::cerr << "Unknown command: " << command << std::endl;
         printUsage();
     }
 

@@ -11,6 +11,7 @@ class AudioRoutingExperiment {
 public:
     // Manual test API for physical audio experiment
     static HRESULT manualRoute(DWORD pid, const std::wstring& targetEndpointId);
+    static HRESULT manualReset(DWORD pid);
 };
 
 } // namespace hydra::windows

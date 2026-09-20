@@ -49,6 +49,7 @@ set(HYDRA_SOURCES
     src/game_launcher.cpp
     src/gui_win32.cpp
     src/audio_endpoint_inventory.cpp
+    src/audio_session_observer.cpp
     ${UI_SOURCES}
 )
 
@@ -65,6 +66,7 @@ set(HYDRA_HEADERS
     include/hydra/game_launcher.hpp
     include/hydra/gui_win32.hpp
     include/hydra/audio_endpoint_inventory.hpp
+    include/hydra/audio_session_observer.hpp
     ${UI_HEADERS}
 )
 

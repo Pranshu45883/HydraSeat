@@ -5,7 +5,11 @@
 #include <vector>
 
 #if defined(_WIN32)
+#include <windows.h>
+
 int wmain(int argc, wchar_t* argv[]) {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+
     std::vector<std::wstring> args;
     args.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0u);
     for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);

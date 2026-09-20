@@ -1,3 +1,7 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include "hydra/virtual_xinput_service.hpp"
 
 #include <cassert>

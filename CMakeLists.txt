@@ -148,6 +148,7 @@ if(WIN32)
         src/controller_io.cpp
     )
     target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib Setupapi.lib Hid.lib)
+    add_dependencies(game_launcher_process_ownership hydra_process_owner_child)
     add_test(
         NAME GameLauncherProcessOwnership
         COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>

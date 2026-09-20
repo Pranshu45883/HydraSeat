@@ -154,7 +154,8 @@ BindingPlan planSeatBindings(std::span<const SeatBindingRequest> requests,
                                  request.persistentControllerId
                                      ? source->persistentId
                                      : std::nullopt,
-                                 source->runtimeXInputSlot});
+                                 source->runtimeXInputSlot,
+                                 source->sourceGeneration});
     }
 
     std::sort(plan.bindings.begin(), plan.bindings.end(),
@@ -167,6 +168,15 @@ BindingPlan planSeatBindings(std::span<const SeatBindingRequest> requests,
                          std::tie(right.seatId, right.code, right.controllerId);
               });
     return plan;
+}
+
+bool sameControllerSource(const SeatBinding& left,
+                          const SeatBinding& right) noexcept {
+    if (left.persistentControllerId && right.persistentControllerId) {
+        return canonicalId(*left.persistentControllerId) ==
+               canonicalId(*right.persistentControllerId);
+    }
+    return !left.runtimeKey.empty() && left.runtimeKey == right.runtimeKey;
 }
 
 } // namespace hydra::controller

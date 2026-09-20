@@ -153,7 +153,27 @@ Do not create:
 
 Prefer several readable source files inside one responsibility-level component.
 
-## 12. Pull request contract
+## 12. Current collaboration split
+
+The current contributor split exists to keep parallel work independent until an integration boundary is ready:
+
+- `ot4562-glitch` side: Seat/runtime authority, process ownership/lifecycle, controller identity/runtime, and compatibility work;
+- `Pranshu45883` side: Windows audio endpoint inventory, session observation, and routing feasibility research.
+
+This is a coordination boundary, not a claim that a subsystem can never be reviewed or changed by the other contributor. Integration contracts are reviewed jointly.
+
+While the split is active:
+
+- audio implementation files stay separate from Seat/runtime authority code;
+- runtime/controller work must not silently implement a competing audio state machine;
+- audio observation may use exact process identity semantics, but the Windows audio backend should not become dependent on the runtime-authority implementation merely to share a value type;
+- the intended future direction is `SessionController -> SeatRuntime -> audio contract -> Windows audio backend`;
+- experimental or undocumented routing mechanisms remain diagnostics/research until target-scoped verification and rollback are proven;
+- upstream pull requests should be immediately reviewable/mergeable on the current `main`; dependent follow-up work stays on contributor branches/forks until its prerequisite is merged, then is rebuilt and verified on the new base.
+
+The purpose of this split is to reduce merge pressure while preserving one eventual Seat ownership model.
+
+## 13. Pull request contract
 
 A normal PR SHOULD have one primary reason to change.
 
@@ -169,7 +189,7 @@ A PR that changes runtime authority, persistent schema, IPC, process ownership, 
 
 Structural PRs SHOULD reduce concepts, owners or dependencies. A refactor that only renames or adds an abstraction without reducing ambiguity does not count as de-slop.
 
-## 13. Evidence language
+## 14. Evidence language
 
 Use these evidence categories literally:
 
@@ -184,7 +204,7 @@ Passing a lower layer MUST NOT be presented as passing a higher layer.
 
 A compatibility percentage or support claim MUST identify enough environment information to be meaningful: game/target identity, relevant version/build, Windows/architecture, compatibility profile/backend, and scenario.
 
-## 14. Review questions
+## 15. Review questions
 
 Before merging, reviewers should be able to answer:
 

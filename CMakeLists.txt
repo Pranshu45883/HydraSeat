@@ -105,6 +105,7 @@ if(WIN32)
         src/game_launcher.cpp
         src/runtime_authority.cpp
         src/controller_identity.cpp
+        src/controller_inventory.cpp
         src/controller_io.cpp
     )
     target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib)

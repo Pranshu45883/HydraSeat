@@ -111,8 +111,9 @@ The dependent controller compatibility sequence is preserved under:
 
 - `minseong/staging/controller-virtual-xinput`;
 - `minseong/staging/xinput-process-isolation`;
-- `minseong/staging/xinput-process-adapter`;
-- `minseong/staging/seat-process-launch-integration`.
+- `minseong/staging/xinput-process-adapter`.
+
+Seat process/XInput launch integration is intentionally deferred until both the process-tree PR and the adapter chain land; the old fork branch conflicts with the newer `GameLauncher` ownership model and is not migrated as authority.
 
 These staging branches are preservation/integration queues only. They are not merge-ready and must be rebuilt on the newest `main` after each prerequisite lands. The former fork `main` and any unlisted legacy fork branches are intentionally not migrated; they are retired prototypes and must not be treated as current implementation or architecture authority.
 

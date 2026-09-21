@@ -114,7 +114,7 @@ The dependent controller compatibility sequence is preserved under:
 - `minseong/staging/xinput-process-adapter`;
 - `minseong/staging/seat-process-launch-integration`.
 
-These staging branches are preservation/integration queues only. They are not merge-ready and must be rebuilt on the newest `main` after each prerequisite lands.
+These staging branches are preservation/integration queues only. They are not merge-ready and must be rebuilt on the newest `main` after each prerequisite lands. The former fork `main` and any unlisted legacy fork branches are intentionally not migrated; they are retired prototypes and must not be treated as current implementation or architecture authority.
 
 ## Not yet production-proven
 

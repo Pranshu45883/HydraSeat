@@ -44,13 +44,14 @@ public:
     // construction; the default-constructed compatibility shell fails closed.
     bool launchGameForWorkspace(const GameProfile& game, const WorkspaceConfig& workspace);
 
-    // Terminate only the exact process owned by the requested Seat and end the
-    // matching activation generation after process exit is verified.
+    // Terminate only the process tree owned by the requested Seat and end the
+    // matching activation generation after the Job Object is verified empty.
     bool stopWorkspaceGame(uint32_t workspaceId);
 
 private:
     struct SeatProcess {
         std::uintptr_t processHandle{0};
+        std::uintptr_t jobHandle{0};
         runtime::ActivationToken token{};
         runtime::ProcessIdentity identity{};
     };

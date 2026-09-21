@@ -36,6 +36,58 @@ std::wstring commandLineFor(const GameProfile& game) {
     }
     return commandLine;
 }
+
+HANDLE createStrictSeatJob() noexcept {
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!job) return nullptr;
+
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &limits,
+            sizeof(limits))) {
+        CloseHandle(job);
+        return nullptr;
+    }
+    return job;
+}
+
+bool queryActiveProcessCount(HANDLE job, DWORD& activeProcesses) noexcept {
+    if (!job || job == INVALID_HANDLE_VALUE) return false;
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+    if (!QueryInformationJobObject(
+            job,
+            JobObjectBasicAccountingInformation,
+            &accounting,
+            sizeof(accounting),
+            nullptr)) {
+        return false;
+    }
+    activeProcesses = accounting.ActiveProcesses;
+    return true;
+}
+
+bool waitForJobEmpty(HANDLE job, DWORD timeoutMs) noexcept {
+    const ULONGLONG start = GetTickCount64();
+    for (;;) {
+        DWORD activeProcesses = 0;
+        if (!queryActiveProcessCount(job, activeProcesses)) return false;
+        if (activeProcesses == 0) return true;
+
+        if (GetTickCount64() - start >= timeoutMs) return false;
+        Sleep(5);
+    }
+}
+
+void terminateCreatedProcess(HANDLE process) noexcept {
+    if (!process || process == INVALID_HANDLE_VALUE) return;
+    if (WaitForSingleObject(process, 0) == WAIT_TIMEOUT) {
+        (void)TerminateProcess(process, ERROR_CANCELLED);
+        (void)WaitForSingleObject(process, 5000);
+    }
+}
 #endif
 
 } // namespace
@@ -47,11 +99,14 @@ GameLauncher::~GameLauncher() {
         if (!index || !seatProcesses_[*index]) continue;
         if (stopWorkspaceGame(seatId)) continue;
 
-        // Destruction cannot report a cleanup failure. Do not manufacture an
-        // Idle runtime state if the exact process could not be verified dead.
-        // Release only our native handle; SessionController remains active so
-        // a higher recovery layer can see that cleanup was not proven.
+        // Destruction cannot report cleanup failure. Closing a strict Job Object
+        // still kills its assigned tree, but we deliberately do not mark the
+        // runtime Idle because safe-state verification did not complete.
+        HANDLE job = toNativeHandle(seatProcesses_[*index]->jobHandle);
         HANDLE process = toNativeHandle(seatProcesses_[*index]->processHandle);
+        if (job && job != INVALID_HANDLE_VALUE) {
+            CloseHandle(job);
+        }
         if (process && process != INVALID_HANDLE_VALUE) {
             CloseHandle(process);
         }
@@ -101,8 +156,27 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
         return false;
     }
 
+    HANDLE job = createStrictSeatJob();
+    if (!job) {
+        terminateCreatedProcess(processInfo.hProcess);
+        CloseHandle(processInfo.hThread);
+        CloseHandle(processInfo.hProcess);
+        controller_->endSeatActivation(token);
+        return false;
+    }
+
+    if (!AssignProcessToJobObject(job, processInfo.hProcess)) {
+        terminateCreatedProcess(processInfo.hProcess);
+        CloseHandle(job);
+        CloseHandle(processInfo.hThread);
+        CloseHandle(processInfo.hProcess);
+        controller_->endSeatActivation(token);
+        return false;
+    }
+
     seatProcesses_[*index] = SeatProcess{
         fromNativeHandle(processInfo.hProcess),
+        fromNativeHandle(job),
         token,
         {}};
 
@@ -153,23 +227,27 @@ bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
 
     auto& session = *seatProcesses_[*index];
     HANDLE process = toNativeHandle(session.processHandle);
-    if (!process || process == INVALID_HANDLE_VALUE) return false;
-
-    const DWORD waitState = WaitForSingleObject(process, 0);
-    if (waitState == WAIT_TIMEOUT) {
-        if (!TerminateProcess(process, ERROR_CANCELLED)) {
-            if (WaitForSingleObject(process, 0) != WAIT_OBJECT_0) return false;
-        }
-        if (WaitForSingleObject(process, 5000) != WAIT_OBJECT_0) return false;
-    } else if (waitState != WAIT_OBJECT_0) {
+    HANDLE job = toNativeHandle(session.jobHandle);
+    if (!process || process == INVALID_HANDLE_VALUE ||
+        !job || job == INVALID_HANDLE_VALUE) {
         return false;
     }
+
+    DWORD activeProcesses = 0;
+    if (!queryActiveProcessCount(job, activeProcesses)) return false;
+    if (activeProcesses != 0 && !TerminateJobObject(job, ERROR_CANCELLED)) {
+        return false;
+    }
+
+    if (!waitForJobEmpty(job, 5000)) return false;
+    if (WaitForSingleObject(process, 5000) != WAIT_OBJECT_0) return false;
 
     if (!controller_->endSeatActivation(session.token)) {
         return false;
     }
 
     CloseHandle(process);
+    CloseHandle(job);
     seatProcesses_[*index].reset();
     return true;
 #else

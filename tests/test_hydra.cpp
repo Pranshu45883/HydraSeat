@@ -17,6 +17,7 @@
 #include <fstream>
 
 void testControllerIdentity();
+void testControllerPairing();
 
 void testHardwareDetector() {
     hydra::HardwareDetector detector;
@@ -397,6 +398,7 @@ int main() {
     testAudioSessionObserver();
     testAudioSessionObserverRegression();
     testControllerIdentity();
+    testControllerPairing();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;
 }

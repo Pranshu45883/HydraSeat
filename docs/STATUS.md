@@ -1,19 +1,19 @@
 # HydraSeat Current Status
 
-Snapshot date: **2026-09-18**
+Snapshot date: **2026-09-21**
 
 This file is a dated engineering snapshot. It distinguishes what is merged into upstream `main`, what has controlled validation on contributor branches, what is research-only, and what still lacks required evidence.
 
 ## Evidence labels
 
 - **Merged** — present in upstream `main`.
-- **Validated in contributor branch** — implemented and tested in a contributor fork/branch, but not part of upstream `main` yet.
+- **Validated in contributor branch** — implemented and tested in a same-repository contributor branch, but not part of upstream `main` yet.
 - **Research / under review** — evidence or implementation is still being reviewed and must not be treated as production capability.
 - **Pending physical/real-game evidence** — architecture or controlled tests exist, but the user-facing claim has not been demonstrated at the required evidence level.
 
 ## Upstream merged baseline
 
-Current upstream baseline for this snapshot: `6258c61` (`feat: make SeatRuntime own controller bindings`).
+Current upstream baseline for this snapshot: `a690615` (`fix(audio): harden Windows audio experiment boundaries`).
 
 Merged behavior includes:
 
@@ -26,21 +26,20 @@ Merged behavior includes:
 - `SeatRuntime` activation generations and stale-token rejection;
 - exact runtime process identity using PID + creation identity;
 - cross-Seat duplicate process/window/controller ownership rejection;
-- Seat-owned transient controller bindings and controller poll/vibration routing.
+- Seat-owned transient controller bindings and controller poll/vibration routing;
+- reconnect-generation tracking that invalidates stale controller bindings;
+- exact `GameLauncher` root-process ownership with suspended launch, retained handle, Seat-local stop/rollback, and ownership publication before resume;
+- isolated `ProcessIdentity` contract used across runtime/process ownership;
+- registered CTest execution in CI with Release assertions preserved for the focused engine tests;
+- merged Windows audio endpoint inventory, session observation, and bounded routing-feasibility experiment/hardening.
 
 These capabilities establish ownership contracts; they do **not** prove complete two-player game isolation.
 
 ## Upstream review queue
 
-### Reconnect-safe controller binding
-
-A merge-ready controller follow-up tracks runtime source generation across disconnect/reconnect and invalidates stale bindings instead of trusting a reused XInput slot.
-
-Until merged, current `main` should not be documented as reconnect-generation-safe.
-
 ### Windows audio work
 
-The Windows audio track is being developed separately from runtime/controller work:
+The Windows audio foundation is merged separately from runtime/controller work:
 
 - render endpoint inventory — read-only discovery foundation;
 - audio session observation — process/session observation with creation-time identity;
@@ -56,17 +55,19 @@ Current review requirements before treating this work as production-ready includ
 - never use broad rollback that clears unrelated persisted application audio policy;
 - prove that a target session actually moved to the intended endpoint before claiming routing support.
 
-The current routing experiment result is useful **negative evidence**, not a production routing solution.
+The current routing experiment result is useful **negative/feasibility evidence**, not a production routing solution.
 
 ## Validated in contributor branches, not merged
 
-The following work has controlled validation in the `ot4562-glitch` fork/branches but is intentionally being integrated only after prerequisites land in upstream `main`:
+The following work has controlled validation in same-repository `minseong/*` branches and is intentionally integrated only after prerequisites land in `main`:
 
 ### Controller pairing and reconnect safety
 
 - explicit pairing of stable physical controller identity to the current XInput runtime source;
 - source-generation validation across reconnects;
 - stale bindings fail closed.
+
+Current review branch: `minseong/controller-button-pairing` (PR #32). The reconnect-generation prerequisite is already merged.
 
 ### Seat-local virtual XInput
 
@@ -104,7 +105,17 @@ A contributor branch validates a Seat launch path that:
 - stops/restarts one Seat without terminating the other controlled Seat;
 - rolls back failed process creation.
 
-Process-tree/Job ownership and arbitrary launcher handoff remain follow-up work.
+Process-tree/Job ownership is under review in `minseong/seat-process-tree-ownership` (PR #33). Arbitrary launcher handoff remains follow-up work.
+
+The dependent controller compatibility sequence is preserved under:
+
+- `minseong/staging/controller-virtual-xinput`;
+- `minseong/staging/xinput-process-isolation`;
+- `minseong/staging/xinput-process-adapter`.
+
+Seat process/XInput launch integration is intentionally deferred until both the process-tree PR and the adapter chain land; the old fork branch conflicts with the newer `GameLauncher` ownership model and is not migrated as authority.
+
+These staging branches are preservation/integration queues only. They are not merge-ready and must be rebuilt on the newest `main` after each prerequisite lands. The former fork `main` and any unlisted legacy fork branches are intentionally not migrated; they are retired prototypes and must not be treated as current implementation or architecture authority.
 
 ## Not yet production-proven
 
@@ -126,8 +137,9 @@ The following must remain unclaimed until stronger evidence exists:
 Current parallel work split:
 
 - `ot4562-glitch`: Seat/runtime authority, process ownership/lifecycle, controller/runtime, compatibility;
-- `Pranshu45883`: Windows audio endpoint/session/routing research.
+- `Pranshu45883`: program UI/UX and Windows audio endpoint/session/routing;
+- shared: UI/runtime and audio/runtime contracts plus physical/real-game acceptance.
 
-Dependent implementation may move ahead in contributor forks, but upstream pull requests should be rebuilt on current `main`, freshly verified, and immediately reviewable/mergeable when opened.
+`Pranshu45883/HydraSeat` is now the single canonical repository. Contributor work uses short-lived same-repository branches; the former long-lived contributor-fork workflow is retired. Dependent implementation may move ahead only on clearly named staging branches and must be rebuilt on current `main`, freshly verified, and immediately reviewable/mergeable before a normal PR is opened.
 
 See [COLLABORATION_CONTRACT.md](COLLABORATION_CONTRACT.md) for the invariant-level rules and [ROADMAP.md](ROADMAP.md) for integration order.

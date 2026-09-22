@@ -370,7 +370,7 @@ add_library(hydra_input_isolation STATIC
 )
 target_include_directories(hydra_input_isolation PUBLIC include)
 if(WIN32)
-    target_link_libraries(hydra_input_isolation PUBLIC ${WIN32_LIBS})
+    target_link_libraries(hydra_input_isolation PUBLIC ${WIN32_LIBS} Version.lib)
 endif()
 
 add_executable(directinput_policy_tests tests/test_directinput_policy.cpp)

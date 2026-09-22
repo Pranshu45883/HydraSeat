@@ -263,6 +263,22 @@ if(WIN32)
         NAME GameLauncherProcessOwnership
         COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>
     )
+
+    add_executable(game_launcher_xinput_integration
+        tests/test_game_launcher_xinput_integration.cpp
+        src/game_launcher.cpp
+        src/runtime_authority.cpp
+        src/controller_identity.cpp
+        src/controller_inventory.cpp
+        src/controller_io.cpp
+        src/controller_virtual_xinput.cpp
+    )
+    target_link_libraries(game_launcher_xinput_integration PRIVATE Xinput.lib Setupapi.lib Hid.lib)
+    add_dependencies(game_launcher_xinput_integration hydra_process_owner_child)
+    add_test(
+        NAME GameLauncherXInputIntegration
+        COMMAND game_launcher_xinput_integration $<TARGET_FILE:hydra_process_owner_child>
+    )
     add_test(
         NAME XInputProcessIsolation
         COMMAND xinput_process_isolation $<TARGET_FILE:xinput_probe_game>

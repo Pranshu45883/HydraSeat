@@ -338,7 +338,7 @@ add_test(NAME WindowTrackerTests COMMAND window_tracker_tests)
 
 if(WIN32)
     add_executable(hydra_process_tree_child tests/process_tree_child.cpp)
-    add_executable(hydra_window_test_app WIN32 tests/window_test_app.cpp)
+    add_executable(hydra_window_test_app tests/window_test_app.cpp)
     target_link_libraries(hydra_window_test_app PRIVATE User32.lib)
     add_dependencies(process_group_tests hydra_process_tree_child)
     add_dependencies(window_policy_tests hydra_window_test_app)

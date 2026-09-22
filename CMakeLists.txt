@@ -150,6 +150,7 @@ if(WIN32)
         src/controller_identity.cpp
         src/controller_inventory.cpp
         src/controller_io.cpp
+        src/controller_virtual_xinput.cpp
     )
     target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib Setupapi.lib Hid.lib)
     add_dependencies(game_launcher_process_ownership hydra_process_owner_child)

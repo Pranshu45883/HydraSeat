@@ -344,3 +344,51 @@ if(WIN32)
     add_dependencies(window_policy_tests hydra_window_test_app)
     add_dependencies(window_tracker_tests hydra_window_test_app)
 endif()
+
+add_library(hydra_seat_policy STATIC
+    src/seat_runtime_policy.cpp
+)
+target_include_directories(hydra_seat_policy PUBLIC include)
+target_link_libraries(hydra_seat_policy PUBLIC hydra_process_display)
+
+add_executable(hardware_identity_tests tests/test_hardware_identity.cpp)
+target_include_directories(hardware_identity_tests PRIVATE include)
+add_test(NAME HardwareIdentityTests COMMAND hardware_identity_tests)
+
+add_executable(seat_runtime_policy_tests tests/test_seat_runtime_policy.cpp)
+target_link_libraries(seat_runtime_policy_tests PRIVATE hydra_seat_policy)
+add_test(NAME SeatRuntimePolicyTests COMMAND seat_runtime_policy_tests)
+
+add_library(hydra_input_isolation STATIC
+    src/directinput_policy.cpp
+    src/hidhide_probe.cpp
+    src/input_isolation.cpp
+    src/input_metrics.cpp
+    src/raw_input_probe_trace.cpp
+    src/raw_input_utils.cpp
+    src/workspace_manager.cpp
+)
+target_include_directories(hydra_input_isolation PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_input_isolation PUBLIC ${WIN32_LIBS} Version.lib)
+endif()
+
+add_executable(directinput_policy_tests tests/test_directinput_policy.cpp)
+target_link_libraries(directinput_policy_tests PRIVATE hydra_input_isolation)
+add_test(NAME DirectInputPolicyTests COMMAND directinput_policy_tests)
+
+add_executable(hidhide_probe_tests tests/test_hidhide_probe.cpp)
+target_link_libraries(hidhide_probe_tests PRIVATE hydra_input_isolation)
+add_test(NAME HidHideProbeTests COMMAND hidhide_probe_tests)
+
+add_executable(input_metrics_tests tests/test_input_metrics.cpp)
+target_link_libraries(input_metrics_tests PRIVATE hydra_input_isolation)
+add_test(NAME InputMetricsTests COMMAND input_metrics_tests)
+
+add_executable(isolation_planner_tests tests/test_isolation_planner.cpp)
+target_link_libraries(isolation_planner_tests PRIVATE hydra_input_isolation)
+add_test(NAME IsolationPlannerTests COMMAND isolation_planner_tests)
+
+add_executable(raw_input_probe_trace_tests tests/test_raw_input_probe_trace.cpp)
+target_link_libraries(raw_input_probe_trace_tests PRIVATE hydra_input_isolation)
+add_test(NAME RawInputProbeTraceTests COMMAND raw_input_probe_trace_tests)

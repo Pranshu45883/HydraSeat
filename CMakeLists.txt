@@ -95,6 +95,13 @@ set(HYDRA_HEADERS
     ${UI_HEADERS}
 )
 
+set(XINPUT_PROBE_SUPPORT_SOURCES
+    src/xinput_probe.cpp
+)
+set(XINPUT_PROBE_SUPPORT_HEADERS
+    include/hydra/xinput_probe.hpp
+)
+
 # Core Executable target (Windows GUI subsystem)
 add_executable(HydraSeat WIN32 src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 
@@ -125,19 +132,62 @@ endif()
 add_executable(reset_input src/reset_input.cpp)
 if(WIN32)
     target_link_libraries(reset_input PRIVATE User32.lib)
+
+    add_executable(xinput_probe_game
+        tools/xinput_probe_game.cpp
+        ${XINPUT_PROBE_SUPPORT_SOURCES}
+        ${XINPUT_PROBE_SUPPORT_HEADERS}
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_pipe.cpp
+        src/virtual_xinput_service.cpp
+        src/controller_io.cpp
+        src/controller_inventory.cpp
+        src/controller_identity.cpp
+    )
+    target_link_libraries(xinput_probe_game PRIVATE ${WIN32_LIBS})
 endif()
 
 # Test Suite Executable Target
 enable_testing()
-add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp tests/test_controller_pairing.cpp tests/test_controller_virtual_xinput.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+add_executable(hydra_tests
+    tests/test_hydra.cpp
+    tests/test_controller_identity.cpp
+    tests/test_controller_pairing.cpp
+    tests/test_controller_virtual_xinput.cpp
+    tests/test_virtual_xinput_protocol.cpp
+    tests/test_virtual_xinput_service.cpp
+    tests/test_virtual_xinput_pipe.cpp
+    tests/test_xinput_probe_game.cpp
+    src/virtual_xinput_protocol.cpp
+    src/virtual_xinput_service.cpp
+    src/virtual_xinput_pipe.cpp
+    include/hydra/virtual_xinput_protocol.hpp
+    include/hydra/virtual_xinput_service.hpp
+    include/hydra/virtual_xinput_pipe.hpp
+    ${HYDRA_SOURCES}
+    ${HYDRA_HEADERS}
+    ${XINPUT_PROBE_SUPPORT_SOURCES}
+    ${XINPUT_PROBE_SUPPORT_HEADERS}
+)
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
+
+    add_executable(xinput_process_isolation
+        tests/test_xinput_process_isolation.cpp
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_service.cpp
+        src/virtual_xinput_pipe.cpp
+        src/controller_virtual_xinput.cpp
+        src/controller_io.cpp
+        src/controller_inventory.cpp
+        src/controller_identity.cpp
+    )
+    target_link_libraries(xinput_process_isolation PRIVATE ${WIN32_LIBS})
 endif()
 if(Qt6_FOUND)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
 endif()
 add_test(NAME EngineUnitTests COMMAND hydra_tests)
-
 if(WIN32)
     add_executable(hydra_process_owner_child
         tests/process_owner_child.cpp
@@ -157,5 +207,9 @@ if(WIN32)
     add_test(
         NAME GameLauncherProcessOwnership
         COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>
+    )
+    add_test(
+        NAME XInputProcessIsolation
+        COMMAND xinput_process_isolation $<TARGET_FILE:xinput_probe_game>
     )
 endif()

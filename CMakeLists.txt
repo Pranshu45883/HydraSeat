@@ -101,6 +101,12 @@ set(XINPUT_PROBE_SUPPORT_SOURCES
 set(XINPUT_PROBE_SUPPORT_HEADERS
     include/hydra/xinput_probe.hpp
 )
+set(XINPUT_ABI_PROBE_SUPPORT_SOURCES
+    src/xinput_abi_probe.cpp
+)
+set(XINPUT_ABI_PROBE_SUPPORT_HEADERS
+    include/hydra/xinput_abi_probe.hpp
+)
 
 # Core Executable target (Windows GUI subsystem)
 add_executable(HydraSeat WIN32 src/main.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
@@ -145,6 +151,32 @@ if(WIN32)
         src/controller_identity.cpp
     )
     target_link_libraries(xinput_probe_game PRIVATE ${WIN32_LIBS})
+
+    add_executable(xinput_adapter_exports
+        tests/test_xinput_adapter_exports.cpp
+    )
+
+    add_executable(xinput_abi_probe_game
+        tools/xinput_abi_probe_game.cpp
+        ${XINPUT_ABI_PROBE_SUPPORT_SOURCES}
+        ${XINPUT_ABI_PROBE_SUPPORT_HEADERS}
+    )
+
+    add_library(hydra_xinput_adapter SHARED
+        src/xinput_adapter_dll.cpp
+        src/xinput_adapter_session.cpp
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_pipe.cpp
+        src/hydra_xinput_adapter.def
+        include/hydra/xinput_adapter_session.hpp
+        include/hydra/virtual_xinput_protocol.hpp
+        include/hydra/virtual_xinput_pipe.hpp
+    )
+    target_compile_definitions(
+        hydra_xinput_adapter PRIVATE HYDRA_VIRTUAL_XINPUT_CLIENT_ONLY=1)
+    set_target_properties(
+        hydra_xinput_adapter PROPERTIES OUTPUT_NAME "hydra_xinput_adapter")
+    add_dependencies(xinput_adapter_exports hydra_xinput_adapter)
 endif()
 
 # Test Suite Executable Target
@@ -158,16 +190,22 @@ add_executable(hydra_tests
     tests/test_virtual_xinput_service.cpp
     tests/test_virtual_xinput_pipe.cpp
     tests/test_xinput_probe_game.cpp
+    tests/test_xinput_adapter_session.cpp
+    tests/test_xinput_abi_probe.cpp
     src/virtual_xinput_protocol.cpp
     src/virtual_xinput_service.cpp
     src/virtual_xinput_pipe.cpp
+    src/xinput_adapter_session.cpp
     include/hydra/virtual_xinput_protocol.hpp
     include/hydra/virtual_xinput_service.hpp
     include/hydra/virtual_xinput_pipe.hpp
+    include/hydra/xinput_adapter_session.hpp
     ${HYDRA_SOURCES}
     ${HYDRA_HEADERS}
     ${XINPUT_PROBE_SUPPORT_SOURCES}
     ${XINPUT_PROBE_SUPPORT_HEADERS}
+    ${XINPUT_ABI_PROBE_SUPPORT_SOURCES}
+    ${XINPUT_ABI_PROBE_SUPPORT_HEADERS}
 )
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
@@ -183,6 +221,23 @@ if(WIN32)
         src/controller_identity.cpp
     )
     target_link_libraries(xinput_process_isolation PRIVATE ${WIN32_LIBS})
+    add_dependencies(xinput_process_isolation xinput_probe_game)
+
+    add_executable(xinput_adapter_process_isolation
+        tests/test_xinput_adapter_process_isolation.cpp
+        src/virtual_xinput_protocol.cpp
+        src/virtual_xinput_service.cpp
+        src/virtual_xinput_pipe.cpp
+        src/controller_virtual_xinput.cpp
+        src/controller_io.cpp
+        src/controller_inventory.cpp
+        src/controller_identity.cpp
+    )
+    target_link_libraries(xinput_adapter_process_isolation PRIVATE ${WIN32_LIBS})
+    add_dependencies(
+        xinput_adapter_process_isolation
+        xinput_abi_probe_game
+        hydra_xinput_adapter)
 endif()
 if(Qt6_FOUND)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
@@ -211,5 +266,15 @@ if(WIN32)
     add_test(
         NAME XInputProcessIsolation
         COMMAND xinput_process_isolation $<TARGET_FILE:xinput_probe_game>
+    )
+    add_test(
+        NAME XInputAdapterExports
+        COMMAND xinput_adapter_exports $<TARGET_FILE:hydra_xinput_adapter>
+    )
+    add_test(
+        NAME XInputAdapterProcessIsolation
+        COMMAND xinput_adapter_process_isolation
+                $<TARGET_FILE:xinput_abi_probe_game>
+                $<TARGET_FILE:hydra_xinput_adapter>
     )
 endif()

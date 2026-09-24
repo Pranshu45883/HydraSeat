@@ -294,3 +294,53 @@ if(WIN32)
                 $<TARGET_FILE:hydra_xinput_adapter>
     )
 endif()
+
+# Process/display ownership foundation. These modules remain separate from the
+# GUI/runtime state machine until the host/client integration contract lands.
+add_library(hydra_process_display STATIC
+    src/process_group.cpp
+    src/process_launcher.cpp
+    src/display_topology.cpp
+    src/display_recovery.cpp
+    src/seat_display_layout.cpp
+    src/window_tracker.cpp
+    src/window_policy.cpp
+    src/window_placement.cpp
+)
+target_include_directories(hydra_process_display PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_process_display PUBLIC ${WIN32_LIBS})
+endif()
+
+add_executable(process_group_tests tests/test_process_group.cpp)
+target_link_libraries(process_group_tests PRIVATE hydra_process_display)
+add_test(NAME ProcessGroupTests COMMAND process_group_tests)
+
+add_executable(display_topology_tests tests/test_display_topology.cpp)
+target_link_libraries(display_topology_tests PRIVATE hydra_process_display)
+add_test(NAME DisplayTopologyTests COMMAND display_topology_tests)
+
+add_executable(display_recovery_tests tests/test_display_recovery.cpp)
+target_link_libraries(display_recovery_tests PRIVATE hydra_process_display)
+add_test(NAME DisplayRecoveryTests COMMAND display_recovery_tests)
+
+add_executable(seat_display_layout_tests tests/test_seat_display_layout.cpp)
+target_link_libraries(seat_display_layout_tests PRIVATE hydra_process_display)
+add_test(NAME SeatDisplayLayoutTests COMMAND seat_display_layout_tests)
+
+add_executable(window_policy_tests tests/test_window_policy.cpp)
+target_link_libraries(window_policy_tests PRIVATE hydra_process_display)
+add_test(NAME WindowPolicyTests COMMAND window_policy_tests)
+
+add_executable(window_tracker_tests tests/test_window_tracker.cpp)
+target_link_libraries(window_tracker_tests PRIVATE hydra_process_display)
+add_test(NAME WindowTrackerTests COMMAND window_tracker_tests)
+
+if(WIN32)
+    add_executable(hydra_process_tree_child tests/process_tree_child.cpp)
+    add_executable(hydra_window_test_app tests/window_test_app.cpp)
+    target_link_libraries(hydra_window_test_app PRIVATE User32.lib)
+    add_dependencies(process_group_tests hydra_process_tree_child)
+    add_dependencies(window_policy_tests hydra_window_test_app)
+    add_dependencies(window_tracker_tests hydra_window_test_app)
+endif()

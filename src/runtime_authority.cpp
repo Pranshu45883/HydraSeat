@@ -177,6 +177,25 @@ controller::IoStatus SessionController::setControllerVibration(
         lowFrequencyMotor, highFrequencyMotor);
 }
 
+std::optional<controller::VirtualXInputMapping>
+SessionController::virtualXInputMapping(const ActivationToken& token) const noexcept {
+    if (!token.valid()) return std::nullopt;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return std::nullopt;
+
+    const auto current = runtime->snapshot();
+    if (!current.active || current.generation != token.generation ||
+        !current.controllerBinding) {
+        return std::nullopt;
+    }
+    controller::VirtualXInputMapping mapping{
+        token.seatId, token.generation, *current.controllerBinding};
+    if (!mapping.valid()) return std::nullopt;
+    return mapping;
+}
+
 bool SessionController::endSeatActivation(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);

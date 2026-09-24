@@ -105,17 +105,18 @@ A contributor branch validates a Seat launch path that:
 - stops/restarts one Seat without terminating the other controlled Seat;
 - rolls back failed process creation.
 
-Process-tree/Job ownership is under review in `minseong/seat-process-tree-ownership` (PR #33). Arbitrary launcher handoff remains follow-up work.
+Process-tree/Job ownership is merged in PR #33. Arbitrary launcher handoff remains follow-up work.
 
-The dependent controller compatibility sequence is preserved under:
+The current Minseong-owned controller/runtime integration queue is:
 
-- `minseong/staging/controller-virtual-xinput`;
-- `minseong/staging/xinput-process-isolation`;
-- `minseong/staging/xinput-process-adapter`.
+- `minseong/staging/controller-virtual-xinput` — PR #35;
+- `minseong/staging/xinput-process-isolation` — PR #36;
+- `minseong/staging/xinput-process-adapter` — PR #37;
+- `minseong/staging/seat-xinput-launch-integration` — PR #38.
 
-Seat process/XInput launch integration is intentionally deferred until both the process-tree PR and the adapter chain land; the old fork branch conflicts with the newer `GameLauncher` ownership model and is not migrated as authority.
+The Seat process/XInput launch integration was rebuilt on the current `GameLauncher` Job Object ownership model rather than reviving the conflicting old fork implementation.
 
-These staging branches are preservation/integration queues only. They are not merge-ready and must be rebuilt on the newest `main` after each prerequisite lands. The former fork `main` and any unlisted legacy fork branches are intentionally not migrated; they are retired prototypes and must not be treated as current implementation or architecture authority.
+These branches form a stacked review queue. Only the first merge-ready layer should target current `main`; each dependent layer stays draft until its prerequisite lands, then is rebuilt on the new `main` and freshly verified. The former fork `main` and any unlisted legacy fork branches are intentionally not migrated; they are retired prototypes and must not be treated as current implementation or architecture authority.
 
 ## Not yet production-proven
 

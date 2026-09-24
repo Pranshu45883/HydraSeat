@@ -10,7 +10,7 @@ include_directories(include .)
 
 # Enable UTF-8 encoding for MSVC string literals
 if(MSVC)
-    add_compile_options(/utf-8)
+    add_compile_options(/utf-8 /FI"hydra/qt_msvc_compat.hpp")
 endif()
 
 # Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
@@ -36,19 +36,33 @@ if(WIN32)
 endif()
 
 # Find Qt6 components if available
-find_package(Qt6 COMPONENTS Core Widgets QUIET)
+find_package(Qt6 COMPONENTS Core Widgets)
 
 if(Qt6_FOUND)
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTOUIC ON)
     set(CMAKE_AUTORCC ON)
     set(UI_SOURCES
-        ui/workspace_widget.cpp
-        ui/main_window.cpp
+        ui/app_window.cpp
+        ui/engine_poller.cpp
+        ui/routing_controller.cpp
+        ui/pages/dashboard_page.cpp
+        ui/pages/seats_page.cpp
+        ui/pages/applications_page.cpp
+        ui/pages/audio_page.cpp
+        ui/pages/hardware_page.cpp
+        ui/pages/diagnostics_page.cpp
     )
     set(UI_HEADERS
-        ui/workspace_widget.hpp
-        ui/main_window.hpp
+        ui/app_window.hpp
+        ui/engine_poller.hpp
+        ui/routing_controller.hpp
+        ui/pages/dashboard_page.hpp
+        ui/pages/seats_page.hpp
+        ui/pages/applications_page.hpp
+        ui/pages/audio_page.hpp
+        ui/pages/hardware_page.hpp
+        ui/pages/diagnostics_page.hpp
     )
 endif()
 
@@ -63,9 +77,9 @@ set(HYDRA_SOURCES
     src/controller_inventory.cpp
     src/controller_io.cpp
     src/game_launcher.cpp
-    src/gui_win32.cpp
     src/audio_endpoint_inventory.cpp
     src/audio_session_observer.cpp
+    src/windows_audio_router.cpp
     ${UI_SOURCES}
 )
 
@@ -80,9 +94,9 @@ set(HYDRA_HEADERS
     include/hydra/controller_inventory.hpp
     include/hydra/controller_io.hpp
     include/hydra/game_launcher.hpp
-    include/hydra/gui_win32.hpp
     include/hydra/audio_endpoint_inventory.hpp
     include/hydra/audio_session_observer.hpp
+    include/hydra/audio_router.hpp
     ${UI_HEADERS}
 )
 
@@ -99,7 +113,7 @@ if(WIN32)
     # HydraAudioRouter (CLI for undocumented AudioPolicyConfig)
     add_executable(HydraAudioRouter 
         tests/hydra_audio_router.cpp 
-        src/audio_routing_experiment.cpp 
+        src/windows_audio_router.cpp 
         src/audio_endpoint_inventory.cpp
         src/audio_session_observer.cpp
     )

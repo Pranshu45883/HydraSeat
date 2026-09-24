@@ -2,6 +2,7 @@
 
 #include "hydra/controller_io.hpp"
 #include "hydra/process_identity.hpp"
+#include "hydra/audio_router.hpp"
 
 #include <cstdint>
 #include <mutex>
@@ -29,6 +30,7 @@ struct SeatRuntimeSnapshot {
     std::optional<ProcessIdentity> process;
     std::uintptr_t targetHwnd{0};
     std::optional<controller::SeatBinding> controllerBinding;
+    std::optional<AudioEndpointIdentity> audioEndpoint;
 
     bool operator==(const SeatRuntimeSnapshot&) const = default;
 };
@@ -45,6 +47,9 @@ public:
                           std::uintptr_t hwnd) noexcept;
     bool bindController(const ActivationToken& token,
                         const controller::SeatBinding& binding) noexcept;
+    bool bindAudioEndpoint(const ActivationToken& token,
+                           const AudioEndpointIdentity& endpoint) noexcept;
+    bool clearAudioEndpoint(const ActivationToken& token) noexcept;
     bool endActivation(const ActivationToken& token) noexcept;
     SeatRuntimeSnapshot snapshot() const noexcept;
 
@@ -58,6 +63,7 @@ private:
     std::optional<ProcessIdentity> process_;
     std::uintptr_t targetHwnd_{0};
     std::optional<controller::SeatBinding> controllerBinding_;
+    std::optional<AudioEndpointIdentity> audioEndpoint_;
 };
 
 class SessionController final {
@@ -73,6 +79,12 @@ public:
     bool bindController(const ActivationToken& token,
                         const controller::SeatBinding& binding,
                         const controller::InventorySnapshot& inventory) noexcept;
+    bool bindAudioEndpoint(const ActivationToken& token,
+                           const AudioEndpointIdentity& endpoint) noexcept;
+    
+    AudioRouteStatus applyAudioRoute(const ActivationToken& token, AudioRouter& router) noexcept;
+    AudioRouteStatus clearAudioRoute(const ActivationToken& token, AudioRouter& router) noexcept;
+    
     controller::PollResult pollController(
         const ActivationToken& token,
         const controller::InventorySnapshot& inventory) noexcept;

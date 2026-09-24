@@ -1,4 +1,4 @@
-#include "hydra/audio_routing_experiment.hpp"
+#include "windows_audio_router.hpp"
 #include "hydra/audio_session_observer.hpp"
 
 #include <windows.h>
@@ -8,7 +8,6 @@
 #include <winstring.h>
 #include <combaseapi.h>
 #include <inspectable.h>
-#include <iostream>
 
 namespace hydra::windows {
 
@@ -35,10 +34,8 @@ struct ScopedHString {
 };
 
 // Undocumented Windows 10/11 interface for per-app audio routing.
-// Pre-21H2 Variant
 MIDL_INTERFACE("2a59116d-6c4f-45e0-a74f-707e3fef9258")
-IAudioPolicyConfigFactoryDownlevel : public IInspectable
-{
+IAudioPolicyConfigFactoryDownlevel : public IInspectable {
     virtual HRESULT STDMETHODCALLTYPE dummy1() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy2() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy3() = 0;
@@ -63,10 +60,8 @@ IAudioPolicyConfigFactoryDownlevel : public IInspectable
     virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
 };
 
-// 21H2 and later Variant
 MIDL_INTERFACE("ab3d4648-e242-459f-b02f-541c70306324")
-IAudioPolicyConfigFactory21H2 : public IInspectable
-{
+IAudioPolicyConfigFactory21H2 : public IInspectable {
     virtual HRESULT STDMETHODCALLTYPE dummy1() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy2() = 0;
     virtual HRESULT STDMETHODCALLTYPE dummy3() = 0;
@@ -91,71 +86,68 @@ IAudioPolicyConfigFactory21H2 : public IInspectable
     virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
 };
 
-// Deterministically constructs the full PnP device interface path required by the undocumented routing API.
-// The raw IMMDevice::GetId() string (e.g., "{0.0...}.{GUID}") is rejected with E_INVALIDARG.
-// The API mandates the SWD enumerator prefix and the audio render interface class GUID suffix.
 static std::wstring resolveRenderDeviceInterfacePath(const std::wstring& endpointId) {
-    // DEVINTERFACE_AUDIO_RENDER GUID: {e6327cad-dcec-4949-ae8a-991e976a79d2}
     return L"\\\\?\\SWD#MMDEVAPI#" + endpointId + L"#{e6327cad-dcec-4949-ae8a-991e976a79d2}";
 }
 
-// Validates that the process actually exists and has an enumerated audio session.
-// This enforces the requirement: "Do not accept an arbitrary PID as proof of ownership."
-static bool validateProcessOwnsAudioSession(DWORD pid) {
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+static hydra::runtime::AudioRouteStatus validateProcessIdentity(const hydra::runtime::ProcessIdentity& process) {
+    if (!process.valid()) return hydra::runtime::AudioRouteStatus::InvalidProcess;
+
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process.pid);
     if (!hProcess) {
-        return false;
+        return hydra::runtime::AudioRouteStatus::ProcessNotFound;
     }
     CloseHandle(hProcess);
 
     auto result = AudioSessionObserver::enumerateSessions();
     if (!result.isSuccess()) {
-        return false;
+        return hydra::runtime::AudioRouteStatus::OsApiError;
     }
 
+    bool hasSession = false;
     for (const auto& session : result.sessions) {
-        if (session.processId == pid) {
-            return true;
+        if (session.processId == process.pid) {
+            hasSession = true;
+            if (session.processIdentity && hydra::runtime::matchIdentity(session.processIdentity, process) != hydra::runtime::ProcessOwnershipMatch::Match) {
+                return hydra::runtime::AudioRouteStatus::IdentityMismatch;
+            }
         }
     }
-    return false;
+
+    if (!hasSession) {
+        return hydra::runtime::AudioRouteStatus::AudioSessionNotFound;
+    }
+
+    return hydra::runtime::AudioRouteStatus::Success;
 }
 
-// Validates that the endpoint actually exists in the Windows audio system.
-static bool validateEndpointExists(const std::wstring& endpointId) {
+static hydra::runtime::AudioRouteStatus validateEndpointExists(const std::wstring& endpointId) {
     ComPtr<IMMDeviceEnumerator> pEnumerator;
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&pEnumerator);
-    if (FAILED(hr) || !pEnumerator) return false;
+    if (FAILED(hr) || !pEnumerator) return hydra::runtime::AudioRouteStatus::OsApiError;
 
     ComPtr<IMMDevice> pDevice;
     hr = pEnumerator->GetDevice(endpointId.c_str(), &pDevice);
-    return SUCCEEDED(hr) && pDevice;
+    if (FAILED(hr) || !pDevice) return hydra::runtime::AudioRouteStatus::EndpointNotFound;
+
+    DWORD state = 0;
+    hr = pDevice->GetState(&state);
+    if (FAILED(hr)) return hydra::runtime::AudioRouteStatus::OsApiError;
+
+    if (!(state & DEVICE_STATE_ACTIVE)) {
+        return hydra::runtime::AudioRouteStatus::EndpointUnavailable;
+    }
+
+    return hydra::runtime::AudioRouteStatus::Success;
 }
 
-HRESULT AudioRoutingExperiment::manualRoute(DWORD pid, const std::wstring& targetEndpointId) {
-    if (!validateProcessOwnsAudioSession(pid)) {
-        std::wcerr << L"HydraAudioRouter: Target process PID " << pid << L" does not exist or has no active audio session." << std::endl;
-        return E_INVALIDARG;
-    }
-
-    if (!validateEndpointExists(targetEndpointId)) {
-        std::wcerr << L"HydraAudioRouter: Target endpoint ID '" << targetEndpointId << L"' does not exist." << std::endl;
-        return E_INVALIDARG;
-    }
-
-    std::wstring pnpInterfacePath = resolveRenderDeviceInterfacePath(targetEndpointId);
-
-    std::wcout << L"HydraAudioRouter: Resolving IMMDevice ID to PnP interface path..." << std::endl;
-    std::wcout << L"  Supplied PID: " << pid << std::endl;
-    std::wcout << L"  Supplied Endpoint ID: " << targetEndpointId << std::endl;
-    std::wcout << L"  Resolved PnP Path:    " << pnpInterfacePath << std::endl;
-
+static hydra::runtime::AudioRouteStatus callAudioPolicyConfigFactory(DWORD pid, const std::wstring& deviceIdStr) {
     ScopedHString className(L"Windows.Media.Internal.AudioPolicyConfig");
-    ScopedHString deviceId(pnpInterfacePath);
+    ScopedHString deviceId(deviceIdStr);
 
     ComPtr<IInspectable> factoryBase;
     HRESULT hr = RoGetActivationFactory(className, __uuidof(IInspectable), (void**)&factoryBase);
-    if (FAILED(hr) || !factoryBase) return hr;
+    if (FAILED(hr) || !factoryBase) return hydra::runtime::AudioRouteStatus::OsApiError;
 
     ComPtr<IAudioPolicyConfigFactory21H2> factory21H2;
     ComPtr<IAudioPolicyConfigFactoryDownlevel> factoryDownlevel;
@@ -163,50 +155,42 @@ HRESULT AudioRoutingExperiment::manualRoute(DWORD pid, const std::wstring& targe
     bool is21H2 = SUCCEEDED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactory21H2), (void**)&factory21H2));
     if (!is21H2) {
         if (FAILED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactoryDownlevel), (void**)&factoryDownlevel))) {
-            return E_NOINTERFACE;
+            return hydra::runtime::AudioRouteStatus::OsApiError;
         }
     }
 
     if (is21H2) {
-        return factory21H2->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
+        hr = factory21H2->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
     } else {
-        return factoryDownlevel->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
+        hr = factoryDownlevel->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
     }
+
+    return SUCCEEDED(hr) ? hydra::runtime::AudioRouteStatus::Success : hydra::runtime::AudioRouteStatus::RoutingFailed;
 }
 
-HRESULT AudioRoutingExperiment::manualReset(DWORD pid) {
-    if (!validateProcessOwnsAudioSession(pid)) {
-        std::wcerr << L"HydraAudioRouter: Target process PID " << pid << L" does not exist or has no active audio session." << std::endl;
-        return E_INVALIDARG;
-    }
+hydra::runtime::AudioRouteStatus WindowsAudioRouter::assignEndpoint(
+    const hydra::runtime::ProcessIdentity& process,
+    const hydra::runtime::AudioEndpointIdentity& endpoint) noexcept 
+{
+    if (!endpoint.valid()) return hydra::runtime::AudioRouteStatus::EndpointNotFound;
 
-    std::wcout << L"HydraAudioRouter: Attempting to reset per-process routing..." << std::endl;
-    std::wcout << L"  Supplied PID: " << pid << std::endl;
+    auto pStatus = validateProcessIdentity(process);
+    if (pStatus != hydra::runtime::AudioRouteStatus::Success) return pStatus;
 
-    ScopedHString className(L"Windows.Media.Internal.AudioPolicyConfig");
-    
-    // Passing L"" (empty string) clears the assignment
-    ScopedHString emptyDeviceId(L"");
+    auto eStatus = validateEndpointExists(endpoint.endpointId);
+    if (eStatus != hydra::runtime::AudioRouteStatus::Success) return eStatus;
 
-    ComPtr<IInspectable> factoryBase;
-    HRESULT hr = RoGetActivationFactory(className, __uuidof(IInspectable), (void**)&factoryBase);
-    if (FAILED(hr) || !factoryBase) return hr;
+    std::wstring pnpInterfacePath = resolveRenderDeviceInterfacePath(endpoint.endpointId);
+    return callAudioPolicyConfigFactory(process.pid, pnpInterfacePath);
+}
 
-    ComPtr<IAudioPolicyConfigFactory21H2> factory21H2;
-    ComPtr<IAudioPolicyConfigFactoryDownlevel> factoryDownlevel;
+hydra::runtime::AudioRouteStatus WindowsAudioRouter::clearAssignment(
+    const hydra::runtime::ProcessIdentity& process) noexcept 
+{
+    auto pStatus = validateProcessIdentity(process);
+    if (pStatus != hydra::runtime::AudioRouteStatus::Success) return pStatus;
 
-    bool is21H2 = SUCCEEDED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactory21H2), (void**)&factory21H2));
-    if (!is21H2) {
-        if (FAILED(factoryBase->QueryInterface(__uuidof(IAudioPolicyConfigFactoryDownlevel), (void**)&factoryDownlevel))) {
-            return E_NOINTERFACE;
-        }
-    }
-
-    if (is21H2) {
-        return factory21H2->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, emptyDeviceId);
-    } else {
-        return factoryDownlevel->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, emptyDeviceId);
-    }
+    return callAudioPolicyConfigFactory(process.pid, L"");
 }
 
 } // namespace hydra::windows

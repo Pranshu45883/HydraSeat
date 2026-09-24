@@ -19,6 +19,7 @@ ActivationToken SeatRuntime::beginActivation() noexcept {
     process_.reset();
     targetHwnd_ = 0;
     controllerBinding_.reset();
+    audioEndpoint_.reset();
     return {seatId_, generation_};
 }
 
@@ -58,6 +59,25 @@ bool SeatRuntime::bindController(const ActivationToken& token,
     return true;
 }
 
+bool SeatRuntime::bindAudioEndpoint(const ActivationToken& token,
+                                    const AudioEndpointIdentity& endpoint) noexcept {
+    if (!endpoint.valid()) return false;
+
+    std::lock_guard lock(mutex_);
+    if (!ownsTokenLocked(token)) return false;
+    
+    // Audio endpoints are allowed to be reassigned during the same activation
+    audioEndpoint_ = endpoint;
+    return true;
+}
+
+bool SeatRuntime::clearAudioEndpoint(const ActivationToken& token) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!ownsTokenLocked(token)) return false;
+    audioEndpoint_.reset();
+    return true;
+}
+
 bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     if (!ownsTokenLocked(token)) return false;
@@ -66,12 +86,13 @@ bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
     process_.reset();
     targetHwnd_ = 0;
     controllerBinding_.reset();
+    audioEndpoint_.reset();
     return true;
 }
 
 SeatRuntimeSnapshot SeatRuntime::snapshot() const noexcept {
     std::lock_guard lock(mutex_);
-    return {seatId_, generation_, active_, process_, targetHwnd_, controllerBinding_};
+    return {seatId_, generation_, active_, process_, targetHwnd_, controllerBinding_, audioEndpoint_};
 }
 
 bool SeatRuntime::ownsTokenLocked(const ActivationToken& token) const noexcept {
@@ -137,6 +158,66 @@ bool SessionController::bindController(
     }
 
     return runtime->bindController(token, binding);
+}
+
+bool SessionController::bindAudioEndpoint(
+    const ActivationToken& token,
+    const AudioEndpointIdentity& endpoint) noexcept {
+    if (!endpoint.valid()) return false;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    const auto other = otherSeat(token.seatId);
+    if (!runtime || !other) return false;
+
+    const auto otherSnapshot = other->snapshot();
+    if (otherSnapshot.active && otherSnapshot.audioEndpoint &&
+        *otherSnapshot.audioEndpoint == endpoint) {
+        // Technically an endpoint could be routed twice to different processes in Windows,
+        // but for HydraSeat we might want to restrict to one process per endpoint.
+        // Wait, the instructions say:
+        // "Two simultaneous routes. Process A -> Endpoint A, Process B -> Endpoint B. Both assignments can coexist."
+        // We will just allow it, but we prevent identical assignment logic here just in case? No, we don't need to prevent it.
+        // Actually, just pass it through to the seat runtime.
+    }
+
+    return runtime->bindAudioEndpoint(token, endpoint);
+}
+
+AudioRouteStatus SessionController::applyAudioRoute(const ActivationToken& token, AudioRouter& router) noexcept {
+    if (!token.valid()) return AudioRouteStatus::InvalidProcess;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return AudioRouteStatus::InvalidProcess;
+
+    const auto current = runtime->snapshot();
+    if (!current.active || current.generation != token.generation ||
+        !current.process || !current.audioEndpoint) {
+        return AudioRouteStatus::RoutingFailed;
+    }
+
+    return router.assignEndpoint(*current.process, *current.audioEndpoint);
+}
+
+AudioRouteStatus SessionController::clearAudioRoute(const ActivationToken& token, AudioRouter& router) noexcept {
+    if (!token.valid()) return AudioRouteStatus::InvalidProcess;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return AudioRouteStatus::InvalidProcess;
+
+    const auto current = runtime->snapshot();
+    if (!current.active || current.generation != token.generation ||
+        !current.process) {
+        return AudioRouteStatus::RoutingFailed;
+    }
+
+    auto status = router.clearAssignment(*current.process);
+    if (status == AudioRouteStatus::Success) {
+        runtime->clearAudioEndpoint(token);
+    }
+    return status;
 }
 
 controller::PollResult SessionController::pollController(

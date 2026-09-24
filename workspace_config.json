@@ -1,0 +1,19 @@
+{
+  "version": "1.1",
+  "workspaces": [
+    {
+      "id": 1,
+      "display": "",
+      "keyboard": "",
+      "mouse": "",
+      "controllerId": ""
+    },
+    {
+      "id": 2,
+      "display": "",
+      "keyboard": "",
+      "mouse": "",
+      "controllerId": ""
+    }
+  ]
+}

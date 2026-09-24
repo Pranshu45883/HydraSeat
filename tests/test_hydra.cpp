@@ -373,6 +373,85 @@ void testAudioSessionObserverRegression() {
     std::cout << "[Test] AudioSessionObserver regression test (move semantics) passed." << std::endl;
 }
 
+#include "hydra/audio_router.hpp"
+
+// Mock router for pure neutral model testing
+class MockAudioRouter : public hydra::runtime::AudioRouter {
+public:
+    hydra::runtime::AudioRouteStatus lastAssignStatus{hydra::runtime::AudioRouteStatus::Success};
+    hydra::runtime::AudioRouteStatus lastClearStatus{hydra::runtime::AudioRouteStatus::Success};
+    
+    std::optional<hydra::runtime::ProcessIdentity> lastAssignedProcess;
+    std::optional<hydra::runtime::AudioEndpointIdentity> lastAssignedEndpoint;
+
+    hydra::runtime::AudioRouteStatus assignEndpoint(
+        const hydra::runtime::ProcessIdentity& process,
+        const hydra::runtime::AudioEndpointIdentity& endpoint) noexcept override {
+        lastAssignedProcess = process;
+        lastAssignedEndpoint = endpoint;
+        return lastAssignStatus;
+    }
+
+    hydra::runtime::AudioRouteStatus clearAssignment(
+        const hydra::runtime::ProcessIdentity& process) noexcept override {
+        lastAssignedProcess = process;
+        lastAssignedEndpoint = std::nullopt;
+        return lastClearStatus;
+    }
+};
+
+void testAudioRouter() {
+    using namespace hydra::runtime;
+    
+    SessionController controller;
+    MockAudioRouter router;
+    
+    const auto token1 = controller.beginSeatActivation(1);
+    const auto token2 = controller.beginSeatActivation(2);
+    
+    ProcessIdentity p1{100, 500};
+    ProcessIdentity p2{200, 600};
+    
+    assert(controller.publishProcess(token1, p1));
+    assert(controller.publishProcess(token2, p2));
+    
+    AudioEndpointIdentity e1{L"Endpoint-1", L"Stable-1"};
+    AudioEndpointIdentity e2{L"Endpoint-2", L"Stable-2"};
+    AudioEndpointIdentity e3{L"Endpoint-3", std::nullopt};
+    
+    // Seat 1 gets e1
+    assert(controller.bindAudioEndpoint(token1, e1));
+    auto snap1 = controller.snapshot(1);
+    assert(snap1->audioEndpoint && *snap1->audioEndpoint == e1);
+    
+    // Apply successful route
+    assert(controller.applyAudioRoute(token1, router) == AudioRouteStatus::Success);
+    assert(router.lastAssignedProcess == p1);
+    assert(router.lastAssignedEndpoint == e1);
+    
+    // Seat 1 reassigns to e3
+    assert(controller.bindAudioEndpoint(token1, e3));
+    assert(controller.applyAudioRoute(token1, router) == AudioRouteStatus::Success);
+    assert(router.lastAssignedEndpoint == e3);
+    
+    // Seat 2 gets e2
+    assert(controller.bindAudioEndpoint(token2, e2));
+    assert(controller.applyAudioRoute(token2, router) == AudioRouteStatus::Success);
+    assert(router.lastAssignedProcess == p2);
+    assert(router.lastAssignedEndpoint == e2);
+    
+    // One seat cannot clear another seat's audio route because tokens are checked
+    assert(controller.clearAudioRoute(token2, router) == AudioRouteStatus::Success);
+    assert(router.lastAssignedProcess == p2);
+    assert(!router.lastAssignedEndpoint.has_value());
+    
+    // Failed route
+    router.lastAssignStatus = AudioRouteStatus::OsApiError;
+    assert(controller.applyAudioRoute(token1, router) == AudioRouteStatus::OsApiError);
+    
+    std::cout << "[Test] AudioRouter tests passed." << std::endl;
+}
+
 int main() {
     bool assertionProbe = false;
     assert((assertionProbe = true));
@@ -388,6 +467,7 @@ int main() {
     testAudioEndpointInventory();
     testAudioSessionObserver();
     testAudioSessionObserverRegression();
+    testAudioRouter();
     testControllerIdentity();
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;

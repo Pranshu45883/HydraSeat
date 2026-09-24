@@ -1,4 +1,4 @@
-#include "hydra/audio_routing_experiment.hpp"
+#include "../src/windows_audio_router.hpp"
 #include "hydra/audio_endpoint_inventory.hpp"
 #include "hydra/audio_session_observer.hpp"
 
@@ -88,11 +88,28 @@ int main(int argc, char** argv) {
         std::wstring targetEndpoint(endpointIdStr.begin(), endpointIdStr.end());
 
         std::wcout << L"Attempting to route PID " << pid << L" to endpoint..." << std::endl;
-        HRESULT routeHr = hydra::windows::AudioRoutingExperiment::manualRoute(pid, targetEndpoint);
-        if (SUCCEEDED(routeHr)) {
-            std::wcout << L"SUCCESS (HRESULT: 0x" << std::hex << routeHr << L") - Note: This is an API-level success." << std::endl;
+        
+        auto sessionResult = hydra::windows::AudioSessionObserver::enumerateSessions();
+        uint64_t creationId = 0;
+        if (sessionResult.isSuccess()) {
+            for (const auto& session : sessionResult.sessions) {
+                if (session.processId == pid && session.processIdentity) {
+                    creationId = session.processIdentity->creationIdentity;
+                    break;
+                }
+            }
+        }
+        
+        hydra::runtime::ProcessIdentity procIdentity{pid, creationId};
+        hydra::runtime::AudioEndpointIdentity epIdentity{targetEndpoint, std::nullopt};
+        
+        hydra::windows::WindowsAudioRouter router;
+        auto routeStatus = router.assignEndpoint(procIdentity, epIdentity);
+        
+        if (routeStatus == hydra::runtime::AudioRouteStatus::Success) {
+            std::wcout << L"SUCCESS - Note: This is an API-level success." << std::endl;
         } else {
-            std::wcerr << L"FAILED (HRESULT: 0x" << std::hex << routeHr << L")" << std::endl;
+            std::wcerr << L"FAILED (Status: " << static_cast<int>(routeStatus) << L")" << std::endl;
         }
     }
     else if (command == "--reset") {
@@ -104,11 +121,26 @@ int main(int argc, char** argv) {
         
         DWORD pid = std::stoul(argv[2]);
         std::wcout << L"Attempting to reset PID " << pid << L" to default audio routing..." << std::endl;
-        HRESULT resetHr = hydra::windows::AudioRoutingExperiment::manualReset(pid);
-        if (SUCCEEDED(resetHr)) {
-            std::wcout << L"SUCCESS (HRESULT: 0x" << std::hex << resetHr << L") - Note: This is an API-level success." << std::endl;
+
+        auto sessionResult = hydra::windows::AudioSessionObserver::enumerateSessions();
+        uint64_t creationId = 0;
+        if (sessionResult.isSuccess()) {
+            for (const auto& session : sessionResult.sessions) {
+                if (session.processId == pid && session.processIdentity) {
+                    creationId = session.processIdentity->creationIdentity;
+                    break;
+                }
+            }
+        }
+
+        hydra::runtime::ProcessIdentity procIdentity{pid, creationId};
+        hydra::windows::WindowsAudioRouter router;
+        auto resetStatus = router.clearAssignment(procIdentity);
+        
+        if (resetStatus == hydra::runtime::AudioRouteStatus::Success) {
+            std::wcout << L"SUCCESS - Note: This is an API-level success." << std::endl;
         } else {
-            std::wcerr << L"FAILED (HRESULT: 0x" << std::hex << resetHr << L")" << std::endl;
+            std::wcerr << L"FAILED (Status: " << static_cast<int>(resetStatus) << L")" << std::endl;
         }
     }
     else {

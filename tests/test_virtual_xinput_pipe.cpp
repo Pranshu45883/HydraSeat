@@ -70,10 +70,22 @@ std::optional<hydra::controller::ipc::VirtualXInputResponse> sendMalformedVersio
     const std::wstring& endpoint) {
     using namespace hydra::controller::ipc;
 
-    if (!WaitNamedPipeW(endpoint.c_str(), 2000)) return std::nullopt;
-    HANDLE pipe = CreateFileW(endpoint.c_str(), GENERIC_READ | GENERIC_WRITE,
-                              0, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (pipe == INVALID_HANDLE_VALUE) return std::nullopt;
+    const ULONGLONG start = GetTickCount64();
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    for (;;) {
+        pipe = CreateFileW(endpoint.c_str(), GENERIC_READ | GENERIC_WRITE,
+                           0, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (pipe != INVALID_HANDLE_VALUE) break;
+
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY) {
+            return std::nullopt;
+        }
+        if (GetTickCount64() - start >= 2000) {
+            return std::nullopt;
+        }
+        Sleep(1);
+    }
 
     std::vector<std::uint8_t> bytes(kEncodedRequestSize, 0);
     DWORD written = 0;

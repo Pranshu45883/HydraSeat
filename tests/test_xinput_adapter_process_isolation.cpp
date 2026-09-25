@@ -1,14 +1,19 @@
 #include "hydra/virtual_xinput_pipe.hpp"
 #include "hydra/virtual_xinput_service.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <cwchar>
+#include <cwctype>
 #include <filesystem>
 #include <iostream>
 #include <map>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -32,7 +37,7 @@ using hydra::controller::VirtualXInputMapping;
 using hydra::controller::VirtualXInputService;
 
 constexpr std::uint32_t kPipeTimeoutMs = 3000;
-constexpr std::uint32_t kProcessTimeoutMs = 5000;
+constexpr std::uint32_t kProcessTimeoutMs = 10000;
 constexpr std::uint32_t kSeat1 = 1;
 constexpr std::uint32_t kSeat2 = 2;
 constexpr std::uint64_t kSeat1Activation = 101;
@@ -170,7 +175,7 @@ VirtualXInputMapping makeMapping(std::uint32_t seatId,
 }
 
 std::wstring uniqueEndpoint(const wchar_t* suffix) {
-    return L"\\\\.\\pipe\\hydraseat-xinput-process-" +
+    return L"\\\\.\\pipe\\hydraseat-xinput-abi-" +
            std::to_wstring(GetCurrentProcessId()) + L"-" + suffix;
 }
 
@@ -191,14 +196,75 @@ std::string readAll(HANDLE handle) {
     return output;
 }
 
-ProbeRunResult runProbe(const std::wstring& probePath,
-                        const std::wstring& endpoint,
-                        std::uint32_t seatId,
-                        std::uint64_t activationGeneration,
-                        std::uint64_t sourceGeneration,
-                        const wchar_t* mode,
-                        std::uint16_t low = 0,
-                        std::uint16_t high = 0) {
+bool equalsKeyIgnoreCase(std::wstring_view entry, std::wstring_view key) {
+    if (entry.size() <= key.size() || entry[key.size()] != L'=') return false;
+    for (std::size_t i = 0; i < key.size(); ++i) {
+        if (std::towupper(entry[i]) != std::towupper(key[i])) return false;
+    }
+    return true;
+}
+
+bool isAdapterEnvironmentEntry(const std::wstring& entry) {
+    return equalsKeyIgnoreCase(entry, L"HYDRA_XINPUT_PIPE") ||
+           equalsKeyIgnoreCase(entry, L"HYDRA_XINPUT_SEAT_ID") ||
+           equalsKeyIgnoreCase(entry, L"HYDRA_XINPUT_ACTIVATION_GENERATION") ||
+           equalsKeyIgnoreCase(entry, L"HYDRA_XINPUT_SOURCE_GENERATION");
+}
+
+std::vector<wchar_t> buildEnvironmentBlock(
+    bool includeSession,
+    const std::wstring& endpoint,
+    std::uint32_t seatId,
+    std::uint64_t activationGeneration,
+    std::uint64_t sourceGeneration) {
+    std::vector<std::wstring> entries;
+    LPWCH raw = GetEnvironmentStringsW();
+    if (raw == nullptr) return {};
+
+    for (const wchar_t* cursor = raw; *cursor != L'\0';) {
+        std::wstring entry(cursor);
+        if (!isAdapterEnvironmentEntry(entry)) entries.push_back(std::move(entry));
+        cursor += std::wcslen(cursor) + 1;
+    }
+    FreeEnvironmentStringsW(raw);
+
+    if (includeSession) {
+        entries.push_back(L"HYDRA_XINPUT_PIPE=" + endpoint);
+        entries.push_back(L"HYDRA_XINPUT_SEAT_ID=" + std::to_wstring(seatId));
+        entries.push_back(
+            L"HYDRA_XINPUT_ACTIVATION_GENERATION=" +
+            std::to_wstring(activationGeneration));
+        entries.push_back(
+            L"HYDRA_XINPUT_SOURCE_GENERATION=" +
+            std::to_wstring(sourceGeneration));
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+        return _wcsicmp(left.c_str(), right.c_str()) < 0;
+    });
+
+    std::size_t total = 1;
+    for (const auto& entry : entries) total += entry.size() + 1;
+    std::vector<wchar_t> block;
+    block.reserve(total);
+    for (const auto& entry : entries) {
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back(L'\0');
+    }
+    block.push_back(L'\0');
+    return block;
+}
+
+ProbeRunResult runAbiProbe(const std::wstring& probePath,
+                           const std::wstring& dllPath,
+                           const std::wstring& endpoint,
+                           std::uint32_t seatId,
+                           std::uint64_t activationGeneration,
+                           std::uint64_t sourceGeneration,
+                           const wchar_t* mode,
+                           std::uint16_t low = 0,
+                           std::uint16_t high = 0,
+                           bool includeSession = true) {
     ProbeRunResult result;
 
     SECURITY_ATTRIBUTES security{};
@@ -224,27 +290,28 @@ ProbeRunResult runProbe(const std::wstring& probePath,
     startup.hStdOutput = writeHandle.get();
     startup.hStdError = writeHandle.get();
 
-    PROCESS_INFORMATION process{};
     std::wstring commandLine =
         quoteArgument(probePath) +
-        L" --pipe " + quoteArgument(endpoint) +
-        L" --seat " + std::to_wstring(seatId) +
-        L" --activation-generation " + std::to_wstring(activationGeneration) +
-        L" --source-generation " + std::to_wstring(sourceGeneration) +
+        L" --dll " + quoteArgument(dllPath) +
         L" --mode " + mode;
     if (std::wstring(mode) == L"vibrate") {
         commandLine += L" --low " + std::to_wstring(low) +
                        L" --high " + std::to_wstring(high);
     }
 
+    auto environment = buildEnvironmentBlock(
+        includeSession, endpoint, seatId, activationGeneration, sourceGeneration);
+    if (environment.empty()) return result;
+
+    PROCESS_INFORMATION process{};
     if (!CreateProcessW(
             nullptr,
             commandLine.data(),
             nullptr,
             nullptr,
             TRUE,
-            CREATE_NO_WINDOW,
-            nullptr,
+            CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+            environment.data(),
             nullptr,
             &startup,
             &process)) {
@@ -266,9 +333,7 @@ ProbeRunResult runProbe(const std::wstring& probePath,
 
     result.output = readAll(readHandle.get());
     DWORD exitCode = static_cast<DWORD>(-1);
-    if (GetExitCodeProcess(processHandle.get(), &exitCode)) {
-        result.exitCode = exitCode;
-    }
+    if (GetExitCodeProcess(processHandle.get(), &exitCode)) result.exitCode = exitCode;
     return result;
 }
 
@@ -291,21 +356,26 @@ void serveRequests(NamedPipeVirtualXInputServer& server,
 }
 
 bool snapshotShowsOnly(const ProbeRunResult& probe,
+                       std::uint32_t expectedPacket,
                        std::uint16_t expectedButtons,
                        std::int16_t expectedLX,
                        std::uint16_t forbiddenButtons,
                        std::int16_t forbiddenLX) {
     if (!probe.launched || probe.timedOut || probe.exitCode != 0) return false;
     const std::string expected =
-        "slot=0 status=Ok buttons=" + std::to_string(expectedButtons) +
+        "slot=0 status=0 packet=" + std::to_string(expectedPacket) +
+        " buttons=" + std::to_string(expectedButtons) +
         " lx=" + std::to_string(expectedLX);
     const std::string forbiddenButtonsText =
         "buttons=" + std::to_string(forbiddenButtons);
     const std::string forbiddenLXText = "lx=" + std::to_string(forbiddenLX);
-    return probe.output.find(expected) != std::string::npos &&
-           probe.output.find("slot=1 status=Disconnected") != std::string::npos &&
-           probe.output.find("slot=2 status=Disconnected") != std::string::npos &&
-           probe.output.find("slot=3 status=Disconnected") != std::string::npos &&
+    const std::string disconnected =
+        " status=" + std::to_string(ERROR_DEVICE_NOT_CONNECTED);
+    return probe.output.find("capabilities status=0 type=1 subtype=1") != std::string::npos &&
+           probe.output.find(expected) != std::string::npos &&
+           probe.output.find("slot=1" + disconnected) != std::string::npos &&
+           probe.output.find("slot=2" + disconnected) != std::string::npos &&
+           probe.output.find("slot=3" + disconnected) != std::string::npos &&
            probe.output.find(forbiddenButtonsText) == std::string::npos &&
            probe.output.find(forbiddenLXText) == std::string::npos;
 }
@@ -325,8 +395,9 @@ int main(int argc, char* argv[]) {
                  SEM_NOGPFAULTERRORBOX |
                  SEM_NOOPENFILEERRORBOX);
 
-    if (argc < 2) return fail("probe executable argument missing", 2);
+    if (argc < 3) return fail("ABI probe/DLL arguments missing", 2);
     const std::wstring probePath = std::filesystem::path(argv[1]).wstring();
+    const std::wstring dllPath = std::filesystem::path(argv[2]).wstring();
 
     SyntheticBackend backend;
     GamepadState seat1State;
@@ -359,17 +430,17 @@ int main(int argc, char* argv[]) {
     ProbeRunResult seat2Probe;
 
     std::thread seat1ServerThread(
-        [&] { serveRequests(seat1Server, 4, seat1ServerResult); });
+        [&] { serveRequests(seat1Server, 2, seat1ServerResult); });
     std::thread seat2ServerThread(
-        [&] { serveRequests(seat2Server, 4, seat2ServerResult); });
+        [&] { serveRequests(seat2Server, 2, seat2ServerResult); });
     std::thread seat1ProbeThread([&] {
-        seat1Probe = runProbe(
-            probePath, seat1Endpoint, kSeat1, kSeat1Activation,
+        seat1Probe = runAbiProbe(
+            probePath, dllPath, seat1Endpoint, kSeat1, kSeat1Activation,
             kSeat1SourceGeneration, L"snapshot");
     });
     std::thread seat2ProbeThread([&] {
-        seat2Probe = runProbe(
-            probePath, seat2Endpoint, kSeat2, kSeat2Activation,
+        seat2Probe = runAbiProbe(
+            probePath, dllPath, seat2Endpoint, kSeat2, kSeat2Activation,
             kSeat2SourceGeneration, L"snapshot");
     });
 
@@ -378,21 +449,23 @@ int main(int argc, char* argv[]) {
     seat1ServerThread.join();
     seat2ServerThread.join();
 
-    if (!seat1ServerResult.ok || seat1ServerResult.served != 4) {
-        return fail("Seat 1 snapshot server did not serve four requests", 20);
+    if (!seat1ServerResult.ok || seat1ServerResult.served != 2) {
+        return fail("Seat 1 ABI snapshot server did not serve two requests", 20);
     }
-    if (!seat2ServerResult.ok || seat2ServerResult.served != 4) {
-        return fail("Seat 2 snapshot server did not serve four requests", 21);
+    if (!seat2ServerResult.ok || seat2ServerResult.served != 2) {
+        return fail("Seat 2 ABI snapshot server did not serve two requests", 21);
     }
     if (seat1Probe.processId == 0 || seat2Probe.processId == 0 ||
         seat1Probe.processId == seat2Probe.processId) {
-        return fail("probe processes were not distinct", 22);
+        return fail("ABI probe processes were not distinct", 22);
     }
-    if (!snapshotShowsOnly(seat1Probe, 64, 1234, 128, -2345)) {
-        return fail("Game A observed the wrong logical controller namespace", 23);
+    if (!snapshotShowsOnly(seat1Probe, 7, 64, 1234, 128, -2345)) {
+        std::cerr << "Seat 1 ABI output=[" << seat1Probe.output << "]\n";
+        return fail("Game A observed the wrong XInput ABI namespace", 23);
     }
-    if (!snapshotShowsOnly(seat2Probe, 128, -2345, 64, 1234)) {
-        return fail("Game B observed the wrong logical controller namespace", 24);
+    if (!snapshotShowsOnly(seat2Probe, 9, 128, -2345, 64, 1234)) {
+        std::cerr << "Seat 2 ABI output=[" << seat2Probe.output << "]\n";
+        return fail("Game B observed the wrong XInput ABI namespace", 24);
     }
 
     const auto seat1VibrationEndpoint = uniqueEndpoint(L"seat-a-vibration");
@@ -409,26 +482,26 @@ int main(int argc, char* argv[]) {
     std::thread seat2VibrationServerThread([&] {
         serveRequests(seat2VibrationServer, 1, seat2VibrationServerResult);
     });
-    const auto seat1VibrationProbe = runProbe(
-        probePath, seat1VibrationEndpoint, kSeat1, kSeat1Activation,
+    const auto seat1VibrationProbe = runAbiProbe(
+        probePath, dllPath, seat1VibrationEndpoint, kSeat1, kSeat1Activation,
         kSeat1SourceGeneration, L"vibrate", 111, 222);
-    const auto seat2VibrationProbe = runProbe(
-        probePath, seat2VibrationEndpoint, kSeat2, kSeat2Activation,
+    const auto seat2VibrationProbe = runAbiProbe(
+        probePath, dllPath, seat2VibrationEndpoint, kSeat2, kSeat2Activation,
         kSeat2SourceGeneration, L"vibrate", 333, 444);
     seat1VibrationServerThread.join();
     seat2VibrationServerThread.join();
 
     if (!seat1VibrationServerResult.ok || !seat2VibrationServerResult.ok ||
         seat1VibrationProbe.exitCode != 0 || seat2VibrationProbe.exitCode != 0) {
-        return fail("vibration probes failed", 30);
+        return fail("ABI vibration probes failed", 30);
     }
     const auto seat1Receipt = backend.vibrationFor(kSeat1Key);
     const auto seat2Receipt = backend.vibrationFor(kSeat2Key);
     if (seat1Receipt.calls != 1 || seat1Receipt.low != 111 || seat1Receipt.high != 222) {
-        return fail("Game A vibration did not route only to Seat 1", 31);
+        return fail("Game A ABI vibration did not route only to Seat 1", 31);
     }
     if (seat2Receipt.calls != 1 || seat2Receipt.low != 333 || seat2Receipt.high != 444) {
-        return fail("Game B vibration did not route only to Seat 2", 32);
+        return fail("Game B ABI vibration did not route only to Seat 2", 32);
     }
 
     const auto staleSourceEndpoint = uniqueEndpoint(L"seat-a-stale-source");
@@ -437,15 +510,15 @@ int main(int argc, char* argv[]) {
     std::thread staleSourceServerThread([&] {
         serveRequests(staleSourceServer, 1, staleSourceServerResult);
     });
-    const auto staleSourceProbe = runProbe(
-        probePath, staleSourceEndpoint, kSeat1, kSeat1Activation,
+    const auto staleSourceProbe = runAbiProbe(
+        probePath, dllPath, staleSourceEndpoint, kSeat1, kSeat1Activation,
         kSeat1SourceGeneration - 1, L"vibrate", 900, 901);
     staleSourceServerThread.join();
     if (!staleSourceServerResult.ok || staleSourceProbe.exitCode == 0) {
-        return fail("stale source generation was not rejected", 33);
+        return fail("stale source generation was not rejected through ABI", 33);
     }
     if (backend.vibrationFor(kSeat1Key) != seat1Receipt) {
-        return fail("stale source request mutated Seat 1 vibration", 34);
+        return fail("stale ABI source request mutated Seat 1 vibration", 34);
     }
 
     const auto staleActivationEndpoint = uniqueEndpoint(L"seat-a-stale-activation");
@@ -455,21 +528,32 @@ int main(int argc, char* argv[]) {
     std::thread staleActivationServerThread([&] {
         serveRequests(staleActivationServer, 1, staleActivationServerResult);
     });
-    const auto staleActivationProbe = runProbe(
-        probePath, staleActivationEndpoint, kSeat1, kSeat1Activation - 1,
+    const auto staleActivationProbe = runAbiProbe(
+        probePath, dllPath, staleActivationEndpoint, kSeat1, kSeat1Activation - 1,
         kSeat1SourceGeneration, L"vibrate", 902, 903);
     staleActivationServerThread.join();
     if (!staleActivationServerResult.ok || staleActivationProbe.exitCode == 0) {
-        return fail("stale activation generation was not rejected", 35);
+        return fail("stale activation generation was not rejected through ABI", 35);
     }
     if (backend.vibrationFor(kSeat1Key) != seat1Receipt) {
-        return fail("stale activation request mutated Seat 1 vibration", 36);
+        return fail("stale ABI activation request mutated Seat 1 vibration", 36);
+    }
+
+    const auto missingEnvironmentProbe = runAbiProbe(
+        probePath, dllPath, L"unused", kSeat1, kSeat1Activation,
+        kSeat1SourceGeneration, L"snapshot", 0, 0, false);
+    if (!missingEnvironmentProbe.launched || missingEnvironmentProbe.timedOut ||
+        missingEnvironmentProbe.exitCode == 0 ||
+        missingEnvironmentProbe.output.find(
+            "capabilities status=" + std::to_string(ERROR_DEVICE_NOT_CONNECTED)) ==
+            std::string::npos) {
+        return fail("missing adapter environment did not fail closed", 37);
     }
 
     ScopedHandle seat2PollEntered(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     ScopedHandle seat2PollRelease(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     if (!seat2PollEntered.valid() || !seat2PollRelease.valid()) {
-        return fail("failed to create Seat 2 hold events", 40);
+        return fail("failed to create Seat 2 ABI hold events", 40);
     }
     backend.blockedPollKey = kSeat2Key;
     backend.pollEnteredEvent = seat2PollEntered.get();
@@ -480,11 +564,11 @@ int main(int argc, char* argv[]) {
     ServerRunResult heldSeat2ServerResult;
     ProbeRunResult heldSeat2Probe;
     std::thread heldSeat2ServerThread([&] {
-        serveRequests(heldSeat2Server, 4, heldSeat2ServerResult);
+        serveRequests(heldSeat2Server, 2, heldSeat2ServerResult);
     });
     std::thread heldSeat2ProbeThread([&] {
-        heldSeat2Probe = runProbe(
-            probePath, heldSeat2Endpoint, kSeat2, kSeat2Activation,
+        heldSeat2Probe = runAbiProbe(
+            probePath, dllPath, heldSeat2Endpoint, kSeat2, kSeat2Activation,
             kSeat2SourceGeneration, L"snapshot");
     });
 
@@ -492,7 +576,7 @@ int main(int argc, char* argv[]) {
         SetEvent(seat2PollRelease.get());
         heldSeat2ProbeThread.join();
         heldSeat2ServerThread.join();
-        return fail("Seat 2 child never reached its held poll", 41);
+        return fail("Seat 2 ABI child never reached its held poll", 41);
     }
 
     auto restartedSeat1Mapping = makeMapping(
@@ -507,15 +591,15 @@ int main(int argc, char* argv[]) {
     std::thread oldActivationServerThread([&] {
         serveRequests(oldActivationServer, 1, oldActivationServerResult);
     });
-    const auto oldActivationProbe = runProbe(
-        probePath, oldActivationEndpoint, kSeat1, kSeat1Activation,
+    const auto oldActivationProbe = runAbiProbe(
+        probePath, dllPath, oldActivationEndpoint, kSeat1, kSeat1Activation,
         kSeat1SourceGeneration, L"snapshot");
     oldActivationServerThread.join();
     if (!oldActivationServerResult.ok || oldActivationProbe.exitCode == 0) {
         SetEvent(seat2PollRelease.get());
         heldSeat2ProbeThread.join();
         heldSeat2ServerThread.join();
-        return fail("old Seat 1 activation survived restart", 42);
+        return fail("old Seat 1 ABI activation survived restart", 42);
     }
 
     const auto restartedSeat1Endpoint = uniqueEndpoint(L"seat-a-restarted");
@@ -523,15 +607,15 @@ int main(int argc, char* argv[]) {
         restartedSeat1Endpoint, restartedSeat1Service);
     ServerRunResult restartedSeat1ServerResult;
     std::thread restartedSeat1ServerThread([&] {
-        serveRequests(restartedSeat1Server, 4, restartedSeat1ServerResult);
+        serveRequests(restartedSeat1Server, 2, restartedSeat1ServerResult);
     });
-    const auto restartedSeat1Probe = runProbe(
-        probePath, restartedSeat1Endpoint, kSeat1, kSeat1RestartedActivation,
-        kSeat1SourceGeneration, L"snapshot");
+    const auto restartedSeat1Probe = runAbiProbe(
+        probePath, dllPath, restartedSeat1Endpoint, kSeat1,
+        kSeat1RestartedActivation, kSeat1SourceGeneration, L"snapshot");
     restartedSeat1ServerThread.join();
     if (!restartedSeat1ServerResult.ok ||
-        !snapshotShowsOnly(restartedSeat1Probe, 64, 1234, 128, -2345)) {
-        std::cerr << "restarted Seat 1 diagnostics: served="
+        !snapshotShowsOnly(restartedSeat1Probe, 7, 64, 1234, 128, -2345)) {
+        std::cerr << "restarted Seat 1 ABI diagnostics: served="
                   << restartedSeat1ServerResult.served
                   << " serverOk=" << restartedSeat1ServerResult.ok
                   << " launched=" << restartedSeat1Probe.launched
@@ -542,7 +626,7 @@ int main(int argc, char* argv[]) {
         SetEvent(seat2PollRelease.get());
         heldSeat2ProbeThread.join();
         heldSeat2ServerThread.join();
-        return fail("restarted Game A did not receive the new Seat 1 mapping", 43);
+        return fail("restarted Game A did not receive new ABI mapping", 43);
     }
 
     SetEvent(seat2PollRelease.get());
@@ -553,18 +637,19 @@ int main(int argc, char* argv[]) {
     backend.pollReleaseEvent = nullptr;
 
     if (!heldSeat2ServerResult.ok ||
-        !snapshotShowsOnly(heldSeat2Probe, 128, -2345, 64, 1234)) {
-        std::cerr << "held Seat 2 diagnostics: served=" << heldSeat2ServerResult.served
+        !snapshotShowsOnly(heldSeat2Probe, 9, 128, -2345, 64, 1234)) {
+        std::cerr << "held Seat 2 ABI diagnostics: served="
+                  << heldSeat2ServerResult.served
                   << " serverOk=" << heldSeat2ServerResult.ok
                   << " launched=" << heldSeat2Probe.launched
                   << " timedOut=" << heldSeat2Probe.timedOut
                   << " pid=" << heldSeat2Probe.processId
                   << " exit=" << heldSeat2Probe.exitCode
                   << " output=[" << heldSeat2Probe.output << "]\n";
-        return fail("Game B was disturbed by Seat 1 restart", 44);
+        return fail("Game B ABI process was disturbed by Seat 1 restart", 44);
     }
 
-    std::cout << "XInput process isolation harness passed\n";
+    std::cout << "XInput adapter process isolation harness passed\n";
     return 0;
 #else
     (void)argc;

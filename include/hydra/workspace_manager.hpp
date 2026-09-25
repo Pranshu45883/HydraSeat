@@ -5,8 +5,11 @@
 #include <unordered_map>
 #include <memory>
 #include <optional>
+#include <cstdint>
 
 namespace hydra {
+
+using SeatId = std::uint32_t;
 
 struct WorkspaceConfig {
     uint32_t workspaceId{1};

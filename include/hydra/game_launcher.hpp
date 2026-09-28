@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 
-#include "hydra/runtime_authority.hpp"
+#include "hydra/authority_bridge.hpp"
 #include "hydra/workspace_manager.hpp"
 
 namespace hydra {
@@ -31,8 +31,8 @@ struct GameProfile {
 class GameLauncher {
 public:
     GameLauncher() = default;
-    explicit GameLauncher(runtime::SessionController& controller) noexcept
-        : controller_(&controller) {}
+    explicit GameLauncher(runtime::AuthorityBridge& bridge) noexcept
+        : bridge_(&bridge) {}
     ~GameLauncher();
 
     GameLauncher(const GameLauncher&) = delete;
@@ -51,13 +51,13 @@ public:
 private:
     struct SeatProcess {
         std::uintptr_t processHandle{0};
-        runtime::ActivationToken token{};
         runtime::ProcessIdentity identity{};
+        runtime::ActivationToken token{};
     };
 
     static std::optional<std::size_t> seatIndex(std::uint32_t workspaceId) noexcept;
 
-    runtime::SessionController* controller_{nullptr};
+    runtime::AuthorityBridge* bridge_{nullptr};
     std::array<std::optional<SeatProcess>, 2> seatProcesses_{};
 };
 

@@ -15,6 +15,7 @@
 #include <fstream>
 
 void testControllerIdentity();
+void testAudioRouter();
 
 void testHardwareDetector() {
     hydra::HardwareDetector detector;
@@ -76,7 +77,7 @@ void testWorkspaceManager() {
 void testRuntimeAuthority() {
     hydra::runtime::SessionController controller;
 
-    const auto first = controller.beginSeatActivation(1);
+    const auto first = controller.acquireSeatLease(1, hydra::runtime::LeaseClass::UiConfiguration);
     assert(first.valid());
     assert(first.seatId == 1);
     const hydra::runtime::ProcessIdentity process{4242, 1001};
@@ -112,13 +113,13 @@ void testRuntimeAuthority() {
 
     auto snapshot = controller.snapshot(1);
     assert(snapshot.has_value());
-    assert(snapshot->active);
+    assert(snapshot->active());
     assert(snapshot->process == process);
     assert(snapshot->targetHwnd == 0x100);
     assert(snapshot->controllerBinding == seat1Controller);
 
     // Starting a new generation must never silently forget a live Seat.
-    const auto overlapping = controller.beginSeatActivation(1);
+    const auto overlapping = controller.acquireSeatLease(1, hydra::runtime::LeaseClass::UiConfiguration);
     assert(!overlapping.valid());
     snapshot = controller.snapshot(1);
     assert(snapshot.has_value());
@@ -127,7 +128,7 @@ void testRuntimeAuthority() {
     assert(snapshot->targetHwnd == 0x100);
     assert(snapshot->controllerBinding == seat1Controller);
 
-    const auto otherSeat = controller.beginSeatActivation(2);
+    const auto otherSeat = controller.acquireSeatLease(2, hydra::runtime::LeaseClass::UiConfiguration);
     assert(otherSeat.valid());
 
     // Machine-wide process/window ownership is exclusive across both Seats.
@@ -151,47 +152,47 @@ void testRuntimeAuthority() {
 
     const auto unsupportedPoll = controller.pollController(
         first, controllerInventory);
-    assert(unsupportedPoll.status == hydra::controller::IoStatus::UnsupportedApi);
+    assert(static_cast<int>(unsupportedPoll.status) == static_cast<int>(hydra::controller::IoStatus::UnsupportedApi));
 
     auto staleInventory = controllerInventory;
     ++staleInventory.sources[1].sourceGeneration;
-    assert(controller.pollController(otherSeat, staleInventory).status ==
-           hydra::controller::IoStatus::StaleBinding);
-    assert(controller.setControllerVibration(
-               otherSeat, staleInventory, std::uint16_t{0}, std::uint16_t{0}) ==
-           hydra::controller::IoStatus::StaleBinding);
+    assert(static_cast<int>(controller.pollController(otherSeat, staleInventory).status) ==
+           static_cast<int>(hydra::controller::IoStatus::StaleBinding));
+    assert(static_cast<int>(controller.setControllerVibration(
+               otherSeat, staleInventory, std::uint16_t{0}, std::uint16_t{0})) ==
+           static_cast<int>(hydra::controller::IoStatus::StaleBinding));
 
     const auto seat2Poll = controller.pollController(
         otherSeat, controllerInventory);
     const auto seat2Vibration = controller.setControllerVibration(
         otherSeat, controllerInventory, std::uint16_t{0}, std::uint16_t{0});
 #ifdef _WIN32
-    assert(seat2Poll.status == hydra::controller::IoStatus::Ok ||
-           seat2Poll.status == hydra::controller::IoStatus::Disconnected);
-    assert(seat2Vibration == hydra::controller::IoStatus::Ok ||
-           seat2Vibration == hydra::controller::IoStatus::Disconnected);
+    assert(static_cast<int>(seat2Poll.status) == static_cast<int>(hydra::controller::IoStatus::Ok) ||
+           static_cast<int>(seat2Poll.status) == static_cast<int>(hydra::controller::IoStatus::Disconnected));
+    assert(static_cast<int>(seat2Vibration) == static_cast<int>(hydra::controller::IoStatus::Ok) ||
+           static_cast<int>(seat2Vibration) == static_cast<int>(hydra::controller::IoStatus::Disconnected));
 #else
-    assert(seat2Poll.status == hydra::controller::IoStatus::PlatformUnavailable);
-    assert(seat2Vibration == hydra::controller::IoStatus::PlatformUnavailable);
+    assert(static_cast<int>(seat2Poll.status) == static_cast<int>(hydra::controller::IoStatus::PlatformUnavailable));
+    assert(static_cast<int>(seat2Vibration) == static_cast<int>(hydra::controller::IoStatus::PlatformUnavailable));
 #endif
 
-    assert(controller.endSeatActivation(first));
+    assert(controller.releaseSeatLease(first));
     snapshot = controller.snapshot(1);
     assert(snapshot.has_value());
-    assert(!snapshot->active);
+    assert(!snapshot->active());
     assert(!snapshot->process.has_value());
     assert(snapshot->targetHwnd == 0);
     assert(!snapshot->controllerBinding.has_value());
 
     // Restart is stop -> verified cleanup -> new generation.
-    const auto restarted = controller.beginSeatActivation(1);
+    const auto restarted = controller.acquireSeatLease(1, hydra::runtime::LeaseClass::UiConfiguration);
     assert(restarted.valid());
     assert(restarted.generation > first.generation);
     assert(!controller.publishProcess(first, process));
     assert(!controller.bindTargetWindow(first, process, 0x300));
     assert(!controller.bindController(
         first, seat1Controller, controllerInventory));
-    assert(!controller.endSeatActivation(first));
+    assert(!controller.releaseSeatLease(first));
 
     const hydra::runtime::ProcessIdentity replacement{5252, 2002};
     assert(controller.publishProcess(restarted, replacement));
@@ -199,20 +200,20 @@ void testRuntimeAuthority() {
 
     const auto seat2Snapshot = controller.snapshot(2);
     assert(seat2Snapshot.has_value());
-    assert(seat2Snapshot->active);
+    assert(seat2Snapshot->active());
     assert(seat2Snapshot->process == otherProcess);
     assert(seat2Snapshot->targetHwnd == 0x200);
     assert(seat2Snapshot->controllerBinding == seat2Controller);
 
-    assert(controller.endSeatActivation(restarted));
-    assert(controller.endSeatActivation(otherSeat));
-    assert(controller.pollController(otherSeat, controllerInventory).status ==
-           hydra::controller::IoStatus::InvalidBinding);
-    assert(controller.setControllerVibration(
+    assert(controller.releaseSeatLease(restarted));
+    assert(controller.releaseSeatLease(otherSeat));
+    assert(static_cast<int>(controller.pollController(otherSeat, controllerInventory).status) ==
+           static_cast<int>(hydra::controller::IoStatus::InvalidBinding));
+    assert(static_cast<int>(controller.setControllerVibration(
                otherSeat, controllerInventory,
-               std::uint16_t{0}, std::uint16_t{0}) ==
-           hydra::controller::IoStatus::InvalidBinding);
-    assert(!controller.beginSeatActivation(3).valid());
+               std::uint16_t{0}, std::uint16_t{0})) ==
+           static_cast<int>(hydra::controller::IoStatus::InvalidBinding));
+    assert(!controller.acquireSeatLease(3, hydra::runtime::LeaseClass::UiConfiguration).valid());
 
     std::cout << "[Test] RuntimeAuthority tests passed." << std::endl;
 }
@@ -406,8 +407,8 @@ void testAudioRouter() {
     SessionController controller;
     MockAudioRouter router;
     
-    const auto token1 = controller.beginSeatActivation(1);
-    const auto token2 = controller.beginSeatActivation(2);
+    const auto token1 = controller.acquireSeatLease(1, hydra::runtime::LeaseClass::UiConfiguration);
+    const auto token2 = controller.acquireSeatLease(2, hydra::runtime::LeaseClass::UiConfiguration);
     
     ProcessIdentity p1{100, 500};
     ProcessIdentity p2{200, 600};
@@ -425,29 +426,29 @@ void testAudioRouter() {
     assert(snap1->audioEndpoint && *snap1->audioEndpoint == e1);
     
     // Apply successful route
-    assert(controller.applyAudioRoute(token1, router) == AudioRouteStatus::Success);
+    assert(static_cast<int>(controller.applyAudioRoute(token1, router)) == static_cast<int>(AudioRouteStatus::Success));
     assert(router.lastAssignedProcess == p1);
     assert(router.lastAssignedEndpoint == e1);
     
     // Seat 1 reassigns to e3
     assert(controller.bindAudioEndpoint(token1, e3));
-    assert(controller.applyAudioRoute(token1, router) == AudioRouteStatus::Success);
+    assert(static_cast<int>(controller.applyAudioRoute(token1, router)) == static_cast<int>(AudioRouteStatus::Success));
     assert(router.lastAssignedEndpoint == e3);
     
     // Seat 2 gets e2
     assert(controller.bindAudioEndpoint(token2, e2));
-    assert(controller.applyAudioRoute(token2, router) == AudioRouteStatus::Success);
+    assert(static_cast<int>(controller.applyAudioRoute(token2, router)) == static_cast<int>(AudioRouteStatus::Success));
     assert(router.lastAssignedProcess == p2);
     assert(router.lastAssignedEndpoint == e2);
     
     // One seat cannot clear another seat's audio route because tokens are checked
-    assert(controller.clearAudioRoute(token2, router) == AudioRouteStatus::Success);
+    assert(static_cast<int>(controller.clearAudioRoute(token2, router)) == static_cast<int>(AudioRouteStatus::Success));
     assert(router.lastAssignedProcess == p2);
     assert(!router.lastAssignedEndpoint.has_value());
     
     // Failed route
     router.lastAssignStatus = AudioRouteStatus::OsApiError;
-    assert(controller.applyAudioRoute(token1, router) == AudioRouteStatus::OsApiError);
+    assert(static_cast<int>(controller.applyAudioRoute(token1, router)) == static_cast<int>(AudioRouteStatus::OsApiError));
     
     std::cout << "[Test] AudioRouter tests passed." << std::endl;
 }

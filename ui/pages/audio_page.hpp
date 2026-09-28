@@ -29,7 +29,7 @@ struct AudioSessionCard {
     uint32_t pid{0};
     uint64_t creationIdentity{0};
     hydra::windows::AudioSessionState state{hydra::windows::AudioSessionState::Unknown};
-    std::wstring endpointId;
+    std::optional<std::wstring> endpointStableId;
     std::optional<std::wstring> displayName;
 
     QFrame* frame{nullptr};
@@ -81,7 +81,7 @@ private:
     static QString resolveProcessName(uint32_t pid);
     static QPixmap resolveProcessIcon(uint32_t pid);
     static QString resolveEndpointFriendlyName(
-        const std::wstring& endpointId,
+        const std::optional<std::wstring>& endpointStableId,
         const std::vector<hydra::windows::AudioRenderEndpoint>& endpoints);
     static QString stateText(hydra::windows::AudioSessionState state);
 

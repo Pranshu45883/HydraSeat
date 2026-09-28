@@ -9,6 +9,7 @@
 #include "hydra/hardware_detector.hpp"
 #include "hydra/audio_endpoint_inventory.hpp"
 #include "hydra/audio_session_observer.hpp"
+#include "hydra/controller_inventory.hpp"
 
 namespace hydra::ui {
 
@@ -20,6 +21,7 @@ struct EngineStatePayload {
     std::vector<hydra::DeviceInfo> controllers;
     std::vector<hydra::windows::AudioRenderEndpoint> audioEndpoints;
     std::vector<hydra::windows::AudioSessionObservation> audioSessions;
+    hydra::controller::InventorySnapshot controllerInventory;
     bool hardwareError{false};
     bool audioEndpointError{false};
     bool audioSessionError{false};
@@ -39,6 +41,7 @@ signals:
 
 private:
     std::shared_ptr<hydra::HardwareDetector> m_hardwareDetector;
+    hydra::controller::ControllerInventory m_controllerInventory;
 };
 
 class EnginePoller : public QObject {

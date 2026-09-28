@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "hydra/runtime_authority.hpp"
+#include "hydra/authority_bridge.hpp"
 #include "hydra/audio_router.hpp"
 
 namespace hydra::ui {
@@ -14,33 +15,33 @@ namespace hydra::ui {
 class RoutingWorker : public QObject {
     Q_OBJECT
 public:
-    explicit RoutingWorker(std::shared_ptr<hydra::runtime::SessionController> sessionController);
+    explicit RoutingWorker(std::shared_ptr<hydra::runtime::AuthorityBridge> bridge);
     ~RoutingWorker() override = default;
 
 public slots:
-    void doRoute(uint32_t pid, const QString& endpointId);
-    void doReset(uint32_t pid);
+    void doRoute(uint32_t pid, uint64_t creationIdentity, const QString& endpointId);
+    void doReset(uint32_t pid, uint64_t creationIdentity);
 
 signals:
     void routingCompleted(uint32_t pid, bool success, const QString& errorMessage);
     void resetCompleted(uint32_t pid, bool success, const QString& errorMessage);
 
 private:
-    std::shared_ptr<hydra::runtime::SessionController> m_sessionController;
+    std::shared_ptr<hydra::runtime::AuthorityBridge> m_bridge;
 };
 
 class RoutingController : public QObject {
     Q_OBJECT
 public:
-    explicit RoutingController(std::shared_ptr<hydra::runtime::SessionController> sessionController, QObject* parent = nullptr);
+    explicit RoutingController(std::shared_ptr<hydra::runtime::AuthorityBridge> bridge, QObject* parent = nullptr);
     ~RoutingController() override;
 
-    void requestRoute(uint32_t pid, const QString& endpointId);
-    void requestReset(uint32_t pid);
+    void requestRoute(uint32_t pid, uint64_t creationIdentity, const QString& endpointId);
+    void requestReset(uint32_t pid, uint64_t creationIdentity);
 
 signals:
-    void triggerRoute(uint32_t pid, const QString& endpointId);
-    void triggerReset(uint32_t pid);
+    void triggerRoute(uint32_t pid, uint64_t creationIdentity, const QString& endpointId);
+    void triggerReset(uint32_t pid, uint64_t creationIdentity);
 
     void routingCompleted(uint32_t pid, bool success, const QString& errorMessage);
     void resetCompleted(uint32_t pid, bool success, const QString& errorMessage);

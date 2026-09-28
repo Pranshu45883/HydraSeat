@@ -73,6 +73,7 @@ set(HYDRA_SOURCES
     src/display_manager.cpp
     src/workspace_manager.cpp
     src/runtime_authority.cpp
+    src/authority_bridge.cpp
     src/controller_identity.cpp
     src/controller_inventory.cpp
     src/controller_io.cpp
@@ -89,6 +90,7 @@ set(HYDRA_HEADERS
     include/hydra/display_manager.hpp
     include/hydra/workspace_manager.hpp
     include/hydra/runtime_authority.hpp
+    include/hydra/authority_bridge.hpp
     include/hydra/process_identity.hpp
     include/hydra/controller_identity.hpp
     include/hydra/controller_inventory.hpp
@@ -152,6 +154,7 @@ if(WIN32)
         tests/test_game_launcher_process_ownership.cpp
         src/game_launcher.cpp
         src/runtime_authority.cpp
+        src/authority_bridge.cpp
         src/controller_identity.cpp
         src/controller_inventory.cpp
         src/controller_io.cpp

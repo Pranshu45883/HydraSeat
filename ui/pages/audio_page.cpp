@@ -56,13 +56,14 @@ QPixmap AudioPage::resolveProcessIcon(uint32_t pid) {
 }
 
 QString AudioPage::resolveEndpointFriendlyName(
-    const std::wstring& endpointId,
+    const std::optional<std::wstring>& id,
     const std::vector<hydra::windows::AudioRenderEndpoint>& endpoints)
 {
-    if (endpointId.empty()) return QStringLiteral("Not reported");
+    if (!id || id->empty()) return QStringLiteral("Not reported");
     for (const auto& ep : endpoints) {
-        if (ep.endpointId == endpointId)
+        if ((ep.stableId && ep.stableId == id) || ep.endpointId == *id) {
             return QString::fromStdWString(ep.friendlyName);
+        }
     }
     return QStringLiteral("Unknown endpoint");
 }
@@ -89,59 +90,61 @@ AudioPage::AudioPage(
     , m_routingController(routingController)
 {
     setStyleSheet(R"(
-        QWidget { background-color: #121212; color: #EEEEEE; }
+        QWidget { background-color: #0A0A0A; color: #F5F5F5; }
         QFrame#sessionCard {
-            background-color: #1C1C1E;
+            background-color: #151515;
             border-radius: 10px;
-            border: 1px solid #2A2A2C;
+            border: 1px solid #2A2A2A;
         }
         QFrame#endpointCard {
-            background-color: #1C1C1E;
+            background-color: #151515;
             border-radius: 8px;
-            border: 1px solid #2A2A2C;
+            border: 1px solid #2A2A2A;
         }
         QLineEdit {
-            background-color: #1C1C1E;
-            border: 1px solid #3A3A3C;
+            background-color: #202020;
+            border: 1px solid #2A2A2A;
             border-radius: 6px;
-            color: #EEEEEE;
+            color: #F5F5F5;
             padding: 6px 10px;
             font-size: 13px;
         }
-        QLineEdit:focus { border-color: #0A84FF; }
+        QLineEdit:focus { border-color: #E10600; }
         QComboBox {
-            background-color: #2C2C2E;
-            border: 1px solid #3A3A3C;
+            background-color: #202020;
+            border: 1px solid #2A2A2A;
             border-radius: 6px;
-            color: #EEEEEE;
+            color: #F5F5F5;
             padding: 5px 10px;
             font-size: 13px;
         }
         QComboBox::drop-down { border: none; }
         QComboBox QAbstractItemView {
-            background-color: #2C2C2E;
-            color: #EEEEEE;
-            selection-background-color: #0A84FF;
+            background-color: #202020;
+            color: #F5F5F5;
+            selection-background-color: #E10600;
         }
         QPushButton#routeBtn {
-            background-color: #0A84FF;
-            color: white;
+            background-color: #E10600;
+            color: #F5F5F5;
             border-radius: 6px;
             padding: 7px 16px;
             font-weight: bold;
             font-size: 13px;
+            border: none;
         }
-        QPushButton#routeBtn:hover { background-color: #2196F3; }
-        QPushButton#routeBtn:disabled { background-color: #3A3A3C; color: #888; }
+        QPushButton#routeBtn:hover { background-color: #FF1A1A; }
+        QPushButton#routeBtn:disabled { background-color: #202020; color: #777777; }
         QPushButton#resetBtn {
-            background-color: #3A3A3C;
-            color: #EEEEEE;
+            background-color: #202020;
+            color: #F5F5F5;
             border-radius: 6px;
             padding: 7px 16px;
             font-size: 13px;
+            border: none;
         }
-        QPushButton#resetBtn:hover { background-color: #4A4A4C; }
-        QPushButton#resetBtn:disabled { background-color: #2C2C2E; color: #666; }
+        QPushButton#resetBtn:hover { background-color: #292929; }
+        QPushButton#resetBtn:disabled { background-color: #151515; color: #777777; }
         QScrollArea { border: none; background-color: transparent; }
     )");
 
@@ -152,9 +155,9 @@ AudioPage::AudioPage(
     // --- Page header ---
     auto* headerLayout = new QVBoxLayout();
     auto* title = new QLabel(QStringLiteral("Audio Routing"), this);
-    title->setStyleSheet(QStringLiteral("font-size: 28px; font-weight: bold; color: white; margin-bottom: 4px;"));
+    title->setStyleSheet(QStringLiteral("font-size: 28px; font-weight: bold; color: #F5F5F5; margin-bottom: 4px;"));
     auto* subtitle = new QLabel(QStringLiteral("Manage per-application audio output assignments."), this);
-    subtitle->setStyleSheet(QStringLiteral("font-size: 13px; color: #888888; margin-bottom: 20px;"));
+    subtitle->setStyleSheet(QStringLiteral("font-size: 13px; color: #777777; margin-bottom: 20px;"));
     headerLayout->addWidget(title);
     headerLayout->addWidget(subtitle);
     outerLayout->addLayout(headerLayout);
@@ -192,9 +195,9 @@ AudioPage::AudioPage(
 
     auto* sessionsHeaderRow = new QHBoxLayout();
     auto* sessionsTitle = new QLabel(QStringLiteral("AUDIO SESSIONS"), sessionsContainer);
-    sessionsTitle->setStyleSheet(QStringLiteral("font-size: 11px; font-weight: bold; color: #888888; letter-spacing: 1px;"));
+    sessionsTitle->setStyleSheet(QStringLiteral("font-size: 11px; font-weight: bold; color: #777777; letter-spacing: 1px;"));
     m_sessionCountLabel = new QLabel(QStringLiteral(""), sessionsContainer);
-    m_sessionCountLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #888888;"));
+    m_sessionCountLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #777777;"));
     sessionsHeaderRow->addWidget(sessionsTitle);
     sessionsHeaderRow->addStretch();
     sessionsHeaderRow->addWidget(m_sessionCountLabel);
@@ -220,9 +223,9 @@ AudioPage::AudioPage(
 
     auto* outputsHeaderRow = new QHBoxLayout();
     auto* outputsTitle = new QLabel(QStringLiteral("AUDIO OUTPUTS"), outputsContainer);
-    outputsTitle->setStyleSheet(QStringLiteral("font-size: 11px; font-weight: bold; color: #888888; letter-spacing: 1px;"));
+    outputsTitle->setStyleSheet(QStringLiteral("font-size: 11px; font-weight: bold; color: #777777; letter-spacing: 1px;"));
     m_endpointCountLabel = new QLabel(QStringLiteral(""), outputsContainer);
-    m_endpointCountLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #888888;"));
+    m_endpointCountLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #777777;"));
     outputsHeaderRow->addWidget(outputsTitle);
     outputsHeaderRow->addStretch();
     outputsHeaderRow->addWidget(m_endpointCountLabel);
@@ -391,7 +394,7 @@ void AudioPage::buildSessionCard(
     card.creationIdentity = session.processIdentity
         ? session.processIdentity->creationIdentity : 0;
     card.state = session.state;
-    card.endpointId = session.endpointId;
+    card.endpointStableId = session.endpointStableId;
     card.displayName = session.displayName;
 
     auto* frame = new QFrame();
@@ -414,41 +417,41 @@ void AudioPage::buildSessionCard(
     }
 
     auto* nameLabel = new QLabel(processName, frame);
-    nameLabel->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: bold; color: #FFFFFF;"));
+    nameLabel->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: bold; color: #F5F5F5; border: none;"));
     topRow->addWidget(nameLabel, 1);
 
     bool isActive = (session.state == hydra::windows::AudioSessionState::Active);
     card.stateLabel = new QLabel(stateText(session.state), frame);
     card.stateLabel->setStyleSheet(
         isActive
-            ? QStringLiteral("font-size: 12px; font-weight: bold; color: #32D74B; background-color: #1A3A1A; padding: 3px 8px; border-radius: 4px;")
-            : QStringLiteral("font-size: 12px; font-weight: bold; color: #888888; background-color: #2A2A2C; padding: 3px 8px; border-radius: 4px;"));
+            ? QStringLiteral("font-size: 12px; font-weight: bold; color: #32D74B; background-color: #1A3A1A; padding: 3px 8px; border-radius: 4px; border: none;")
+            : QStringLiteral("font-size: 12px; font-weight: bold; color: #777777; background-color: #202020; padding: 3px 8px; border-radius: 4px; border: none;"));
     topRow->addWidget(card.stateLabel);
     cardLayout->addLayout(topRow);
 
     // --- PID + Current output ---
     QString currentOutputName = resolveEndpointFriendlyName(
-        session.endpointId, m_lastPayload.audioEndpoints);
+        session.endpointStableId, m_lastPayload.audioEndpoints);
     auto* metaLabel = new QLabel(
         QString("PID: %1").arg(session.processId), frame);
-    metaLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #888888;"));
+    metaLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #777777; border: none;"));
     cardLayout->addWidget(metaLabel);
 
     card.currentOutputLabel = new QLabel(
         QStringLiteral("Current Output: ") + currentOutputName, frame);
-    card.currentOutputLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #AAAAAA;"));
+    card.currentOutputLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #B5B5B5; border: none;"));
     cardLayout->addWidget(card.currentOutputLabel);
 
     // --- Separator ---
     auto* sep = new QFrame(frame);
     sep->setFrameShape(QFrame::HLine);
-    sep->setStyleSheet(QStringLiteral("color: #2A2A2C; background-color: #2A2A2C; max-height: 1px;"));
+    sep->setStyleSheet(QStringLiteral("color: #2A2A2A; background-color: #2A2A2A; max-height: 1px; border: none;"));
     cardLayout->addWidget(sep);
 
     // --- Endpoint dropdown ---
     auto* routeRow = new QHBoxLayout();
     auto* routeToLabel = new QLabel(QStringLiteral("Route to:"), frame);
-    routeToLabel->setStyleSheet(QStringLiteral("font-size: 13px; color: #CCCCCC;"));
+    routeToLabel->setStyleSheet(QStringLiteral("font-size: 13px; color: #B5B5B5; border: none;"));
     routeRow->addWidget(routeToLabel);
 
     card.endpointCombo = new QComboBox(frame);
@@ -462,7 +465,7 @@ void AudioPage::buildSessionCard(
     btnRow->addStretch();
 
     card.feedbackLabel = new QLabel(QStringLiteral(""), frame);
-    card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B;"));
+    card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B; border: none;"));
     card.feedbackLabel->setVisible(false);
     btnRow->addWidget(card.feedbackLabel);
 
@@ -541,16 +544,16 @@ bool AudioPage::tryUpdateExistingCard(
             card.stateLabel->setText(stateText(session.state));
             card.stateLabel->setStyleSheet(
                 isActive
-                    ? QStringLiteral("font-size: 12px; font-weight: bold; color: #32D74B; background-color: #1A3A1A; padding: 3px 8px; border-radius: 4px;")
-                    : QStringLiteral("font-size: 12px; font-weight: bold; color: #888888; background-color: #2A2A2C; padding: 3px 8px; border-radius: 4px;"));
+                    ? QStringLiteral("font-size: 12px; font-weight: bold; color: #32D74B; background-color: #1A3A1A; padding: 3px 8px; border-radius: 4px; border: none;")
+                    : QStringLiteral("font-size: 12px; font-weight: bold; color: #777777; background-color: #202020; padding: 3px 8px; border-radius: 4px; border: none;"));
         }
 
         // Update current output
-        if (card.endpointId != session.endpointId) {
-            card.endpointId = session.endpointId;
+        if (card.endpointStableId != session.endpointStableId) {
+            card.endpointStableId = session.endpointStableId;
             changed = true;
             QString currentOutputName = resolveEndpointFriendlyName(
-                session.endpointId, m_lastPayload.audioEndpoints);
+                session.endpointStableId, m_lastPayload.audioEndpoints);
             card.currentOutputLabel->setText(
                 QStringLiteral("Current Output: ") + currentOutputName);
         }
@@ -670,7 +673,7 @@ void AudioPage::renderSessions() {
             }
 
             auto* empty = new QLabel(emptyText, nullptr);
-            empty->setStyleSheet(QStringLiteral("color: #555555; font-size: 14px;"));
+            empty->setStyleSheet(QStringLiteral("color: #777777; font-size: 14px;"));
             empty->setAlignment(Qt::AlignCenter);
             m_sessionsLayout->addWidget(empty);
             m_sessionsLayout->addStretch();
@@ -716,7 +719,7 @@ void AudioPage::renderOutputs() {
 
     if (endpoints.empty()) {
         auto* lbl = new QLabel(QStringLiteral("No audio outputs detected."));
-        lbl->setStyleSheet(QStringLiteral("color: #555555; font-size: 13px;"));
+        lbl->setStyleSheet(QStringLiteral("color: #777777; font-size: 13px;"));
         m_outputsLayout->addWidget(lbl);
         m_outputsLayout->addStretch();
         return;
@@ -734,8 +737,8 @@ void AudioPage::renderOutputs() {
         auto* nameLabel = new QLabel(QString::fromStdWString(ep.friendlyName), frame);
         nameLabel->setStyleSheet(
             active
-                ? QStringLiteral("font-size: 14px; font-weight: bold; color: #FFFFFF;")
-                : QStringLiteral("font-size: 14px; font-weight: bold; color: #666666;"));
+                ? QStringLiteral("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;")
+                : QStringLiteral("font-size: 14px; font-weight: bold; color: #777777; border: none;"));
         nameLabel->setWordWrap(true);
         fl->addWidget(nameLabel);
 
@@ -748,7 +751,7 @@ void AudioPage::renderOutputs() {
                 break;
             case hydra::windows::AudioEndpointState::Disabled:
                 stateStr = QStringLiteral("○ Disabled");
-                stateColor = QStringLiteral("#FF453A");
+                stateColor = QStringLiteral("#E10600");
                 break;
             case hydra::windows::AudioEndpointState::Unplugged:
                 stateStr = QStringLiteral("○ Unplugged");
@@ -756,11 +759,11 @@ void AudioPage::renderOutputs() {
                 break;
             case hydra::windows::AudioEndpointState::NotPresent:
                 stateStr = QStringLiteral("○ Not Present");
-                stateColor = QStringLiteral("#555555");
+                stateColor = QStringLiteral("#777777");
                 break;
             default:
                 stateStr = QStringLiteral("? Unknown");
-                stateColor = QStringLiteral("#888888");
+                stateColor = QStringLiteral("#777777");
                 break;
         }
 
@@ -798,7 +801,7 @@ void AudioPage::onSearchOrFilterChanged() {
 // Routing actions
 // ---------------------------------------------------------------------------
 
-void AudioPage::onRouteRequested(uint32_t pid, uint64_t /*creationIdentity*/, const QString& endpointId) {
+void AudioPage::onRouteRequested(uint32_t pid, uint64_t creationIdentity, const QString& endpointId) {
     if (m_routingInProgress.value(pid, false)) return; // Prevent double-click
     m_routingInProgress[pid] = true;
 
@@ -815,10 +818,10 @@ void AudioPage::onRouteRequested(uint32_t pid, uint64_t /*creationIdentity*/, co
         }
     }
 
-    m_routingController->requestRoute(pid, endpointId);
+    m_routingController->requestRoute(pid, creationIdentity, endpointId);
 }
 
-void AudioPage::onResetRequested(uint32_t pid, uint64_t /*creationIdentity*/) {
+void AudioPage::onResetRequested(uint32_t pid, uint64_t creationIdentity) {
     if (m_routingInProgress.value(pid, false)) return;
     m_routingInProgress[pid] = true;
 
@@ -834,7 +837,7 @@ void AudioPage::onResetRequested(uint32_t pid, uint64_t /*creationIdentity*/) {
         }
     }
 
-    m_routingController->requestReset(pid);
+    m_routingController->requestReset(pid, creationIdentity);
 }
 
 void AudioPage::onRoutingCompleted(uint32_t pid, bool success, const QString& errorMessage) {
@@ -849,10 +852,10 @@ void AudioPage::onRoutingCompleted(uint32_t pid, bool success, const QString& er
                 QString epId = card.endpointCombo->currentData().toString();
                 QString epName = resolveEndpointFriendlyName(epId.toStdWString(), m_lastPayload.audioEndpoints);
                 card.feedbackLabel->setText(QStringLiteral("✓ Routed to ") + epName);
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B;"));
+                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B; border: none;"));
             } else {
                 card.feedbackLabel->setText(QStringLiteral("✕ Routing failed\n") + errorMessage);
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #FF453A;"));
+                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #E10600; border: none;"));
             }
             card.feedbackLabel->setVisible(true);
             // Auto-hide feedback after 5s
@@ -874,10 +877,10 @@ void AudioPage::onResetCompleted(uint32_t pid, bool success, const QString& erro
             card.endpointCombo->setEnabled(true);
             if (success) {
                 card.feedbackLabel->setText(QStringLiteral("✓ Routing reset"));
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B;"));
+                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B; border: none;"));
             } else {
                 card.feedbackLabel->setText(QStringLiteral("✕ Reset failed\n") + errorMessage);
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #FF453A;"));
+                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #E10600; border: none;"));
             }
             card.feedbackLabel->setVisible(true);
             QTimer::singleShot(5000, card.feedbackLabel, [lbl = card.feedbackLabel]() {

@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "hydra/runtime_authority.hpp"
+#include "hydra/authority_bridge.hpp"
 #include "hydra/hardware_detector.hpp"
 #include "ui/engine_poller.hpp"
 #include "ui/routing_controller.hpp"
@@ -19,7 +20,7 @@ class AppWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit AppWindow(QWidget* parent = nullptr);
+    explicit AppWindow(std::shared_ptr<hydra::runtime::SessionController> sessionController, QWidget* parent = nullptr);
     ~AppWindow() override;
 
 private slots:
@@ -32,6 +33,7 @@ private:
     
     // Core engine domain objects
     std::shared_ptr<hydra::runtime::SessionController> m_sessionController;
+    std::shared_ptr<hydra::runtime::AuthorityBridge> m_authorityBridge;
     std::shared_ptr<hydra::HardwareDetector> m_hardwareDetector;
     std::unique_ptr<EnginePoller> m_enginePoller;
     std::unique_ptr<RoutingController> m_routingController;

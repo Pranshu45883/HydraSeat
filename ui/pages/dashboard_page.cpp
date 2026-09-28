@@ -13,40 +13,40 @@ DashboardPage::DashboardPage(std::shared_ptr<hydra::runtime::SessionController> 
     layout->setSpacing(24);
 
     auto* title = new QLabel("Dashboard", this);
-    title->setStyleSheet("font-size: 28px; font-weight: bold; color: white;");
+    title->setStyleSheet("font-size: 28px; font-weight: bold; color: #F5F5F5;");
     layout->addWidget(title);
 
     // Stats Section
     auto* statsFrame = new QFrame(this);
-    statsFrame->setStyleSheet("background-color: #1A1A1A; border-radius: 8px; padding: 16px;");
+    statsFrame->setStyleSheet("background-color: #151515; border-radius: 8px; padding: 16px; border: 1px solid #2A2A2A;");
     auto* statsLayout = new QVBoxLayout(statsFrame);
     m_statsLabel = new QLabel("Loading statistics...", statsFrame);
-    m_statsLabel->setStyleSheet("font-size: 14px; line-height: 1.5; color: #CCCCCC;");
+    m_statsLabel->setStyleSheet("font-size: 14px; line-height: 1.5; color: #B5B5B5; border: none;");
     statsLayout->addWidget(m_statsLabel);
     layout->addWidget(statsFrame);
 
     // Seats Section
     auto* seatsTitle = new QLabel("Current Seats", this);
-    seatsTitle->setStyleSheet("font-size: 20px; font-weight: bold; color: white; margin-top: 16px;");
+    seatsTitle->setStyleSheet("font-size: 20px; font-weight: bold; color: #F5F5F5; margin-top: 16px;");
     layout->addWidget(seatsTitle);
 
     auto* seatsLayout = new QHBoxLayout();
     
     // Seat 1
     auto* seat1Frame = new QFrame(this);
-    seat1Frame->setStyleSheet("background-color: #1A1A1A; border-radius: 8px; padding: 16px;");
+    seat1Frame->setStyleSheet("background-color: #151515; border-radius: 8px; padding: 16px; border: 1px solid #2A2A2A;");
     auto* seat1Layout = new QVBoxLayout(seat1Frame);
     m_seat1Label = new QLabel("Loading Seat 1...", seat1Frame);
-    m_seat1Label->setStyleSheet("font-size: 14px; color: #CCCCCC;");
+    m_seat1Label->setStyleSheet("font-size: 14px; color: #B5B5B5; border: none;");
     seat1Layout->addWidget(m_seat1Label);
     seatsLayout->addWidget(seat1Frame);
 
     // Seat 2
     auto* seat2Frame = new QFrame(this);
-    seat2Frame->setStyleSheet("background-color: #1A1A1A; border-radius: 8px; padding: 16px;");
+    seat2Frame->setStyleSheet("background-color: #151515; border-radius: 8px; padding: 16px; border: 1px solid #2A2A2A;");
     auto* seat2Layout = new QVBoxLayout(seat2Frame);
     m_seat2Label = new QLabel("Loading Seat 2...", seat2Frame);
-    m_seat2Label->setStyleSheet("font-size: 14px; color: #CCCCCC;");
+    m_seat2Label->setStyleSheet("font-size: 14px; color: #B5B5B5; border: none;");
     seat2Layout->addWidget(m_seat2Label);
     seatsLayout->addWidget(seat2Frame);
 
@@ -59,8 +59,8 @@ QString DashboardPage::formatSeatInfo(uint32_t seatId) {
     if (!snapshot) return QString("Seat %1\n○ Unavailable").arg(seatId);
 
     QString text = QString("Seat %1\n").arg(seatId);
-    if (snapshot->active) {
-        text += "● ACTIVE\n\n";
+    if (snapshot->active()) {
+        text += "● AVAILABLE\n\n";
     } else {
         text += "○ AVAILABLE\n\n";
     }
@@ -91,8 +91,8 @@ void DashboardPage::updateState(const EngineStatePayload& payload) {
 
     // Active seats
     int activeSeats = 0;
-    if (auto s1 = m_sessionController->snapshot(1); s1 && s1->active) activeSeats++;
-    if (auto s2 = m_sessionController->snapshot(2); s2 && s2->active) activeSeats++;
+    if (auto s1 = m_sessionController->snapshot(1); s1 && s1->active()) activeSeats++;
+    if (auto s2 = m_sessionController->snapshot(2); s2 && s2->active()) activeSeats++;
 
     size_t inputCount = payload.keyboards.size() + payload.mice.size() + payload.controllers.size();
 

@@ -15,12 +15,12 @@
 
 namespace hydra::ui {
 
-AppWindow::AppWindow(QWidget* parent)
-    : QMainWindow(parent)
+AppWindow::AppWindow(std::shared_ptr<hydra::runtime::SessionController> sessionController, QWidget* parent)
+    : QMainWindow(parent), m_sessionController(std::move(sessionController))
 {
-    m_sessionController = std::make_shared<hydra::runtime::SessionController>();
+    m_authorityBridge = std::make_shared<hydra::runtime::AuthorityBridge>(m_sessionController);
     m_hardwareDetector = std::make_shared<hydra::HardwareDetector>();
-    m_routingController = std::make_unique<RoutingController>(m_sessionController, this);
+    m_routingController = std::make_unique<RoutingController>(m_authorityBridge, this);
     m_enginePoller = std::make_unique<EnginePoller>(m_hardwareDetector, this);
 
     setupUi();
@@ -36,13 +36,18 @@ void AppWindow::setupUi() {
     setWindowTitle("HydraSeat");
     resize(1024, 768);
 
-    // Dark-first visual style
     setStyleSheet(R"(
-        QMainWindow { background-color: #121212; color: #FFFFFF; }
-        QListWidget { background-color: #1E1E1E; color: #CCCCCC; border: none; font-size: 14px; }
+        QMainWindow { background-color: #0A0A0A; color: #F5F5F5; }
+        QListWidget { background-color: #111111; color: #B5B5B5; border: none; font-size: 14px; border-right: 1px solid #2A2A2A; }
         QListWidget::item { padding: 12px; }
-        QListWidget::item:selected { background-color: #3A3A3A; color: #FFFFFF; border-left: 4px solid #0078D7; }
-        QLabel { color: #FFFFFF; }
+        QListWidget::item:hover:!selected { background-color: #292929; color: #F5F5F5; }
+        QListWidget::item:selected { background-color: #151515; color: #FFFFFF; border-left: 4px solid #E10600; font-weight: bold; }
+        QLabel { color: #F5F5F5; }
+        QScrollBar:vertical { background: #111111; width: 12px; margin: 0px 0px 0px 0px; }
+        QScrollBar::handle:vertical { background: #2A2A2A; min-height: 20px; border-radius: 6px; }
+        QScrollBar::handle:vertical:hover { background: #E10600; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
     )");
 
     auto* centralWidget = new QWidget(this);
@@ -65,7 +70,7 @@ void AppWindow::setupUi() {
     
     // Instantiate Pages
     auto* dashboardPage = new DashboardPage(m_sessionController, m_workspaceStack);
-    auto* seatsPage = new SeatsPage(m_sessionController, m_workspaceStack);
+    auto* seatsPage = new SeatsPage(m_sessionController, m_authorityBridge, m_workspaceStack);
     auto* applicationsPage = new ApplicationsPage(m_sessionController, m_workspaceStack);
     auto* audioPage = new AudioPage(m_sessionController, m_routingController.get(), m_workspaceStack);
     auto* hardwarePage = new HardwarePage(m_sessionController, m_workspaceStack);
@@ -113,15 +118,15 @@ void AppWindow::setupSidebar() {
 
 void AppWindow::setupStatusbar() {
     auto* statusContainer = new QWidget(this);
-    statusContainer->setStyleSheet("background-color: #0A0A0A; border-top: 1px solid #333333; padding: 4px;");
+    statusContainer->setStyleSheet("background-color: #111111; border-top: 1px solid #2A2A2A; padding: 4px;");
     auto* statusLayout = new QHBoxLayout(statusContainer);
     statusLayout->setContentsMargins(16, 4, 16, 4);
 
     auto* brandLabel = new QLabel("HydraSeat Engine", statusContainer);
-    brandLabel->setStyleSheet("font-weight: bold; color: #888888;");
+    brandLabel->setStyleSheet("font-weight: bold; color: #777777; border: none;");
     
     m_statusLabel = new QLabel("● Running", statusContainer);
-    m_statusLabel->setStyleSheet("color: #00FF00; font-weight: bold;");
+    m_statusLabel->setStyleSheet("color: #E10600; font-weight: bold; border: none;");
 
     statusLayout->addWidget(brandLabel);
     statusLayout->addStretch();

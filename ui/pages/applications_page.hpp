@@ -18,6 +18,6 @@ private:
     QVBoxLayout* m_listLayout{nullptr};
     
     // Check if an app is bound to any seat
-    QString getAssignedSeat(uint32_t pid) const;
+    QString getAssignedSeat(const std::optional<hydra::runtime::ProcessIdentity>& identity) const;
 };
 } // namespace hydra::ui

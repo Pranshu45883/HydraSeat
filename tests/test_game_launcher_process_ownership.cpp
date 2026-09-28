@@ -1,5 +1,6 @@
 #include "hydra/game_launcher.hpp"
 #include "hydra/runtime_authority.hpp"
+#include "hydra/authority_bridge.hpp"
 #include "hydra/workspace_manager.hpp"
 
 #ifdef _WIN32
@@ -67,8 +68,9 @@ int wmain(int argc, wchar_t* argv[]) {
     hydra::WorkspaceConfig seat2{};
     seat2.workspaceId = 2;
 
-    hydra::runtime::SessionController controller;
-    hydra::GameLauncher launcher(controller);
+    auto controller = std::make_shared<hydra::runtime::SessionController>();
+    hydra::runtime::AuthorityBridge bridge(controller);
+    hydra::GameLauncher launcher(bridge);
 
     const auto event1Name = makeEventName(L"seat1");
     const auto event2Name = makeEventName(L"seat2");
@@ -76,7 +78,8 @@ int wmain(int argc, wchar_t* argv[]) {
     ScopedHandle event2{CreateEventW(nullptr, TRUE, FALSE, event2Name.c_str())};
     if (!check(event1.value && event2.value, "create readiness events")) return 3;
 
-    hydra::GameLauncher unboundLauncher;
+    hydra::runtime::AuthorityBridge unboundBridge(nullptr);
+    hydra::GameLauncher unboundLauncher(unboundBridge);
     if (!check(!unboundLauncher.launchGameForWorkspace(
                    childProfile(helperPath, event1Name), seat1),
                "launcher without runtime authority fails closed")) {
@@ -89,8 +92,8 @@ int wmain(int argc, wchar_t* argv[]) {
         return 5;
     }
     if (!check(waitReady(event1.value), "Seat 1 child becomes ready")) return 6;
-    const auto seat1Snapshot = controller.snapshot(1);
-    if (!check(seat1Snapshot && seat1Snapshot->active && seat1Snapshot->process,
+    const auto seat1Snapshot = controller->snapshot(1);
+    if (!check(seat1Snapshot && seat1Snapshot->active() && seat1Snapshot->process,
                "Seat 1 runtime owns launched process")) {
         return 7;
     }
@@ -111,8 +114,8 @@ int wmain(int argc, wchar_t* argv[]) {
         return 10;
     }
     if (!check(waitReady(event2.value), "Seat 2 child becomes ready")) return 11;
-    const auto seat2Snapshot = controller.snapshot(2);
-    if (!check(seat2Snapshot && seat2Snapshot->active && seat2Snapshot->process,
+    const auto seat2Snapshot = controller->snapshot(2);
+    if (!check(seat2Snapshot && seat2Snapshot->active() && seat2Snapshot->process,
                "Seat 2 runtime owns launched process")) {
         return 12;
     }
@@ -137,8 +140,8 @@ int wmain(int argc, wchar_t* argv[]) {
                "Seat 1 process exits after stop")) {
         return 18;
     }
-    const auto stoppedSeat1 = controller.snapshot(1);
-    if (!check(stoppedSeat1 && !stoppedSeat1->active && !stoppedSeat1->process,
+    const auto stoppedSeat1 = controller->snapshot(1);
+    if (!check(stoppedSeat1 && !stoppedSeat1->active() && !stoppedSeat1->process,
                "Seat 1 runtime is idle after verified stop")) {
         return 19;
     }
@@ -146,8 +149,8 @@ int wmain(int argc, wchar_t* argv[]) {
                "stopping Seat 1 leaves Seat 2 alive")) {
         return 20;
     }
-    const auto liveSeat2 = controller.snapshot(2);
-    if (!check(liveSeat2 && liveSeat2->active &&
+    const auto liveSeat2 = controller->snapshot(2);
+    if (!check(liveSeat2 && liveSeat2->active() &&
                    liveSeat2->process == seat2Snapshot->process,
                "stopping Seat 1 preserves Seat 2 ownership")) {
         return 21;
@@ -160,8 +163,8 @@ int wmain(int argc, wchar_t* argv[]) {
                "invalid executable launch fails")) {
         return 22;
     }
-    const auto rolledBack = controller.snapshot(1);
-    if (!check(rolledBack && !rolledBack->active && !rolledBack->process,
+    const auto rolledBack = controller->snapshot(1);
+    if (!check(rolledBack && !rolledBack->active() && !rolledBack->process,
                "failed process creation rolls Seat 1 back to idle")) {
         return 23;
     }
@@ -174,10 +177,11 @@ int wmain(int argc, wchar_t* argv[]) {
     if (!check(!launcher.stopWorkspaceGame(2), "second Seat 2 stop is rejected")) return 26;
     if (!check(!launcher.stopWorkspaceGame(3), "invalid Seat stop is rejected")) return 27;
 
-    hydra::runtime::SessionController destructorController;
+    auto destructorController = std::make_shared<hydra::runtime::SessionController>();
     ScopedHandle destructorProcess;
     {
-        hydra::GameLauncher scopedLauncher(destructorController);
+        hydra::runtime::AuthorityBridge destructorBridge(destructorController);
+        hydra::GameLauncher scopedLauncher(destructorBridge);
         const auto event3Name = makeEventName(L"destructor");
         ScopedHandle event3{CreateEventW(nullptr, TRUE, FALSE, event3Name.c_str())};
         if (!check(event3.value != nullptr, "create destructor readiness event")) return 28;
@@ -187,8 +191,8 @@ int wmain(int argc, wchar_t* argv[]) {
             return 29;
         }
         if (!check(waitReady(event3.value), "destructor-owned child becomes ready")) return 30;
-        const auto snapshot = destructorController.snapshot(1);
-        if (!check(snapshot && snapshot->active && snapshot->process,
+        const auto snapshot = destructorController->snapshot(1);
+        if (!check(snapshot && snapshot->active() && snapshot->process,
                    "destructor test runtime owns child")) {
             return 31;
         }
@@ -202,12 +206,43 @@ int wmain(int argc, wchar_t* argv[]) {
                "launcher destruction stops retained child")) {
         return 33;
     }
-    const auto destructorSnapshot = destructorController.snapshot(1);
-    if (!check(destructorSnapshot && !destructorSnapshot->active &&
+    const auto destructorSnapshot = destructorController->snapshot(1);
+    if (!check(destructorSnapshot && !destructorSnapshot->active() &&
                    !destructorSnapshot->process,
                "launcher destruction ends activation after verified cleanup")) {
         return 34;
     }
+
+    // Concurrent UI and GameLauncher lease test
+    if (!check(bridge.requestUiLease(1), "UI requests lease on idle Seat 1")) return 35;
+    const auto uiLeaseSnapshot = controller->snapshot(1);
+    if (!check(uiLeaseSnapshot && uiLeaseSnapshot->active() && uiLeaseSnapshot->uiLeaseActive && !uiLeaseSnapshot->gameLeaseActive, "Seat 1 is active with UI lease only")) return 36;
+    
+    if (!check(!bridge.requestUiLease(1), "UI duplicate lease request fails securely")) return 37;
+
+    const auto event4Name = makeEventName(L"concurrent");
+    ScopedHandle event4{CreateEventW(nullptr, TRUE, FALSE, event4Name.c_str())};
+    
+    if (!check(launcher.launchGameForWorkspace(childProfile(helperPath, event4Name), seat1), "GameLauncher attaches to UI-owned Seat 1")) return 38;
+    if (!check(waitReady(event4.value), "Concurrent child becomes ready")) return 39;
+    
+    const auto concurrentSnapshot = controller->snapshot(1);
+    if (!check(concurrentSnapshot && concurrentSnapshot->active() && concurrentSnapshot->uiLeaseActive && concurrentSnapshot->gameLeaseActive && concurrentSnapshot->process, "Seat 1 has both UI and Game leases active")) return 40;
+
+    if (!check(bridge.releaseUiLease(1), "UI releases lease on Seat 1")) return 41;
+    
+    const auto gameOnlySnapshot = controller->snapshot(1);
+    if (!check(gameOnlySnapshot && gameOnlySnapshot->active() && !gameOnlySnapshot->uiLeaseActive && gameOnlySnapshot->gameLeaseActive, "Seat 1 remains active with Game lease only")) return 42;
+    
+    ScopedHandle gameOnlyProcess{OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, gameOnlySnapshot->process->pid)};
+    if (!check(processStillRunning(gameOnlyProcess.value), "Game process still running after UI lease released")) return 43;
+
+    if (!check(launcher.stopWorkspaceGame(1), "stop Seat 1 exact process")) return 44;
+    
+    if (!check(WaitForSingleObject(gameOnlyProcess.value, 5000) == WAIT_OBJECT_0, "Game process exits after GameLauncher stop")) return 45;
+    
+    const auto idleSnapshot = controller->snapshot(1);
+    if (!check(idleSnapshot && !idleSnapshot->active() && !idleSnapshot->uiLeaseActive && !idleSnapshot->gameLeaseActive, "Seat 1 becomes fully idle after all leases released")) return 46;
 
     std::cout << "GameLauncher process ownership test passed\n";
     return 0;

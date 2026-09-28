@@ -6,21 +6,34 @@ namespace hydra::runtime {
 
 SeatRuntime::SeatRuntime(std::uint32_t seatId) noexcept : seatId_(seatId) {}
 
-ActivationToken SeatRuntime::beginActivation() noexcept {
+ActivationToken SeatRuntime::acquireLease(LeaseClass leaseClass) noexcept {
     std::lock_guard lock(mutex_);
-    if ((seatId_ != 1 && seatId_ != 2) ||
-        active_ ||
-        generation_ == std::numeric_limits<std::uint64_t>::max()) {
+    if (seatId_ != 1 && seatId_ != 2) {
         return {};
     }
 
-    ++generation_;
-    active_ = true;
-    process_.reset();
-    targetHwnd_ = 0;
-    controllerBinding_.reset();
-    audioEndpoint_.reset();
-    return {seatId_, generation_};
+    if (!uiLeaseActive_ && !gameLeaseActive_) {
+        if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
+            return {};
+        }
+        ++generation_;
+        process_.reset();
+        targetHwnd_ = 0;
+        controllerBinding_.reset();
+        audioEndpoint_.reset();
+    }
+
+    if (leaseClass == LeaseClass::UiConfiguration) {
+        if (uiLeaseActive_) return {};
+        uiLeaseActive_ = true;
+    } else if (leaseClass == LeaseClass::GameProcess) {
+        if (gameLeaseActive_) return {};
+        gameLeaseActive_ = true;
+    } else {
+        return {};
+    }
+
+    return {seatId_, generation_, leaseClass};
 }
 
 bool SeatRuntime::publishProcess(const ActivationToken& token,
@@ -66,7 +79,6 @@ bool SeatRuntime::bindAudioEndpoint(const ActivationToken& token,
     std::lock_guard lock(mutex_);
     if (!ownsTokenLocked(token)) return false;
     
-    // Audio endpoints are allowed to be reassigned during the same activation
     audioEndpoint_ = endpoint;
     return true;
 }
@@ -78,32 +90,43 @@ bool SeatRuntime::clearAudioEndpoint(const ActivationToken& token) noexcept {
     return true;
 }
 
-bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
+bool SeatRuntime::releaseLease(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     if (!ownsTokenLocked(token)) return false;
 
-    active_ = false;
-    process_.reset();
-    targetHwnd_ = 0;
-    controllerBinding_.reset();
-    audioEndpoint_.reset();
+    if (token.leaseClass == LeaseClass::UiConfiguration) {
+        uiLeaseActive_ = false;
+    } else if (token.leaseClass == LeaseClass::GameProcess) {
+        gameLeaseActive_ = false;
+    }
+
+    if (!uiLeaseActive_ && !gameLeaseActive_) {
+        process_.reset();
+        targetHwnd_ = 0;
+        controllerBinding_.reset();
+        audioEndpoint_.reset();
+    }
     return true;
 }
 
 SeatRuntimeSnapshot SeatRuntime::snapshot() const noexcept {
     std::lock_guard lock(mutex_);
-    return {seatId_, generation_, active_, process_, targetHwnd_, controllerBinding_, audioEndpoint_};
+    return {seatId_, generation_, uiLeaseActive_, gameLeaseActive_, process_, targetHwnd_, controllerBinding_, audioEndpoint_};
 }
 
 bool SeatRuntime::ownsTokenLocked(const ActivationToken& token) const noexcept {
-    return active_ && token.valid() && token.seatId == seatId_ &&
-           token.generation == generation_;
+    if (!token.valid() || token.seatId != seatId_ || token.generation != generation_) {
+        return false;
+    }
+    if (token.leaseClass == LeaseClass::UiConfiguration) return uiLeaseActive_;
+    if (token.leaseClass == LeaseClass::GameProcess) return gameLeaseActive_;
+    return false;
 }
 
-ActivationToken SessionController::beginSeatActivation(std::uint32_t seatId) noexcept {
+ActivationToken SessionController::acquireSeatLease(std::uint32_t seatId, LeaseClass leaseClass) noexcept {
     std::lock_guard lock(mutex_);
     const auto runtime = seat(seatId);
-    return runtime ? runtime->beginActivation() : ActivationToken{};
+    return runtime ? runtime->acquireLease(leaseClass) : ActivationToken{};
 }
 
 bool SessionController::publishProcess(const ActivationToken& token,
@@ -116,7 +139,7 @@ bool SessionController::publishProcess(const ActivationToken& token,
     if (!runtime || !other) return false;
 
     const auto otherSnapshot = other->snapshot();
-    if (otherSnapshot.active && otherSnapshot.process == process) return false;
+    if (otherSnapshot.active() && otherSnapshot.process == process) return false;
 
     return runtime->publishProcess(token, process);
 }
@@ -132,7 +155,7 @@ bool SessionController::bindTargetWindow(const ActivationToken& token,
     if (!runtime || !other) return false;
 
     const auto otherSnapshot = other->snapshot();
-    if (otherSnapshot.active && otherSnapshot.targetHwnd == hwnd) return false;
+    if (otherSnapshot.active() && otherSnapshot.targetHwnd == hwnd) return false;
 
     return runtime->bindTargetWindow(token, owner, hwnd);
 }
@@ -152,7 +175,7 @@ bool SessionController::bindController(
     if (!runtime || !other) return false;
 
     const auto otherSnapshot = other->snapshot();
-    if (otherSnapshot.active && otherSnapshot.controllerBinding &&
+    if (otherSnapshot.active() && otherSnapshot.controllerBinding &&
         controller::sameControllerSource(*otherSnapshot.controllerBinding, binding)) {
         return false;
     }
@@ -171,7 +194,7 @@ bool SessionController::bindAudioEndpoint(
     if (!runtime || !other) return false;
 
     const auto otherSnapshot = other->snapshot();
-    if (otherSnapshot.active && otherSnapshot.audioEndpoint &&
+    if (otherSnapshot.active() && otherSnapshot.audioEndpoint &&
         *otherSnapshot.audioEndpoint == endpoint) {
         // Technically an endpoint could be routed twice to different processes in Windows,
         // but for HydraSeat we might want to restrict to one process per endpoint.
@@ -192,7 +215,7 @@ AudioRouteStatus SessionController::applyAudioRoute(const ActivationToken& token
     if (!runtime) return AudioRouteStatus::InvalidProcess;
 
     const auto current = runtime->snapshot();
-    if (!current.active || current.generation != token.generation ||
+    if (!current.active() || current.generation != token.generation ||
         !current.process || !current.audioEndpoint) {
         return AudioRouteStatus::RoutingFailed;
     }
@@ -208,7 +231,7 @@ AudioRouteStatus SessionController::clearAudioRoute(const ActivationToken& token
     if (!runtime) return AudioRouteStatus::InvalidProcess;
 
     const auto current = runtime->snapshot();
-    if (!current.active || current.generation != token.generation ||
+    if (!current.active() || current.generation != token.generation ||
         !current.process) {
         return AudioRouteStatus::RoutingFailed;
     }
@@ -230,7 +253,7 @@ controller::PollResult SessionController::pollController(
     if (!runtime) return {controller::IoStatus::InvalidBinding, std::nullopt};
 
     const auto current = runtime->snapshot();
-    if (!current.active || current.generation != token.generation ||
+    if (!current.active() || current.generation != token.generation ||
         !current.controllerBinding) {
         return {controller::IoStatus::InvalidBinding, std::nullopt};
     }
@@ -249,7 +272,7 @@ controller::IoStatus SessionController::setControllerVibration(
     if (!runtime) return controller::IoStatus::InvalidBinding;
 
     const auto current = runtime->snapshot();
-    if (!current.active || current.generation != token.generation ||
+    if (!current.active() || current.generation != token.generation ||
         !current.controllerBinding) {
         return controller::IoStatus::InvalidBinding;
     }
@@ -258,10 +281,10 @@ controller::IoStatus SessionController::setControllerVibration(
         lowFrequencyMotor, highFrequencyMotor);
 }
 
-bool SessionController::endSeatActivation(const ActivationToken& token) noexcept {
+bool SessionController::releaseSeatLease(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
-    return runtime && runtime->endActivation(token);
+    return runtime && runtime->releaseLease(token);
 }
 
 std::optional<SeatRuntimeSnapshot> SessionController::snapshot(

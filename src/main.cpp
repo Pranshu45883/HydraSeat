@@ -22,7 +22,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
 #ifdef HYDRA_HAS_QT
     QApplication app(__argc, __argv);
-    hydra::ui::AppWindow window;
+    auto sessionController = std::make_shared<hydra::runtime::SessionController>();
+    hydra::ui::AppWindow window(sessionController);
     window.show();
     return app.exec();
 #else

@@ -1,0 +1,19 @@
+{
+  "version": "1.1",
+  "workspaces": [
+    {
+      "id": 1,
+      "display": "\\\\.\\DISPLAY1",
+      "keyboard": "",
+      "mouse": "",
+      "controllerId": "container-a"
+    },
+    {
+      "id": 2,
+      "display": "",
+      "keyboard": "",
+      "mouse": "",
+      "controllerId": ""
+    }
+  ]
+}

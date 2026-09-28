@@ -70,12 +70,12 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
                                           const WorkspaceConfig& workspace) {
 #ifdef _WIN32
     const auto index = seatIndex(workspace.workspaceId);
-    if (!controller_ || !index || game.executablePath.empty() || seatProcesses_[*index]) {
+    if (!bridge_ || !index || game.executablePath.empty() || seatProcesses_[*index]) {
         return false;
     }
 
-    const auto token = controller_->beginSeatActivation(workspace.workspaceId);
-    if (!token.valid()) return false;
+    const auto tokenOpt = bridge_->acquireGameLease(workspace.workspaceId);
+    if (!tokenOpt) return false;
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -97,14 +97,14 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
         &processInfo);
 
     if (!created) {
-        controller_->endSeatActivation(token);
+        bridge_->releaseGameLease(*tokenOpt);
         return false;
     }
 
     seatProcesses_[*index] = SeatProcess{
         fromNativeHandle(processInfo.hProcess),
-        token,
-        {}};
+        {},
+        *tokenOpt};
 
     const auto rollback = [&]() {
         if (processInfo.hThread) {
@@ -122,7 +122,7 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
     }
 
     seatProcesses_[*index]->identity = identity;
-    if (!controller_->publishProcess(token, identity)) {
+    if (!bridge_->publishProcess(*tokenOpt, identity)) {
         rollback();
         return false;
     }
@@ -149,7 +149,7 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
 bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
 #ifdef _WIN32
     const auto index = seatIndex(workspaceId);
-    if (!controller_ || !index || !seatProcesses_[*index]) return false;
+    if (!bridge_ || !index || !seatProcesses_[*index]) return false;
 
     auto& session = *seatProcesses_[*index];
     HANDLE process = toNativeHandle(session.processHandle);
@@ -165,7 +165,7 @@ bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
         return false;
     }
 
-    if (!controller_->endSeatActivation(session.token)) {
+    if (!bridge_->releaseGameLease(session.token)) {
         return false;
     }
 

@@ -1,5 +1,7 @@
 #include "ui/engine_poller.hpp"
 #include <QTimer>
+#include <windows.h>
+#include <objbase.h>
 
 namespace hydra::ui {
 
@@ -8,6 +10,21 @@ EnginePollerWorker::EnginePollerWorker(std::shared_ptr<hydra::HardwareDetector> 
 
 void EnginePollerWorker::doPoll() {
     EngineStatePayload payload;
+
+    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool comInitialized = SUCCEEDED(hr);
+    if (!comInitialized) {
+        payload.hardwareError = true;
+        payload.audioEndpointError = true;
+        payload.audioSessionError = true;
+        emit pollCompleted(payload);
+        return;
+    }
+
+    struct ComUninitializer {
+        bool active;
+        ~ComUninitializer() { if (active) CoUninitialize(); }
+    } comUninit{comInitialized};
 
     // Hardware polling
     if (m_hardwareDetector) {
@@ -37,6 +54,9 @@ void EnginePollerWorker::doPoll() {
     } else {
         payload.audioSessionError = true;
     }
+
+    // Controller Inventory Polling
+    payload.controllerInventory = m_controllerInventory.scan();
 
     emit pollCompleted(payload);
 }

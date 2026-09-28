@@ -10,11 +10,17 @@
 
 namespace hydra::runtime {
 
+enum class LeaseClass : std::uint8_t {
+    UiConfiguration = 1,
+    GameProcess = 2,
+};
+
 // Every Seat activation receives a new generation. Async/stale work must present
-// the exact token before it can publish process or window state.
+// the exact token and lease class before it can publish process or window state.
 struct ActivationToken {
     std::uint32_t seatId{0};
     std::uint64_t generation{0};
+    LeaseClass leaseClass{LeaseClass::UiConfiguration};
 
     bool valid() const noexcept {
         return (seatId == 1 || seatId == 2) && generation != 0;
@@ -26,12 +32,14 @@ struct ActivationToken {
 struct SeatRuntimeSnapshot {
     std::uint32_t seatId{0};
     std::uint64_t generation{0};
-    bool active{false};
+    bool uiLeaseActive{false};
+    bool gameLeaseActive{false};
     std::optional<ProcessIdentity> process;
     std::uintptr_t targetHwnd{0};
     std::optional<controller::SeatBinding> controllerBinding;
     std::optional<AudioEndpointIdentity> audioEndpoint;
 
+    bool active() const noexcept { return uiLeaseActive || gameLeaseActive; }
     bool operator==(const SeatRuntimeSnapshot&) const = default;
 };
 
@@ -39,7 +47,7 @@ class SeatRuntime final {
 public:
     explicit SeatRuntime(std::uint32_t seatId) noexcept;
 
-    ActivationToken beginActivation() noexcept;
+    ActivationToken acquireLease(LeaseClass leaseClass) noexcept;
     bool publishProcess(const ActivationToken& token,
                         const ProcessIdentity& process) noexcept;
     bool bindTargetWindow(const ActivationToken& token,
@@ -50,7 +58,7 @@ public:
     bool bindAudioEndpoint(const ActivationToken& token,
                            const AudioEndpointIdentity& endpoint) noexcept;
     bool clearAudioEndpoint(const ActivationToken& token) noexcept;
-    bool endActivation(const ActivationToken& token) noexcept;
+    bool releaseLease(const ActivationToken& token) noexcept;
     SeatRuntimeSnapshot snapshot() const noexcept;
 
 private:
@@ -59,7 +67,8 @@ private:
     const std::uint32_t seatId_;
     mutable std::mutex mutex_;
     std::uint64_t generation_{0};
-    bool active_{false};
+    bool uiLeaseActive_{false};
+    bool gameLeaseActive_{false};
     std::optional<ProcessIdentity> process_;
     std::uintptr_t targetHwnd_{0};
     std::optional<controller::SeatBinding> controllerBinding_;
@@ -70,7 +79,7 @@ class SessionController final {
 public:
     SessionController() noexcept = default;
 
-    ActivationToken beginSeatActivation(std::uint32_t seatId) noexcept;
+    ActivationToken acquireSeatLease(std::uint32_t seatId, LeaseClass leaseClass) noexcept;
     bool publishProcess(const ActivationToken& token,
                         const ProcessIdentity& process) noexcept;
     bool bindTargetWindow(const ActivationToken& token,
@@ -93,7 +102,7 @@ public:
         const controller::InventorySnapshot& inventory,
         std::uint16_t lowFrequencyMotor,
         std::uint16_t highFrequencyMotor) noexcept;
-    bool endSeatActivation(const ActivationToken& token) noexcept;
+    bool releaseSeatLease(const ActivationToken& token) noexcept;
     std::optional<SeatRuntimeSnapshot> snapshot(std::uint32_t seatId) const noexcept;
 
 private:

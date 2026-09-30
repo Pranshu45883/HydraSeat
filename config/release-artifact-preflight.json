@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "product": "HydraSeat",
+  "architecture": "x64",
+  "releaseSigningManifestPath": "config/release-signing-manifest.json",
+  "releaseScopePath": "config/release-scope-v1.json",
+  "legal": {
+    "projectLicenseState": "Unresolved",
+    "distributionNoticesState": "Unresolved"
+  },
+  "limits": {
+    "maximumArtifactBytes": 1073741824,
+    "maximumManifestBytes": 1048576,
+    "maximumPackagedFiles": 16
+  },
+  "artifacts": [
+    {
+      "id": "main-ui",
+      "componentRole": "ApplicationUI",
+      "packagePath": "x64/HydraSeat.exe"
+    },
+    {
+      "id": "host",
+      "componentRole": "AuthoritativeHost",
+      "packagePath": "x64/hydra_host.exe"
+    },
+    {
+      "id": "seat-ui",
+      "componentRole": "SeatUI",
+      "packagePath": "x64/hydra_seat_ui.exe"
+    },
+    {
+      "id": "watchdog",
+      "componentRole": "RecoveryWatchdog",
+      "packagePath": "x64/hydra_watchdog.exe"
+    },
+    {
+      "id": "reset",
+      "componentRole": "RecoveryReset",
+      "packagePath": "x64/hydra_reset.exe"
+    },
+    {
+      "id": "profile-cli",
+      "componentRole": "ProfileCLI",
+      "packagePath": "x64/hydraseat_profilectl.exe"
+    },
+    {
+      "id": "community-validator",
+      "componentRole": "CommunityValidator",
+      "packagePath": "x64/hydraseat_community_validate.exe"
+    },
+    {
+      "id": "installer-script",
+      "componentRole": "Installer",
+      "packagePath": "x64/install_hydraseat.ps1"
+    }
+  ],
+  "thirdPartyRedistributables": []
+}

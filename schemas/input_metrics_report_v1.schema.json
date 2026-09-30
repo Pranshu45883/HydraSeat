@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydraseat.invalid/schemas/input_metrics_report_v1.schema.json",
+  "title": "HydraSeat Input Metrics Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trace_samples",
+    "unique_input_events",
+    "complete_input_events",
+    "missing_stage_events",
+    "receiver_verified_events",
+    "missing_receiver_evidence_events",
+    "cross_seat_events",
+    "cross_process_events",
+    "event_classes",
+    "queue",
+    "recorder",
+    "latency",
+    "resource"
+  ],
+  "$defs": {
+    "percentiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "p50_us", "p95_us", "p99_us", "max_us"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "p50_us": { "type": "integer", "minimum": 0 },
+        "p95_us": { "type": "integer", "minimum": 0 },
+        "p99_us": { "type": "integer", "minimum": 0 },
+        "max_us": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": 1 },
+    "trace_samples": { "type": "integer", "minimum": 0 },
+    "unique_input_events": { "type": "integer", "minimum": 0 },
+    "complete_input_events": { "type": "integer", "minimum": 0 },
+    "missing_stage_events": { "type": "integer", "minimum": 0 },
+    "receiver_verified_events": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Events with target apply/query evidence for both receiving Seat and process identity"
+    },
+    "missing_receiver_evidence_events": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Input events without verified target receiver identity; zero cross counters are not zero-bleed proof while this is nonzero"
+    },
+    "cross_seat_events": { "type": "integer", "minimum": 0 },
+    "cross_process_events": { "type": "integer", "minimum": 0 },
+    "event_classes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "button", "movement", "wheel"],
+      "properties": {
+        "key": { "type": "integer", "minimum": 0 },
+        "button": { "type": "integer", "minimum": 0 },
+        "movement": { "type": "integer", "minimum": 0 },
+        "wheel": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["high_water", "dropped_frames"],
+      "properties": {
+        "high_water": { "type": "integer", "minimum": 0 },
+        "dropped_frames": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "recorder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rotation_drops", "contention_drops", "invalid_samples"],
+      "properties": {
+        "rotation_drops": { "type": "integer", "minimum": 0 },
+        "contention_drops": { "type": "integer", "minimum": 0 },
+        "invalid_samples": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observation_to_enqueue",
+        "enqueue_to_dequeue",
+        "dequeue_to_write",
+        "write_to_apply",
+        "apply_to_query",
+        "end_to_end",
+        "rollback"
+      ],
+      "properties": {
+        "observation_to_enqueue": { "$ref": "#/$defs/percentiles" },
+        "enqueue_to_dequeue": { "$ref": "#/$defs/percentiles" },
+        "dequeue_to_write": { "$ref": "#/$defs/percentiles" },
+        "write_to_apply": { "$ref": "#/$defs/percentiles" },
+        "apply_to_query": { "$ref": "#/$defs/percentiles" },
+        "end_to_end": { "$ref": "#/$defs/percentiles" },
+        "rollback": { "$ref": "#/$defs/percentiles" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["samples", "last_host_cpu_time_us", "max_host_working_set_bytes"],
+      "properties": {
+        "samples": { "type": "integer", "minimum": 0 },
+        "last_host_cpu_time_us": { "type": "integer", "minimum": 0 },
+        "max_host_working_set_bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

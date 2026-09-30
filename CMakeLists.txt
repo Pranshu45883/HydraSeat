@@ -482,6 +482,47 @@ target_link_libraries(audio_routing_contract_tests PRIVATE
 )
 add_test(NAME AudioRoutingContractTests COMMAND audio_routing_contract_tests)
 
+# Canonical Seat/profile/provider foundation. This activates the previously
+# preserved backend schema/provider code without changing the legacy UI model.
+add_library(hydra_profile_provider_foundation STATIC
+    src/profile_schema.cpp
+    src/game_catalog.cpp
+    src/provider_adapter.cpp
+    src/custom_executable_provider.cpp
+    src/steam_provider.cpp
+)
+target_include_directories(hydra_profile_provider_foundation PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_profile_provider_foundation PUBLIC ${WIN32_LIBS})
+endif()
+
+add_executable(profile_schema_tests tests/test_profile_schema.cpp)
+target_link_libraries(profile_schema_tests PRIVATE hydra_profile_provider_foundation)
+add_test(NAME ProfileSchemaTests COMMAND profile_schema_tests)
+
+add_executable(provider_adapter_tests tests/test_provider_adapter.cpp)
+target_link_libraries(provider_adapter_tests PRIVATE hydra_profile_provider_foundation)
+add_test(NAME ProviderAdapterTests COMMAND provider_adapter_tests)
+
+add_executable(custom_executable_provider_tests
+    tests/test_custom_executable_provider.cpp
+)
+target_link_libraries(custom_executable_provider_tests PRIVATE
+    hydra_profile_provider_foundation
+)
+add_test(NAME CustomExecutableProviderTests COMMAND custom_executable_provider_tests)
+
+add_executable(steam_provider_tests tests/test_steam_provider.cpp)
+target_link_libraries(steam_provider_tests PRIVATE hydra_profile_provider_foundation)
+# Fixtures intentionally use Windows path semantics; HydraSeat is Windows-only.
+if(WIN32)
+    add_test(NAME SteamProviderTests COMMAND steam_provider_tests)
+endif()
+
+add_executable(game_catalog_tests tests/test_game_catalog.cpp)
+target_link_libraries(game_catalog_tests PRIVATE hydra_profile_provider_foundation)
+add_test(NAME GameCatalogTests COMMAND game_catalog_tests)
+
 # Backend-only per-Seat game lifecycle. This layer owns the two-Seat state
 # machine but delegates concrete launch/mutation work to ISeatGameInstance.
 add_library(hydra_seat_game_lifecycle STATIC

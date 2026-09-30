@@ -1196,3 +1196,75 @@ add_test(NAME CompatibilityShareModelPipelineTests COMMAND compatibility_share_m
 add_test(NAME CompatibilityLocalStorePipelineTests COMMAND compatibility_local_store_pipeline_tests)
 add_test(NAME GameRuntimeRequirementResolverPipelineTests
     COMMAND game_runtime_requirement_resolver_pipeline_tests)
+
+add_library(hydra_acceptance_campaign STATIC
+    src/acceptance_campaign.cpp
+)
+target_include_directories(hydra_acceptance_campaign PUBLIC include)
+
+add_executable(hydraseat_acceptance_campaignctl
+    src/acceptance_campaignctl_main.cpp
+)
+target_link_libraries(hydraseat_acceptance_campaignctl PRIVATE
+    hydra_acceptance_campaign
+)
+
+add_executable(acceptance_campaign_backend_tests
+    tests/test_acceptance_campaign.cpp
+)
+target_link_libraries(acceptance_campaign_backend_tests PRIVATE
+    hydra_acceptance_campaign
+)
+add_test(NAME AcceptanceCampaignBackendTests
+    COMMAND acceptance_campaign_backend_tests
+)
+
+add_library(hydra_acceptance_probe STATIC
+    src/acceptance_probe.cpp
+)
+target_include_directories(hydra_acceptance_probe PUBLIC include)
+target_link_libraries(hydra_acceptance_probe PUBLIC
+    hydra_process_display
+    hydra_host_authority
+)
+
+if(WIN32)
+    add_library(hydra_audio_inventory_readonly STATIC
+        src/audio_endpoint_inventory.cpp
+    )
+    target_include_directories(hydra_audio_inventory_readonly PUBLIC include)
+    target_link_libraries(hydra_audio_inventory_readonly PUBLIC ${WIN32_LIBS})
+
+    target_link_libraries(hydra_acceptance_probe PRIVATE
+        hydra_audio_inventory_readonly
+        Bcrypt.lib
+        Wintrust.lib
+        Psapi.lib
+    )
+endif()
+
+add_executable(hydraseat_acceptance_probe
+    src/acceptance_probe_main.cpp
+)
+target_link_libraries(hydraseat_acceptance_probe PRIVATE hydra_acceptance_probe)
+
+add_executable(acceptance_probe_process_backend_tests
+    tests/test_acceptance_probe_process.cpp
+)
+target_link_libraries(acceptance_probe_process_backend_tests PRIVATE
+    hydra_acceptance_probe
+)
+
+if(WIN32)
+    add_dependencies(acceptance_probe_process_backend_tests
+        hydra_process_tree_child
+    )
+    add_test(NAME AcceptanceProbeProcessBackendTests
+        COMMAND acceptance_probe_process_backend_tests
+            $<TARGET_FILE:hydra_process_tree_child>
+    )
+else()
+    add_test(NAME AcceptanceProbeProcessBackendTests
+        COMMAND acceptance_probe_process_backend_tests
+    )
+endif()

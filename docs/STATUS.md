@@ -1,6 +1,6 @@
 # HydraSeat Current Status
 
-Snapshot date: **2026-09-18**
+Snapshot date: **2026-09-29**
 
 This file is a dated engineering snapshot. It distinguishes what is merged into upstream `main`, what has controlled validation on contributor branches, what is research-only, and what still lacks required evidence.
 
@@ -13,7 +13,7 @@ This file is a dated engineering snapshot. It distinguishes what is merged into 
 
 ## Upstream merged baseline
 
-Current upstream baseline for this snapshot: `6258c61` (`feat: make SeatRuntime own controller bindings`).
+Current upstream baseline for this snapshot includes V6 lease-based authority model.
 
 Merged behavior includes:
 
@@ -26,7 +26,10 @@ Merged behavior includes:
 - `SeatRuntime` activation generations and stale-token rejection;
 - exact runtime process identity using PID + creation identity;
 - cross-Seat duplicate process/window/controller ownership rejection;
-- Seat-owned transient controller bindings and controller poll/vibration routing.
+- Seat-owned transient controller bindings and controller poll/vibration routing;
+- V6 lease-based ownership (`LeaseClass::UiConfiguration` and `LeaseClass::GameProcess`);
+- GameLauncher deterministic launch and cleanup logic coexisting with UI leases;
+- Audio Routing V5 guarantees properly integrating with V6 lease boundaries.
 
 These capabilities establish ownership contracts; they do **not** prove complete two-player game isolation.
 

@@ -12,7 +12,8 @@ The current upstream baseline already establishes:
 - [x] stable controller identity separated from runtime XInput slot identity;
 - [x] stable controller IDs persisted in the two-Seat configuration;
 - [x] UI/controller selection expressed in Seat terms;
-- [x] activation-generation-scoped `SeatRuntime` state;
+- [x] activation-generation-scoped `SeatRuntime` state bound to `LeaseClass` ownership (V6);
+- [x] safe coexistence of UI configuration and GameLauncher leases;
 - [x] cross-Seat exact process/window/controller ownership checks;
 - [x] Seat-owned transient controller bindings;
 - [x] fail-closed runtime ownership rules.

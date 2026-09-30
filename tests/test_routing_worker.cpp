@@ -3,6 +3,10 @@
 #include "hydra/authority_bridge.hpp"
 #include "hydra/audio_session_observer.hpp"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include <QCoreApplication>
 #include <QObject>
 #include <QTimer>
@@ -159,7 +163,11 @@ void testRoutingWorkerVerification() {
     std::cout << "  -> TEST 3: Route Seat A fails verification. Rollback fails." << std::endl;
     resetMockSessions();
     globalAssignHook = [&](const ProcessIdentity& p, const AudioEndpointIdentity& ep) {
-        // Neither routing nor rollback mutates it correctly
+        if (ep.endpointId == L"new_endpoint_A") {
+            for (auto& s : mockSessions) {
+                if (s.processId == p.pid) s.endpointId = L"garbage";
+            }
+        }
         return AudioRouteStatus::Success;
     };
     runWorkerAndSpin(100, 1000, "new_endpoint_A");

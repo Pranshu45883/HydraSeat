@@ -10,6 +10,7 @@ namespace hydra::runtime {
 class AuthorityBridge final {
 public:
     explicit AuthorityBridge(std::shared_ptr<SessionController> controller) noexcept;
+    ~AuthorityBridge();
 
     // UI Configuration Lease API
     bool requestUiLease(std::uint32_t seatId) noexcept;

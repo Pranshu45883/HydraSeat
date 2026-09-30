@@ -57,7 +57,9 @@ The current merged repository has introduced the `SessionController` / `SeatRunt
 
 Current `main` contains:
 
-- activation tokens with Seat ID and generation;
+- an explicitly requested lease-based model for Seat ownership (V6);
+- UI `LeaseClass::UiConfiguration` vs `GameLauncher` `LeaseClass::GameProcess`;
+- activation tokens with Seat ID and generation, bound to lease lifecycle;
 - exact runtime `ProcessIdentity` as PID plus creation identity;
 - cross-Seat rejection of duplicate process/window/controller ownership;
 - stable controller identity separated from runtime-only XInput slot identity;
@@ -65,7 +67,7 @@ Current `main` contains:
 - persisted controller selection by stable physical identity rather than enumeration index;
 - a two-Seat configuration/UI model.
 
-Runtime authority is fail-closed: stale or mismatched ownership evidence must not be converted into success.
+Runtime authority is fail-closed: stale or mismatched ownership evidence must not be converted into success. A Seat remains active as long as at least one lease is held (UI and/or Game). Both leases independently map to the same generation while co-owned.
 
 ## 4. Persisted state vs runtime state
 

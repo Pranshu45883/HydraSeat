@@ -37,17 +37,17 @@ SeatsPage::SeatsPage(
         
         w.activateBtn = new QPushButton("Activate", frame);
         w.activateBtn->setStyleSheet(
-            "QPushButton { background-color: #32D74B; color: #151515; border: none; border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #40DF58; }"
+            "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #FF1A1A; }"
             "QPushButton:disabled { background-color: #202020; color: #777777; }"
         );
         headerLayout->addWidget(w.activateBtn);
         
         w.deactivateBtn = new QPushButton("Deactivate", frame);
         w.deactivateBtn->setStyleSheet(
-            "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #FF1A1A; }"
-            "QPushButton:disabled { background-color: #202020; color: #777777; }"
+            "QPushButton { background-color: #202020; color: #F5F5F5; border: 1px solid #2A2A2A; border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #2A2A2A; }"
+            "QPushButton:disabled { background-color: #151515; color: #777777; }"
         );
         headerLayout->addWidget(w.deactivateBtn);
         
@@ -247,13 +247,13 @@ void SeatsPage::updateBindingState(uint32_t seatId, SeatWidgets& w) {
 
     if (stale) {
         w.bindingStateLabel->setText(QString("Status:\n⚠ Stale (Slot %1)\n%2").arg(slotStr).arg(physName));
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #FF9F0A; border: none; margin-bottom: 12px;");
+        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-bottom: 12px;");
     } else if (connected) {
         w.bindingStateLabel->setText(QString("Status:\n● Paired (Slot %1)\n%2").arg(slotStr).arg(physName));
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #32D74B; border: none; margin-bottom: 12px;");
+        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-bottom: 12px;");
     } else {
         w.bindingStateLabel->setText(QString("Status:\n○ Disconnected (Slot %1)\n%2").arg(slotStr).arg(physName));
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-bottom: 12px;");
+        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; border: none; margin-bottom: 12px;");
     }
 }
 
@@ -269,13 +269,13 @@ void SeatsPage::updateState(const EngineStatePayload& payload) {
             } else {
                 w.authorityLabel->setText("● UI Configuring");
             }
-            w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #32D74B; margin-right: 8px; border: none;");
+            w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; margin-right: 8px; border: none;");
             w.activateBtn->hide();
             w.deactivateBtn->show();
         } else {
             if (snapshot && snapshot->gameLeaseActive) {
                 w.authorityLabel->setText("● Game Active");
-                w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #FF9F0A; margin-right: 8px; border: none;");
+                w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; margin-right: 8px; border: none;");
             } else {
                 w.authorityLabel->setText("○ Authority Idle");
                 w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; margin-right: 8px; border: none;");

@@ -5,6 +5,14 @@ namespace hydra::runtime {
 AuthorityBridge::AuthorityBridge(std::shared_ptr<SessionController> controller) noexcept
     : controller_(std::move(controller)) {}
 
+AuthorityBridge::~AuthorityBridge() {
+    if (controller_) {
+        std::lock_guard lock(mutex_);
+        if (uiTokens_[0]) controller_->releaseSeatLease(*uiTokens_[0]);
+        if (uiTokens_[1]) controller_->releaseSeatLease(*uiTokens_[1]);
+    }
+}
+
 bool AuthorityBridge::requestUiLease(std::uint32_t seatId) noexcept {
     if (!controller_ || (seatId != 1 && seatId != 2)) return false;
 

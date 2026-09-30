@@ -45,21 +45,45 @@ void DiagnosticsPage::updateState(const EngineStatePayload& payload) {
             .arg(src.sourceGeneration);
     }
 
-    // 3. Seat bindings
-    logEntry += "--- SEAT BINDINGS ---\n";
+    // 3. Seat Runtime State
+    logEntry += "--- SEAT RUNTIME STATE ---\n";
     for (uint32_t i = 1; i <= 2; ++i) {
         auto snap = m_sessionController->snapshot(i);
-        if (snap && snap->controllerBinding) {
-            const auto& b = *snap->controllerBinding;
-            QString pIdStr = b.persistentControllerId ? QString::fromStdWString(*b.persistentControllerId) : "None";
-            logEntry += QString("Seat: %1\nPersistent ID: %2\nAPI Key: %3\nSlot: %4\nGeneration: %5\n\n")
+        if (snap) {
+            logEntry += QString("Seat: %1\nGeneration: %2\nUI Lease: %3\nGame Lease: %4\n")
                 .arg(i)
-                .arg(pIdStr)
-                .arg(QString::fromStdString(b.runtimeKey))
-                .arg(b.runtimeXInputSlot ? QString::number(*b.runtimeXInputSlot) : "N/A")
-                .arg(b.sourceGeneration);
+                .arg(snap->generation)
+                .arg(snap->uiLeaseActive ? "Active" : "Inactive")
+                .arg(snap->gameLeaseActive ? "Active" : "Inactive");
+                
+            if (snap->process) {
+                logEntry += QString("Process Identity: PID %1, CID %2\n")
+                    .arg(snap->process->pid)
+                    .arg(snap->process->creationIdentity);
+            } else {
+                logEntry += "Process Identity: None\n";
+            }
+            
+            if (snap->audioEndpoint) {
+                logEntry += QString("Audio Endpoint: %1\n")
+                    .arg(QString::fromStdWString(snap->audioEndpoint->endpointId));
+            } else {
+                logEntry += "Audio Endpoint: None\n";
+            }
+            
+            if (snap->controllerBinding) {
+                const auto& b = *snap->controllerBinding;
+                QString pIdStr = b.persistentControllerId ? QString::fromStdWString(*b.persistentControllerId) : "None";
+                logEntry += QString("Controller Binding: Persistent ID: %1, API: %2, Slot: %3, Generation: %4\n\n")
+                    .arg(pIdStr)
+                    .arg(QString::fromStdString(b.runtimeKey))
+                    .arg(b.runtimeXInputSlot ? QString::number(*b.runtimeXInputSlot) : "N/A")
+                    .arg(b.sourceGeneration);
+            } else {
+                logEntry += "Controller Binding: None\n\n";
+            }
         } else {
-            logEntry += QString("Seat: %1\nNo binding.\n\n").arg(i);
+            logEntry += QString("Seat: %1\nUnavailable.\n\n").arg(i);
         }
     }
 

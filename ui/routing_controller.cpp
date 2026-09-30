@@ -29,7 +29,7 @@ void RoutingWorker::doRoute(uint32_t pid, uint64_t creationIdentity, const QStri
         ~ComUninitializer() { if (active) CoUninitialize(); }
     } comUninit{comInitialized};
 
-    auto sessionsResult = hydra::windows::AudioSessionObserver::enumerateSessions();
+    auto sessionsResult = m_enumerator();
     if (!sessionsResult.isSuccess()) {
         emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Failed to enumerate audio sessions to validate process.");
         return;
@@ -176,7 +176,7 @@ void RoutingWorker::doReset(uint32_t pid, uint64_t creationIdentity) {
         ~ComUninitializer() { if (active) CoUninitialize(); }
     } comUninit{comInitialized};
 
-    auto sessionsResult = hydra::windows::AudioSessionObserver::enumerateSessions();
+    auto sessionsResult = m_enumerator();
     if (!sessionsResult.isSuccess()) {
         emit resetCompleted(pid, false, "Failed to enumerate audio sessions.");
         return;
@@ -210,8 +210,8 @@ void RoutingWorker::doReset(uint32_t pid, uint64_t creationIdentity) {
         return;
     }
     
-    hydra::windows::WindowsAudioRouter router;
-    auto status = m_bridge->resetAudio(*seatIdOpt, processId, router);
+    auto router = m_routerFactory();
+    auto status = m_bridge->resetAudio(*seatIdOpt, processId, *router);
     if (status != hydra::runtime::AudioRouteStatus::Success) {
         emit resetCompleted(pid, false, "Runtime rejected audio reset authorization.");
         return;

@@ -46,7 +46,7 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
         fl->addWidget(nameLabel);
 
         auto* detailsLabel = new QLabel("Status: Connected", frame);
-        detailsLabel->setStyleSheet("font-size: 13px; color: #32D74B; border: none;");
+        detailsLabel->setStyleSheet("font-size: 13px; color: #F5F5F5; border: none;");
         fl->addWidget(detailsLabel);
 
         m_listLayout->addWidget(frame);
@@ -93,7 +93,7 @@ void HardwarePage::updateState(const EngineStatePayload& payload) {
             fl->addWidget(identityLabel);
 
             auto* detailsLabel = new QLabel("● Connected", frame);
-            detailsLabel->setStyleSheet("font-size: 13px; color: #32D74B; font-weight: bold; border: none;");
+            detailsLabel->setStyleSheet("font-size: 13px; color: #F5F5F5; font-weight: bold; border: none;");
             fl->addWidget(detailsLabel);
 
             m_listLayout->addWidget(frame);
@@ -121,7 +121,7 @@ void HardwarePage::updateState(const EngineStatePayload& payload) {
                 fl->addWidget(metaLabel);
 
                 QString statusStr = src.connected ? "● Connected" : "○ Disconnected";
-                QString colorStr = src.connected ? "#32D74B" : "#E10600";
+                QString colorStr = src.connected ? "#F5F5F5" : "#777777";
                 auto* statusLabel = new QLabel(statusStr, frame);
                 statusLabel->setStyleSheet(QString("font-size: 13px; font-weight: bold; color: %1; border: none;").arg(colorStr));
                 fl->addWidget(statusLabel);
@@ -147,7 +147,7 @@ void HardwarePage::updateState(const EngineStatePayload& payload) {
             fl->addWidget(nameLabel);
 
             QString statusStr = ep.isAvailable() ? "Status: Connected" : "Status: Unavailable";
-            QString colorStr = ep.isAvailable() ? "#32D74B" : "#E10600";
+            QString colorStr = ep.isAvailable() ? "#F5F5F5" : "#777777";
             auto* detailsLabel = new QLabel(statusStr, frame);
             detailsLabel->setStyleSheet(QString("font-size: 13px; color: %1; border: none;").arg(colorStr));
             fl->addWidget(detailsLabel);

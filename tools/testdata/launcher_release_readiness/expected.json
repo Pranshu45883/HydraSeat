@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "surface": "native-win32-launcher",
+  "locales": ["en-US", "ko-KR", "zh-CN"],
+  "dpi": [96, 120, 144, 192],
+  "windowProfiles": ["standard-980x720", "narrow-640x640"],
+  "automatedEvidence": [
+    {
+      "id": "localization-contract",
+      "test": "UiLocalizationTests",
+      "proves": [
+        "three-locale-catalog",
+        "english-fallback",
+        "critical-label-width-dpi-scaling",
+        "single-owner-drawn-status-marker"
+      ]
+    },
+    {
+      "id": "layout-accessibility-contract",
+      "test": "UiAccessibilityTests",
+      "proves": [
+        "three-locale-layout-matrix",
+        "dpi-96-120-144-192",
+        "standard-and-narrow-reflow",
+        "game-list-first-focus-order",
+        "long-blocking-reason-visible",
+        "high-contrast-system-color-policy"
+      ]
+    },
+    {
+      "id": "disabled-readiness-contract",
+      "test": "LauncherUiModelTests",
+      "proves": [
+        "missing-requirement-blocks-play",
+        "validated-plan-required-for-activation"
+      ]
+    }
+  ],
+  "manualEvidence": [
+    {
+      "id": "real-first-window",
+      "state": "PENDING",
+      "required": "Fresh tracked Release HydraSeat.exe shows its first management window promptly or exits with a bounded actionable failure after startup integration lands."
+    },
+    {
+      "id": "real-screenshots-standard-and-narrow",
+      "state": "PENDING",
+      "required": "Capture and review real launcher screenshots for normal, selected, blocked, standard 980x720, and narrow layouts in all shipped locales."
+    },
+    {
+      "id": "real-keyboard-only-navigation",
+      "state": "PENDING",
+      "required": "Navigate the real launcher with keyboard only and verify visible focus, reachable game-first actions, and disabled-reason discoverability."
+    },
+    {
+      "id": "real-high-contrast-visual",
+      "state": "PENDING",
+      "required": "Enable Windows High Contrast temporarily, verify system-color rendering and focus readability in the real launcher, then restore the prior setting."
+    },
+    {
+      "id": "real-korean-chinese-glyph-rendering",
+      "state": "PENDING",
+      "required": "Verify ko-KR and zh-CN glyph rendering and critical-label readability on a real Windows desktop without bundled private fonts."
+    },
+    {
+      "id": "real-mixed-dpi",
+      "state": "PENDING",
+      "required": "Exercise real mixed-DPI monitor movement/text scaling and confirm no clipping, hidden critical action, or stale geometry."
+    }
+  ],
+  "defectLedger": [
+    {
+      "id": "korean-selected-game-eyebrow-clipping",
+      "automatedRegression": "COVERED",
+      "visualRecheck": "PENDING"
+    },
+    {
+      "id": "both-seats-label-truncation",
+      "automatedRegression": "COVERED",
+      "visualRecheck": "PENDING"
+    },
+    {
+      "id": "duplicate-seat-status-marker",
+      "automatedRegression": "COVERED",
+      "visualRecheck": "PENDING"
+    },
+    {
+      "id": "blocking-warning-ellipsis",
+      "automatedRegression": "COVERED",
+      "visualRecheck": "PENDING"
+    },
+    {
+      "id": "windowless-startup",
+      "automatedRegression": "EXTERNAL-STARTUP-CHUNK",
+      "visualRecheck": "PENDING"
+    }
+  ]
+}

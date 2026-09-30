@@ -1268,3 +1268,66 @@ else()
         COMMAND acceptance_probe_process_backend_tests
     )
 endif()
+
+# Release/QA validators are data-only and fail closed. Self-test mode performs
+# no signing, install, packaging, network, or machine mutation.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME PreMergeGateSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_premerge_gate.py"
+                --self-test)
+    add_test(NAME ReleaseArtifactManifestSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_release_artifact_manifest.py"
+                --self-test)
+    add_test(NAME ReleaseInstallerContractSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_release_installer_contract.py"
+                --self-test)
+    add_test(NAME ReleaseSigningManifestSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_release_signing_manifest.py"
+                --self-test)
+    add_test(NAME ProductionReachabilitySelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_production_reachability.py"
+                --self-test)
+    add_test(NAME PublicAbiContractSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_public_abi_contracts.py"
+                --self-test)
+    add_test(NAME RepositoryPublicationHygieneSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_repository_publication_hygiene.py"
+                --self-test)
+    add_test(NAME ReleaseScopeSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_release_scope.py"
+                --self-test)
+    add_test(NAME V1AcceptanceCampaignValidatorSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_v1_acceptance_campaign.py"
+                --self-test)
+    add_test(NAME Phase3TraceParserSelfTest
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/summarize_phase3_trace.py"
+                --self-test)
+endif()
+
+if(WIN32)
+    find_program(HYDRA_POWERSHELL_EXECUTABLE
+        NAMES powershell.exe powershell pwsh)
+    if(HYDRA_POWERSHELL_EXECUTABLE)
+        add_test(NAME ReleasePowerShellSyntaxSelfTest
+            COMMAND "${HYDRA_POWERSHELL_EXECUTABLE}"
+                    -NoProfile -ExecutionPolicy Bypass
+                    -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_release_powershell_syntax.ps1"
+                    -RepositoryRoot "${CMAKE_CURRENT_SOURCE_DIR}")
+        add_test(NAME Phase3HardwareAcceptanceRunnerSelfTest
+            COMMAND "${HYDRA_POWERSHELL_EXECUTABLE}"
+                    -NoProfile -ExecutionPolicy Bypass
+                    -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_phase3_hardware_acceptance.ps1"
+                    -SelfTest)
+    endif()
+endif()

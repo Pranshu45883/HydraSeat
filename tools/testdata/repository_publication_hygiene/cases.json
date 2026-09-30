@@ -1,0 +1,387 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "name": "clean-disclaimer-and-placeholder-path",
+      "files": [
+        {
+          "path": "README.md",
+          "pathKind": null,
+          "content": "HydraSeat is being developed in public. The project is not open source until the license gate is resolved. Example path: C:/Users/<user>/HydraSeat.\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": []
+    },
+    {
+      "name": "sensitive-filename-a",
+      "files": [
+        {
+          "path": null,
+          "pathKind": "sensitive-name-a",
+          "content": "fixture value\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["SENSITIVE_FILENAME"]
+    },
+    {
+      "name": "sensitive-filename-b",
+      "files": [
+        {
+          "path": null,
+          "pathKind": "sensitive-name-b",
+          "content": "fixture value\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["SENSITIVE_FILENAME"]
+    },
+    {
+      "name": "sensitive-signing-content",
+      "files": [
+        {
+          "path": "notes/material.txt",
+          "pathKind": null,
+          "content": null,
+          "contentKind": "signing-a",
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["SENSITIVE_SIGNING_CONTENT"]
+    },
+    {
+      "name": "sensitive-authentication-formats",
+      "files": [
+        {
+          "path": "notes/auth-a.txt",
+          "pathKind": null,
+          "content": null,
+          "contentKind": "auth-a",
+          "hexBytes": null
+        },
+        {
+          "path": "notes/auth-b.txt",
+          "pathKind": null,
+          "content": null,
+          "contentKind": "auth-b",
+          "hexBytes": null
+        },
+        {
+          "path": "notes/auth-c.txt",
+          "pathKind": null,
+          "content": null,
+          "contentKind": "auth-c",
+          "hexBytes": null
+        },
+        {
+          "path": "notes/auth-d.txt",
+          "pathKind": null,
+          "content": null,
+          "contentKind": "auth-d",
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["SENSITIVE_AUTH_CONTENT"]
+    },
+    {
+      "name": "personal-windows-path",
+      "files": [
+        {
+          "path": "notes/local.txt",
+          "pathKind": null,
+          "content": "Generated from C:/Users/LocalDev3927/AppData/Local/tool/cache.\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["PERSONAL_ABSOLUTE_PATH"]
+    },
+    {
+      "name": "personal-unix-path",
+      "files": [
+        {
+          "path": "notes/local.txt",
+          "pathKind": null,
+          "content": "Generated from /home/localdev3927/project/cache.\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["PERSONAL_ABSOLUTE_PATH"]
+    },
+    {
+      "name": "generated-build-tree",
+      "files": [
+        {
+          "path": "build-temp/CMakeCache.txt",
+          "pathKind": null,
+          "content": "generated cache\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["GENERATED_ARTIFACT"]
+    },
+    {
+      "name": "generated-project-file",
+      "files": [
+        {
+          "path": "scratch/HydraSeat.vcxproj",
+          "pathKind": null,
+          "content": "generated project\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["GENERATED_ARTIFACT"]
+    },
+    {
+      "name": "reference-repository-copy",
+      "files": [
+        {
+          "path": "references/copied-source.cpp",
+          "pathKind": null,
+          "content": "int copied_reference_fixture = 1;\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["REFERENCE_REPOSITORY_LEAKAGE"]
+    },
+    {
+      "name": "unexpected-executable",
+      "files": [
+        {
+          "path": "bin/tool.exe",
+          "pathKind": null,
+          "content": null,
+          "contentKind": null,
+          "hexBytes": "4d5a01020304"
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["UNEXPECTED_BINARY_OR_ARCHIVE"]
+    },
+    {
+      "name": "unexpected-archive",
+      "files": [
+        {
+          "path": "release/bundle.zip",
+          "pathKind": null,
+          "content": "fixture archive placeholder\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["UNEXPECTED_BINARY_OR_ARCHIVE"]
+    },
+    {
+      "name": "unknown-binary-content",
+      "files": [
+        {
+          "path": "data/blob.dat",
+          "pathKind": null,
+          "content": null,
+          "contentKind": null,
+          "hexBytes": "ff00fe01"
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["UNEXPECTED_BINARY_OR_ARCHIVE"]
+    },
+    {
+      "name": "forbidden-ai-bridge",
+      "files": [
+        {
+          "path": ".ai-bridge/current-plan.md",
+          "pathKind": null,
+          "content": "local coordination only\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["FORBIDDEN_AI_BRIDGE_ARTIFACT"]
+    },
+    {
+      "name": "false-open-source-claim",
+      "files": [
+        {
+          "path": "README.md",
+          "pathKind": null,
+          "content": "HydraSeat is an open-source project for local gaming.\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["FALSE_OPEN_SOURCE_CLAIM"]
+    },
+    {
+      "name": "false-release-claim",
+      "files": [
+        {
+          "path": "RELEASE.md",
+          "pathKind": null,
+          "content": "HydraSeat v1 is production-ready.\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": ["FALSE_RELEASE_CLAIM"]
+    },
+    {
+      "name": "resolved-gates-allow-claims",
+      "files": [
+        {
+          "path": "README.md",
+          "pathKind": null,
+          "content": "HydraSeat is an open-source project. HydraSeat v1 is generally available.\n",
+          "contentKind": null,
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": true,
+        "generalAvailabilityResolved": true,
+        "manualGatesPending": false
+      },
+      "expectedCategories": []
+    },
+    {
+      "name": "untracked-sensitive-content-is-not-publishable-index-state",
+      "files": [],
+      "untrackedFiles": [
+        {
+          "path": "notes/local-only.txt",
+          "pathKind": null,
+          "content": null,
+          "contentKind": "auth-a",
+          "hexBytes": null
+        }
+      ],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": []
+    },
+    {
+      "name": "own-fixture-file-is-excluded",
+      "files": [
+        {
+          "path": "tools/testdata/repository_publication_hygiene/cases.json",
+          "pathKind": null,
+          "content": null,
+          "contentKind": "auth-a",
+          "hexBytes": null
+        }
+      ],
+      "untrackedFiles": [],
+      "gateState": {
+        "licenseResolved": false,
+        "generalAvailabilityResolved": false,
+        "manualGatesPending": true
+      },
+      "expectedCategories": []
+    }
+  ]
+}

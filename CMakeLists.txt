@@ -789,3 +789,94 @@ target_link_libraries(hidhide_session_recovery_backend_tests PRIVATE
 add_test(NAME HidHideSessionRecoveryBackendTests
     COMMAND hidhide_session_recovery_backend_tests
 )
+
+add_library(hydra_crash_journal STATIC
+    src/crash_journal.cpp
+)
+target_include_directories(hydra_crash_journal PUBLIC include)
+target_link_libraries(hydra_crash_journal PUBLIC hydra_recovery_core)
+if(WIN32)
+    target_link_libraries(hydra_crash_journal PRIVATE Shell32.lib Ole32.lib)
+endif()
+
+add_library(hydra_reset_actions STATIC
+    src/reset_actions.cpp
+)
+target_include_directories(hydra_reset_actions PUBLIC include)
+target_link_libraries(hydra_reset_actions PUBLIC
+    hydra_crash_journal
+    hydra_recovery_core
+)
+
+add_library(hydra_gate_c_recovery STATIC
+    src/gate_c_recovery.cpp
+)
+target_include_directories(hydra_gate_c_recovery PUBLIC include)
+target_link_libraries(hydra_gate_c_recovery PUBLIC
+    hydra_crash_journal
+    hydra_recovery_core
+)
+
+add_executable(watchdog_protocol_backend_tests
+    tests/test_watchdog_protocol.cpp
+)
+target_link_libraries(watchdog_protocol_backend_tests PRIVATE
+    hydra_recovery_core
+)
+add_test(NAME WatchdogProtocolBackendTests
+    COMMAND watchdog_protocol_backend_tests
+)
+
+add_executable(crash_journal_backend_tests tests/test_crash_journal.cpp)
+target_link_libraries(crash_journal_backend_tests PRIVATE hydra_crash_journal)
+add_test(NAME CrashJournalBackendTests COMMAND crash_journal_backend_tests)
+
+add_executable(reset_actions_backend_tests tests/test_reset_actions.cpp)
+target_link_libraries(reset_actions_backend_tests PRIVATE hydra_reset_actions)
+add_test(NAME ResetActionsBackendTests COMMAND reset_actions_backend_tests)
+
+add_executable(gate_c_recovery_backend_tests tests/test_gate_c_recovery.cpp)
+target_link_libraries(gate_c_recovery_backend_tests PRIVATE hydra_gate_c_recovery)
+add_test(NAME GateCRecoveryBackendTests COMMAND gate_c_recovery_backend_tests)
+
+if(WIN32)
+    add_executable(hydra_watchdog src/watchdog_main.cpp)
+    target_link_libraries(hydra_watchdog PRIVATE
+        hydra_recovery_core
+        hydra_hidhide_recovery
+    )
+    if(MINGW)
+        target_link_options(hydra_watchdog PRIVATE -municode)
+    endif()
+
+    add_executable(hydra_reset src/reset_main.cpp)
+    target_link_libraries(hydra_reset PRIVATE
+        hydra_reset_actions
+        hydra_hidhide_recovery
+    )
+
+    add_executable(watchdog_process_backend_tests
+        tests/test_watchdog_process.cpp
+    )
+    target_link_libraries(watchdog_process_backend_tests PRIVATE
+        hydra_recovery_core
+    )
+    add_dependencies(watchdog_process_backend_tests hydra_watchdog)
+    if(MINGW)
+        target_link_options(watchdog_process_backend_tests PRIVATE -municode)
+    endif()
+    add_test(NAME WatchdogProcessBackendTests
+        COMMAND watchdog_process_backend_tests
+    )
+
+    add_executable(reset_process_backend_tests
+        tests/test_reset_process.cpp
+    )
+    target_link_libraries(reset_process_backend_tests PRIVATE
+        hydra_reset_actions
+    )
+    add_dependencies(reset_process_backend_tests hydra_reset)
+    add_test(NAME ResetProcessBackendTests
+        COMMAND reset_process_backend_tests
+    )
+endif()

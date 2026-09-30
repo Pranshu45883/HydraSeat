@@ -392,3 +392,21 @@ add_test(NAME IsolationPlannerTests COMMAND isolation_planner_tests)
 add_executable(raw_input_probe_trace_tests tests/test_raw_input_probe_trace.cpp)
 target_link_libraries(raw_input_probe_trace_tests PRIVATE hydra_input_isolation)
 add_test(NAME RawInputProbeTraceTests COMMAND raw_input_probe_trace_tests)
+
+add_library(hydra_recovery_core STATIC
+    src/watchdog_protocol.cpp
+    src/rollback_registry.cpp
+    src/startup_policy.cpp
+)
+target_include_directories(hydra_recovery_core PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_recovery_core PUBLIC Kernel32.lib)
+endif()
+
+add_executable(watchdog_core_tests tests/test_watchdog_core.cpp)
+target_link_libraries(watchdog_core_tests PRIVATE hydra_recovery_core)
+add_test(NAME WatchdogCoreTests COMMAND watchdog_core_tests)
+
+add_executable(startup_policy_tests tests/test_startup_policy.cpp)
+target_link_libraries(startup_policy_tests PRIVATE hydra_recovery_core)
+add_test(NAME StartupPolicyTests COMMAND startup_policy_tests)

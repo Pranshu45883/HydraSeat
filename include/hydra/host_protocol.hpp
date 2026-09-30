@@ -17,6 +17,7 @@ constexpr std::size_t kHostProtocolHeaderBytes = 24u;
 constexpr std::size_t kHostProtocolMaxPayloadBytes = 64u * 1024u;
 constexpr std::size_t kHostProtocolMaxDiagnosticBytes = 2048u;
 constexpr std::size_t kHostProtocolMaxControllerIdBytes = 512u;
+constexpr std::size_t kHostProtocolMaxAudioEndpointIdBytes = 2048u;
 constexpr std::size_t kHostSeatCount = 2u;
 
 enum class MessageType : std::uint16_t {
@@ -33,6 +34,10 @@ enum class MessageType : std::uint16_t {
     ReleaseUiLeaseResult = 11,
     PairController = 12,
     PairControllerResult = 13,
+    RouteAudio = 14,
+    RouteAudioResult = 15,
+    ResetAudio = 16,
+    ResetAudioResult = 17,
 };
 
 enum class ClientRole : std::uint8_t {
@@ -48,6 +53,18 @@ enum class ErrorCode : std::uint16_t {
     Unsupported = 4,
     InternalError = 5,
     InvalidState = 6,
+};
+
+enum class AudioMutationStatus : std::uint16_t {
+    Success = 0,
+    InvalidProcess = 1,
+    ProcessNotFound = 2,
+    AudioSessionNotFound = 3,
+    EndpointNotFound = 4,
+    EndpointUnavailable = 5,
+    IdentityMismatch = 6,
+    RoutingFailed = 7,
+    OsApiError = 8,
 };
 
 struct Frame {
@@ -104,6 +121,27 @@ struct ControllerPairRequest {
     bool operator==(const ControllerPairRequest&) const = default;
 };
 
+struct ProcessRequest {
+    std::uint32_t seatId{0};
+    std::uint32_t processId{0};
+    std::uint64_t creationIdentity{0};
+
+    bool operator==(const ProcessRequest&) const = default;
+};
+
+struct AudioRouteRequest {
+    ProcessRequest process;
+    std::string endpointId;
+
+    bool operator==(const AudioRouteRequest&) const = default;
+};
+
+struct AudioMutationResult {
+    AudioMutationStatus status{AudioMutationStatus::OsApiError};
+
+    bool operator==(const AudioMutationResult&) const = default;
+};
+
 struct ErrorPayload {
     ErrorCode code{ErrorCode::InternalError};
     std::string diagnostic;
@@ -139,6 +177,19 @@ std::optional<SeatRequest> decodeSeatRequest(std::span<const std::byte> payload)
 std::vector<std::byte> encodeControllerPairRequest(
     const ControllerPairRequest& request);
 std::optional<ControllerPairRequest> decodeControllerPairRequest(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeProcessRequest(const ProcessRequest& request);
+std::optional<ProcessRequest> decodeProcessRequest(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeAudioRouteRequest(const AudioRouteRequest& request);
+std::optional<AudioRouteRequest> decodeAudioRouteRequest(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeAudioMutationResult(
+    const AudioMutationResult& result);
+std::optional<AudioMutationResult> decodeAudioMutationResult(
     std::span<const std::byte> payload);
 
 std::vector<std::byte> encodePing(std::uint64_t nonce);

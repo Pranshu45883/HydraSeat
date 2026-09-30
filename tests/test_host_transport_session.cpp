@@ -9,6 +9,34 @@
 
 namespace {
 
+class FakeAudioRouter final : public hydra::runtime::AudioRouter {
+public:
+    hydra::runtime::AudioRouteStatus assignStatus{
+        hydra::runtime::AudioRouteStatus::Success};
+    hydra::runtime::AudioRouteStatus clearStatus{
+        hydra::runtime::AudioRouteStatus::Success};
+    std::uint32_t assignCalls{0};
+    std::uint32_t clearCalls{0};
+    hydra::runtime::ProcessIdentity lastProcess{};
+    hydra::runtime::AudioEndpointIdentity lastEndpoint{};
+
+    hydra::runtime::AudioRouteStatus assignEndpoint(
+        const hydra::runtime::ProcessIdentity& process,
+        const hydra::runtime::AudioEndpointIdentity& endpoint) noexcept override {
+        ++assignCalls;
+        lastProcess = process;
+        lastEndpoint = endpoint;
+        return assignStatus;
+    }
+
+    hydra::runtime::AudioRouteStatus clearAssignment(
+        const hydra::runtime::ProcessIdentity& process) noexcept override {
+        ++clearCalls;
+        lastProcess = process;
+        return clearStatus;
+    }
+};
+
 hydra::hostipc::Frame hello(
     hydra::hostipc::HostConnectionSession& session,
     hydra::hostipc::ClientRole role,
@@ -27,6 +55,7 @@ int main() {
     using namespace hydra::runtime;
 
     RuntimeHost host;
+    FakeAudioRouter audioRouter;
 
     {
         HostConnectionSession readOnly(host);
@@ -45,7 +74,7 @@ int main() {
     }
 
     {
-        HostConnectionSession session(host);
+        HostConnectionSession session(host, &audioRouter);
 
         Frame beforeHello{MessageType::GetSnapshot, 3, {}};
         const auto denied = session.handle(beforeHello);
@@ -117,9 +146,51 @@ int main() {
         assert(pairError);
         assert(pairError->code == ErrorCode::InvalidState);
 
+        const std::string endpointId =
+            "{0.0.0.00000000}.{12345678-1234-1234-1234-1234567890AB}";
+        const auto routed = session.handle(Frame{
+            MessageType::RouteAudio,
+            11,
+            encodeAudioRouteRequest(AudioRouteRequest{
+                ProcessRequest{1, process.pid, process.creationIdentity},
+                endpointId})});
+        assert(routed.type == MessageType::RouteAudioResult);
+        const auto routeResult = decodeAudioMutationResult(routed.payload);
+        assert(routeResult);
+        assert(routeResult->status == AudioMutationStatus::Success);
+        assert(audioRouter.assignCalls == 1);
+        assert(audioRouter.lastProcess == process);
+        assert(audioRouter.lastEndpoint.endpointId ==
+               std::wstring(endpointId.begin(), endpointId.end()));
+
+        // A reused PID / wrong creation identity is rejected by host authority
+        // before the audio backend is invoked.
+        const auto staleRoute = session.handle(Frame{
+            MessageType::RouteAudio,
+            12,
+            encodeAudioRouteRequest(AudioRouteRequest{
+                ProcessRequest{1, process.pid, process.creationIdentity + 1},
+                endpointId})});
+        assert(staleRoute.type == MessageType::RouteAudioResult);
+        const auto staleResult = decodeAudioMutationResult(staleRoute.payload);
+        assert(staleResult);
+        assert(staleResult->status == AudioMutationStatus::InvalidProcess);
+        assert(audioRouter.assignCalls == 1);
+
+        const auto reset = session.handle(Frame{
+            MessageType::ResetAudio,
+            13,
+            encodeProcessRequest(ProcessRequest{
+                1, process.pid, process.creationIdentity})});
+        assert(reset.type == MessageType::ResetAudioResult);
+        const auto resetResult = decodeAudioMutationResult(reset.payload);
+        assert(resetResult);
+        assert(resetResult->status == AudioMutationStatus::Success);
+        assert(audioRouter.clearCalls == 1);
+
         const auto released = session.handle(Frame{
             MessageType::ReleaseUiLease,
-            11,
+            14,
             encodeSeatRequest(SeatRequest{1})});
         assert(released.type == MessageType::ReleaseUiLeaseResult);
         snapshot = decodeSnapshot(released.payload);
@@ -129,13 +200,25 @@ int main() {
         assert(snapshot->seats[0].gameLeaseActive);
         assert(snapshot->seats[0].processOwned);
 
-        Frame ping{MessageType::Ping, 12, encodePing(0x77)};
+        const auto deniedAfterRelease = session.handle(Frame{
+            MessageType::RouteAudio,
+            15,
+            encodeAudioRouteRequest(AudioRouteRequest{
+                ProcessRequest{1, process.pid, process.creationIdentity},
+                "{0.0.0.00000000}.{12345678-1234-1234-1234-1234567890AB}"})});
+        assert(deniedAfterRelease.type == MessageType::Error);
+        const auto deniedAudio = decodeError(deniedAfterRelease.payload);
+        assert(deniedAudio);
+        assert(deniedAudio->code == ErrorCode::InvalidState);
+        assert(audioRouter.assignCalls == 1);
+
+        Frame ping{MessageType::Ping, 16, encodePing(0x77)};
         const auto pong = session.handle(ping);
         assert(pong.type == MessageType::Pong);
         assert(decodePing(pong.payload) == std::optional<std::uint64_t>{0x77});
 
         Frame forgedResponseDirection{
-            MessageType::AcquireUiLeaseResult, 13, {}};
+            MessageType::AcquireUiLeaseResult, 17, {}};
         const auto unsupported = session.handle(forgedResponseDirection);
         assert(unsupported.type == MessageType::Error);
         const auto unsupportedError = decodeError(unsupported.payload);

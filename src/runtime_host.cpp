@@ -81,6 +81,50 @@ bool RuntimeHost::pairController(
     return changed;
 }
 
+AudioRouteStatus RuntimeHost::routeAudio(
+    const ActivationToken& uiLease,
+    const ProcessIdentity& expectedProcess,
+    const AudioEndpointIdentity& endpoint,
+    AudioRouter& router) noexcept {
+    if (uiLease.leaseClass != LeaseClass::UiConfiguration ||
+        !expectedProcess.valid() || !endpoint.valid()) {
+        return AudioRouteStatus::InvalidProcess;
+    }
+
+    // Keep the host authority lock through the OS mutation. This intentionally
+    // serializes lifecycle changes with audio mutation so a Seat cannot release
+    // or replace the exact process between ownership verification and routing.
+    std::lock_guard lock(mutex_);
+    const auto snapshot = controller_.snapshot(uiLease.seatId);
+    if (!snapshot || !snapshot->uiLeaseActive || !snapshot->gameLeaseActive ||
+        snapshot->generation != uiLease.generation || !snapshot->process ||
+        *snapshot->process != expectedProcess) {
+        return AudioRouteStatus::InvalidProcess;
+    }
+
+    return router.assignEndpoint(expectedProcess, endpoint);
+}
+
+AudioRouteStatus RuntimeHost::resetAudio(
+    const ActivationToken& uiLease,
+    const ProcessIdentity& expectedProcess,
+    AudioRouter& router) noexcept {
+    if (uiLease.leaseClass != LeaseClass::UiConfiguration ||
+        !expectedProcess.valid()) {
+        return AudioRouteStatus::InvalidProcess;
+    }
+
+    std::lock_guard lock(mutex_);
+    const auto snapshot = controller_.snapshot(uiLease.seatId);
+    if (!snapshot || !snapshot->uiLeaseActive || !snapshot->gameLeaseActive ||
+        snapshot->generation != uiLease.generation || !snapshot->process ||
+        *snapshot->process != expectedProcess) {
+        return AudioRouteStatus::InvalidProcess;
+    }
+
+    return router.clearAssignment(expectedProcess);
+}
+
 ActivationToken RuntimeHost::beginSeatActivation(std::uint32_t seatId) noexcept {
     std::lock_guard lock(mutex_);
     const auto activation = controller_.beginSeatActivation(seatId);

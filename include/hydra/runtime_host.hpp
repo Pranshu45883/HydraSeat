@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hydra/audio_router.hpp"
 #include "hydra/host_protocol.hpp"
 #include "hydra/runtime_authority.hpp"
 
@@ -29,6 +30,13 @@ public:
     bool pairController(const ActivationToken& uiLease,
                         const std::string& persistentControllerId,
                         std::uint8_t runtimeXInputSlot) noexcept;
+    AudioRouteStatus routeAudio(const ActivationToken& uiLease,
+                                const ProcessIdentity& expectedProcess,
+                                const AudioEndpointIdentity& endpoint,
+                                AudioRouter& router) noexcept;
+    AudioRouteStatus resetAudio(const ActivationToken& uiLease,
+                                const ProcessIdentity& expectedProcess,
+                                AudioRouter& router) noexcept;
 
     ActivationToken beginSeatActivation(std::uint32_t seatId) noexcept;
     bool publishProcess(const ActivationToken& token,

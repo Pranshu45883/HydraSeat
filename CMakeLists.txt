@@ -440,13 +440,25 @@ add_executable(runtime_lease_authority_tests tests/test_runtime_leases.cpp)
 target_link_libraries(runtime_lease_authority_tests PRIVATE hydra_host_authority)
 add_test(NAME RuntimeLeaseAuthorityTests COMMAND runtime_lease_authority_tests)
 
+if(WIN32)
+    add_library(hydra_windows_audio_router STATIC
+        src/windows_audio_router.cpp
+        src/audio_session_observer.cpp
+    )
+    target_include_directories(hydra_windows_audio_router PUBLIC include)
+    target_link_libraries(hydra_windows_audio_router PUBLIC ${WIN32_LIBS})
+endif()
+
 add_library(hydra_host_transport STATIC
     src/host_transport.cpp
 )
 target_include_directories(hydra_host_transport PUBLIC include)
 target_link_libraries(hydra_host_transport PUBLIC hydra_host_authority)
 if(WIN32)
-    target_link_libraries(hydra_host_transport PUBLIC Kernel32.lib)
+    target_link_libraries(hydra_host_transport PUBLIC
+        Kernel32.lib
+        hydra_windows_audio_router
+    )
 endif()
 
 add_executable(host_transport_session_tests

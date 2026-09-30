@@ -7,13 +7,48 @@
 #include <vector>
 
 #if defined(_WIN32)
+#include "hydra/windows_audio_router.hpp"
 #include <windows.h>
 #endif
 
 namespace hydra::hostipc {
+namespace {
 
-HostConnectionSession::HostConnectionSession(runtime::RuntimeHost& host) noexcept
-    : host_(host) {}
+AudioMutationStatus toProtocolAudioStatus(
+    runtime::AudioRouteStatus status) noexcept {
+    switch (status) {
+    case runtime::AudioRouteStatus::Success:
+        return AudioMutationStatus::Success;
+    case runtime::AudioRouteStatus::InvalidProcess:
+        return AudioMutationStatus::InvalidProcess;
+    case runtime::AudioRouteStatus::ProcessNotFound:
+        return AudioMutationStatus::ProcessNotFound;
+    case runtime::AudioRouteStatus::AudioSessionNotFound:
+        return AudioMutationStatus::AudioSessionNotFound;
+    case runtime::AudioRouteStatus::EndpointNotFound:
+        return AudioMutationStatus::EndpointNotFound;
+    case runtime::AudioRouteStatus::EndpointUnavailable:
+        return AudioMutationStatus::EndpointUnavailable;
+    case runtime::AudioRouteStatus::IdentityMismatch:
+        return AudioMutationStatus::IdentityMismatch;
+    case runtime::AudioRouteStatus::RoutingFailed:
+        return AudioMutationStatus::RoutingFailed;
+    case runtime::AudioRouteStatus::OsApiError:
+        return AudioMutationStatus::OsApiError;
+    }
+    return AudioMutationStatus::OsApiError;
+}
+
+std::wstring widenAscii(std::string_view value) {
+    return std::wstring(value.begin(), value.end());
+}
+
+} // namespace
+
+HostConnectionSession::HostConnectionSession(
+    runtime::RuntimeHost& host,
+    runtime::AudioRouter* audioRouter) noexcept
+    : host_(host), audioRouter_(audioRouter) {}
 
 HostConnectionSession::~HostConnectionSession() {
     for (auto& lease : uiLeases_) {
@@ -202,6 +237,75 @@ Frame HostConnectionSession::handle(const Frame& request) {
         response.type = MessageType::PairControllerResult;
         response.correlationId = request.correlationId;
         response.payload = encodeSnapshot(host_.snapshot());
+        return response;
+    }
+
+    case MessageType::RouteAudio: {
+        const auto route = decodeAudioRouteRequest(request.payload);
+        if (!route) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "invalid audio route payload");
+        }
+        const auto* lease = uiLease(route->process.seatId);
+        if (lease == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "audio routing requires this connection's Seat UI lease");
+        }
+        if (audioRouter_ == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::Unsupported,
+                "native audio routing backend is unavailable");
+        }
+
+        const runtime::ProcessIdentity process{
+            route->process.processId,
+            route->process.creationIdentity};
+        const runtime::AudioEndpointIdentity endpoint{
+            widenAscii(route->endpointId),
+            std::nullopt};
+        const auto status = host_.routeAudio(
+            *lease, process, endpoint, *audioRouter_);
+
+        Frame response;
+        response.type = MessageType::RouteAudioResult;
+        response.correlationId = request.correlationId;
+        response.payload = encodeAudioMutationResult(
+            AudioMutationResult{toProtocolAudioStatus(status)});
+        return response;
+    }
+
+    case MessageType::ResetAudio: {
+        const auto reset = decodeProcessRequest(request.payload);
+        if (!reset) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "invalid audio reset payload");
+        }
+        const auto* lease = uiLease(reset->seatId);
+        if (lease == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "audio reset requires this connection's Seat UI lease");
+        }
+        if (audioRouter_ == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::Unsupported,
+                "native audio routing backend is unavailable");
+        }
+
+        const runtime::ProcessIdentity process{
+            reset->processId,
+            reset->creationIdentity};
+        const auto status = host_.resetAudio(
+            *lease, process, *audioRouter_);
+
+        Frame response;
+        response.type = MessageType::ResetAudioResult;
+        response.correlationId = request.correlationId;
+        response.payload = encodeAudioMutationResult(
+            AudioMutationResult{toProtocolAudioStatus(status)});
         return response;
     }
 
@@ -692,6 +796,76 @@ std::optional<HostSnapshot> HostPipeClient::pairController(
     return snapshot;
 }
 
+std::optional<AudioMutationStatus> HostPipeClient::routeAudio(
+    std::uint32_t seatId,
+    std::uint32_t processId,
+    std::uint64_t creationIdentity,
+    const std::string& endpointId,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeAudioRouteRequest(AudioRouteRequest{
+        ProcessRequest{seatId, processId, creationIdentity},
+        endpointId});
+    if (payload.empty()) {
+        setError(error, "invalid audio route request");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::RouteAudio, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::RouteAudioResult) {
+        setError(error, "unexpected audio route response");
+        return std::nullopt;
+    }
+    const auto result = decodeAudioMutationResult(response->payload);
+    if (!result) {
+        setError(error, "invalid audio route result payload");
+        return std::nullopt;
+    }
+    return result->status;
+}
+
+std::optional<AudioMutationStatus> HostPipeClient::resetAudio(
+    std::uint32_t seatId,
+    std::uint32_t processId,
+    std::uint64_t creationIdentity,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload =
+        encodeProcessRequest(ProcessRequest{seatId, processId, creationIdentity});
+    if (payload.empty()) {
+        setError(error, "invalid audio reset request");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::ResetAudio, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::ResetAudioResult) {
+        setError(error, "unexpected audio reset response");
+        return std::nullopt;
+    }
+    const auto result = decodeAudioMutationResult(response->payload);
+    if (!result) {
+        setError(error, "invalid audio reset result payload");
+        return std::nullopt;
+    }
+    return result->status;
+}
+
 bool HostPipeClient::ping(
     std::uint64_t nonce,
     std::uint32_t timeoutMs,
@@ -723,6 +897,9 @@ public:
     explicit Impl(runtime::RuntimeHost& hostValue) noexcept : host(hostValue) {}
 
     runtime::RuntimeHost& host;
+#if defined(_WIN32)
+    windows::WindowsAudioRouter audioRouter;
+#endif
     std::atomic<bool> stopRequested{false};
 
     bool serveOne(std::uint32_t timeoutMs, std::string* error) {
@@ -754,7 +931,7 @@ public:
             return false;
         }
 
-        HostConnectionSession session(host);
+        HostConnectionSession session(host, &audioRouter);
         std::size_t handled = 0;
         for (; handled < kMaxFramesPerConnection; ++handled) {
             std::string readError;

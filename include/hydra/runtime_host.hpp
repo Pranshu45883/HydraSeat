@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string>
 
 namespace hydra::runtime {
 
@@ -22,6 +23,12 @@ public:
 
     hostipc::HostSnapshot snapshot() const noexcept;
     std::optional<SeatRuntimeSnapshot> seatSnapshot(std::uint32_t seatId) const noexcept;
+
+    ActivationToken acquireUiLease(std::uint32_t seatId) noexcept;
+    bool releaseUiLease(const ActivationToken& token) noexcept;
+    bool pairController(const ActivationToken& uiLease,
+                        const std::string& persistentControllerId,
+                        std::uint8_t runtimeXInputSlot) noexcept;
 
     ActivationToken beginSeatActivation(std::uint32_t seatId) noexcept;
     bool publishProcess(const ActivationToken& token,

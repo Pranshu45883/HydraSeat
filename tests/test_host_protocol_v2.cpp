@@ -26,8 +26,10 @@ int main() {
 
     HostSnapshot snapshot;
     snapshot.authorityRevision = 7;
-    snapshot.seats[0] = SeatSnapshot{1, 3, true, true, true, false};
-    snapshot.seats[1] = SeatSnapshot{2, 0, false, false, false, false};
+    snapshot.seats[0] =
+        SeatSnapshot{1, 3, true, true, true, true, true, false};
+    snapshot.seats[1] =
+        SeatSnapshot{2, 0, false, false, false, false, false, false};
     const auto snapshotBytes = encodeSnapshot(snapshot);
     assert(snapshotBytes.size() == 56);
     assert(decodeSnapshot(snapshotBytes) == snapshot);
@@ -45,7 +47,7 @@ int main() {
     assert(decodeResult.error == ErrorCode::None);
 
     auto wrongVersion = frameBytes;
-    wrongVersion[4] = std::byte{2};
+    wrongVersion[4] = std::byte{1};
     const auto versionResult = decodeFrame(wrongVersion, &decodeResult);
     assert(!versionResult.has_value());
     assert(decodeResult.error == ErrorCode::VersionMismatch);
@@ -69,14 +71,38 @@ int main() {
     assert(!decodeSnapshot(truncatedSnapshot).has_value());
 
     auto invalidSnapshot = snapshot;
-    invalidSnapshot.seats[1] = SeatSnapshot{2, 0, false, false, true, false};
+    invalidSnapshot.seats[1] =
+        SeatSnapshot{2, 0, false, false, false, false, true, false};
     assert(encodeSnapshot(invalidSnapshot).empty());
+
+    auto processWithoutGameLease = snapshot;
+    processWithoutGameLease.seats[0].gameLeaseActive = false;
+    assert(encodeSnapshot(processWithoutGameLease).empty());
+
+    const SeatRequest seatRequest{2};
+    const auto seatRequestBytes = encodeSeatRequest(seatRequest);
+    assert(decodeSeatRequest(seatRequestBytes) == seatRequest);
+    assert(encodeSeatRequest(SeatRequest{3}).empty());
+
+    const ControllerPairRequest pairRequest{
+        1, 2, "container:{12345678-1234-1234-1234-1234567890AB}"};
+    const auto pairBytes = encodeControllerPairRequest(pairRequest);
+    assert(!pairBytes.empty());
+    assert(decodeControllerPairRequest(pairBytes) == pairRequest);
+
+    auto invalidPair = pairRequest;
+    invalidPair.runtimeXInputSlot = 4;
+    assert(encodeControllerPairRequest(invalidPair).empty());
+
+    invalidPair = pairRequest;
+    invalidPair.persistentControllerId = "has space";
+    assert(encodeControllerPairRequest(invalidPair).empty());
 
     const auto ping = encodePing(0x1234u);
     assert(decodePing(ping) == std::optional<std::uint64_t>{0x1234u});
     assert(encodePing(0).empty());
 
-    const ErrorPayload error{ErrorCode::Unsupported, "read-only protocol layer"};
+    const ErrorPayload error{ErrorCode::Unsupported, "unsupported direction"};
     const auto errorBytes = encodeError(error);
     assert(!errorBytes.empty());
     assert(decodeError(errorBytes) == error);
@@ -86,9 +112,20 @@ int main() {
         std::string(kHostProtocolMaxDiagnosticBytes + 1, 'x')};
     assert(encodeError(tooLong).empty());
 
+    assert(isMutatingRequest(MessageType::AcquireUiLease));
+    assert(isMutatingRequest(MessageType::ReleaseUiLease));
+    assert(isMutatingRequest(MessageType::PairController));
+    assert(!isMutatingRequest(MessageType::GetSnapshot));
+
     assert(responseTypeFor(MessageType::Hello) == MessageType::HelloAck);
     assert(responseTypeFor(MessageType::GetSnapshot) == MessageType::Snapshot);
     assert(responseTypeFor(MessageType::Ping) == MessageType::Pong);
+    assert(responseTypeFor(MessageType::AcquireUiLease) ==
+           MessageType::AcquireUiLeaseResult);
+    assert(responseTypeFor(MessageType::ReleaseUiLease) ==
+           MessageType::ReleaseUiLeaseResult);
+    assert(responseTypeFor(MessageType::PairController) ==
+           MessageType::PairControllerResult);
     assert(responseTypeFor(MessageType::Snapshot) == MessageType::Error);
 
     return 0;

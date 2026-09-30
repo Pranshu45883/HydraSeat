@@ -9,6 +9,8 @@ hostipc::SeatSnapshot toHostSnapshot(const SeatRuntimeSnapshot& snapshot) noexce
         snapshot.seatId,
         snapshot.generation,
         snapshot.active,
+        snapshot.uiLeaseActive,
+        snapshot.gameLeaseActive,
         snapshot.process.has_value(),
         snapshot.targetHwnd != 0,
         snapshot.controllerBinding.has_value(),
@@ -32,6 +34,51 @@ std::optional<SeatRuntimeSnapshot> RuntimeHost::seatSnapshot(
     std::uint32_t seatId) const noexcept {
     std::lock_guard lock(mutex_);
     return controller_.snapshot(seatId);
+}
+
+ActivationToken RuntimeHost::acquireUiLease(std::uint32_t seatId) noexcept {
+    std::lock_guard lock(mutex_);
+    const auto lease =
+        controller_.acquireSeatLease(seatId, LeaseClass::UiConfiguration);
+    noteMutationLocked(lease.valid());
+    return lease;
+}
+
+bool RuntimeHost::releaseUiLease(const ActivationToken& token) noexcept {
+    if (token.leaseClass != LeaseClass::UiConfiguration) return false;
+    std::lock_guard lock(mutex_);
+    const bool changed = controller_.releaseSeatLease(token);
+    noteMutationLocked(changed);
+    return changed;
+}
+
+bool RuntimeHost::pairController(
+    const ActivationToken& uiLease,
+    const std::string& persistentControllerId,
+    std::uint8_t runtimeXInputSlot) noexcept {
+    if (uiLease.leaseClass != LeaseClass::UiConfiguration ||
+        persistentControllerId.empty() ||
+        runtimeXInputSlot >= controller::kXInputSlotCount) {
+        return false;
+    }
+
+    std::lock_guard lock(mutex_);
+    controller::ControllerInventory inventory;
+    const auto snapshot = inventory.scan();
+    if (!snapshot.authoritative) return false;
+
+    std::wstring persistentId(
+        persistentControllerId.begin(), persistentControllerId.end());
+    const auto paired = controller::pairPhysicalControllerToXInput(
+        uiLease.seatId, persistentId, runtimeXInputSlot, snapshot);
+    if (paired.status != controller::PairingStatus::Ok || !paired.binding) {
+        return false;
+    }
+
+    const bool changed =
+        controller_.bindController(uiLease, *paired.binding, snapshot);
+    noteMutationLocked(changed);
+    return changed;
 }
 
 ActivationToken RuntimeHost::beginSeatActivation(std::uint32_t seatId) noexcept {

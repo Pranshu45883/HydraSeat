@@ -12,10 +12,11 @@
 namespace hydra::hostipc {
 
 constexpr std::uint32_t kHostProtocolMagic = 0x31505348u; // "HSP1"
-constexpr std::uint16_t kHostProtocolVersion = 1u;
+constexpr std::uint16_t kHostProtocolVersion = 2u;
 constexpr std::size_t kHostProtocolHeaderBytes = 24u;
 constexpr std::size_t kHostProtocolMaxPayloadBytes = 64u * 1024u;
 constexpr std::size_t kHostProtocolMaxDiagnosticBytes = 2048u;
+constexpr std::size_t kHostProtocolMaxControllerIdBytes = 512u;
 constexpr std::size_t kHostSeatCount = 2u;
 
 enum class MessageType : std::uint16_t {
@@ -26,6 +27,12 @@ enum class MessageType : std::uint16_t {
     Ping = 5,
     Pong = 6,
     Error = 7,
+    AcquireUiLease = 8,
+    AcquireUiLeaseResult = 9,
+    ReleaseUiLease = 10,
+    ReleaseUiLeaseResult = 11,
+    PairController = 12,
+    PairControllerResult = 13,
 };
 
 enum class ClientRole : std::uint8_t {
@@ -40,6 +47,7 @@ enum class ErrorCode : std::uint16_t {
     PermissionDenied = 3,
     Unsupported = 4,
     InternalError = 5,
+    InvalidState = 6,
 };
 
 struct Frame {
@@ -66,6 +74,8 @@ struct SeatSnapshot {
     std::uint32_t seatId{0};
     std::uint64_t generation{0};
     bool active{false};
+    bool uiLeaseActive{false};
+    bool gameLeaseActive{false};
     bool processOwned{false};
     bool windowOwned{false};
     bool controllerBound{false};
@@ -78,6 +88,20 @@ struct HostSnapshot {
     std::array<SeatSnapshot, kHostSeatCount> seats{};
 
     bool operator==(const HostSnapshot&) const = default;
+};
+
+struct SeatRequest {
+    std::uint32_t seatId{0};
+
+    bool operator==(const SeatRequest&) const = default;
+};
+
+struct ControllerPairRequest {
+    std::uint32_t seatId{0};
+    std::uint8_t runtimeXInputSlot{0};
+    std::string persistentControllerId;
+
+    bool operator==(const ControllerPairRequest&) const = default;
 };
 
 struct ErrorPayload {
@@ -109,12 +133,21 @@ std::optional<HelloAck> decodeHelloAck(std::span<const std::byte> payload);
 std::vector<std::byte> encodeSnapshot(const HostSnapshot& snapshot);
 std::optional<HostSnapshot> decodeSnapshot(std::span<const std::byte> payload);
 
+std::vector<std::byte> encodeSeatRequest(const SeatRequest& request);
+std::optional<SeatRequest> decodeSeatRequest(std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeControllerPairRequest(
+    const ControllerPairRequest& request);
+std::optional<ControllerPairRequest> decodeControllerPairRequest(
+    std::span<const std::byte> payload);
+
 std::vector<std::byte> encodePing(std::uint64_t nonce);
 std::optional<std::uint64_t> decodePing(std::span<const std::byte> payload);
 
 std::vector<std::byte> encodeError(const ErrorPayload& error);
 std::optional<ErrorPayload> decodeError(std::span<const std::byte> payload);
 
+bool isMutatingRequest(MessageType type) noexcept;
 MessageType responseTypeFor(MessageType request) noexcept;
 
 } // namespace hydra::hostipc

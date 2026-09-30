@@ -6,20 +6,31 @@ namespace hydra::runtime {
 
 SeatRuntime::SeatRuntime(std::uint32_t seatId) noexcept : seatId_(seatId) {}
 
-ActivationToken SeatRuntime::beginActivation() noexcept {
+ActivationToken SeatRuntime::acquireLease(LeaseClass leaseClass) noexcept {
     std::lock_guard lock(mutex_);
-    if ((seatId_ != 1 && seatId_ != 2) ||
-        active_ ||
-        generation_ == std::numeric_limits<std::uint64_t>::max()) {
-        return {};
+    if (seatId_ != 1 && seatId_ != 2) return {};
+
+    bool* activeLease = nullptr;
+    switch (leaseClass) {
+    case LeaseClass::UiConfiguration:
+        activeLease = &uiLeaseActive_;
+        break;
+    case LeaseClass::GameProcess:
+        activeLease = &gameLeaseActive_;
+        break;
+    }
+    if (activeLease == nullptr || *activeLease) return {};
+
+    if (!uiLeaseActive_ && !gameLeaseActive_) {
+        if (generation_ == std::numeric_limits<std::uint64_t>::max()) return {};
+        ++generation_;
+        process_.reset();
+        targetHwnd_ = 0;
+        controllerBinding_.reset();
     }
 
-    ++generation_;
-    active_ = true;
-    process_.reset();
-    targetHwnd_ = 0;
-    controllerBinding_.reset();
-    return {seatId_, generation_};
+    *activeLease = true;
+    return {seatId_, generation_, leaseClass};
 }
 
 bool SeatRuntime::publishProcess(const ActivationToken& token,
@@ -27,7 +38,9 @@ bool SeatRuntime::publishProcess(const ActivationToken& token,
     if (!process.valid()) return false;
 
     std::lock_guard lock(mutex_);
-    if (!ownsTokenLocked(token)) return false;
+    if (!ownsTokenLocked(token) || token.leaseClass != LeaseClass::GameProcess) {
+        return false;
+    }
     if (process_ && *process_ != process) return false;
 
     process_ = process;
@@ -40,7 +53,10 @@ bool SeatRuntime::bindTargetWindow(const ActivationToken& token,
     if (!owner.valid() || hwnd == 0) return false;
 
     std::lock_guard lock(mutex_);
-    if (!ownsTokenLocked(token) || !process_ || *process_ != owner) return false;
+    if (!ownsTokenLocked(token) || token.leaseClass != LeaseClass::GameProcess ||
+        !process_ || *process_ != owner) {
+        return false;
+    }
 
     targetHwnd_ = hwnd;
     return true;
@@ -58,31 +74,58 @@ bool SeatRuntime::bindController(const ActivationToken& token,
     return true;
 }
 
-bool SeatRuntime::endActivation(const ActivationToken& token) noexcept {
+bool SeatRuntime::releaseLease(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     if (!ownsTokenLocked(token)) return false;
 
-    active_ = false;
-    process_.reset();
-    targetHwnd_ = 0;
-    controllerBinding_.reset();
+    switch (token.leaseClass) {
+    case LeaseClass::UiConfiguration:
+        uiLeaseActive_ = false;
+        break;
+    case LeaseClass::GameProcess:
+        gameLeaseActive_ = false;
+        // Process/window state belongs to the game lease and must never remain
+        // authoritative merely because a UI configuration lease is still open.
+        process_.reset();
+        targetHwnd_ = 0;
+        break;
+    }
+
+    if (!uiLeaseActive_ && !gameLeaseActive_) {
+        process_.reset();
+        targetHwnd_ = 0;
+        controllerBinding_.reset();
+    }
     return true;
 }
 
 SeatRuntimeSnapshot SeatRuntime::snapshot() const noexcept {
     std::lock_guard lock(mutex_);
-    return {seatId_, generation_, active_, process_, targetHwnd_, controllerBinding_};
+    const bool active = uiLeaseActive_ || gameLeaseActive_;
+    return {seatId_, generation_, active, uiLeaseActive_, gameLeaseActive_,
+            process_, targetHwnd_, controllerBinding_};
 }
 
 bool SeatRuntime::ownsTokenLocked(const ActivationToken& token) const noexcept {
-    return active_ && token.valid() && token.seatId == seatId_ &&
-           token.generation == generation_;
+    if (!token.valid() || token.seatId != seatId_ ||
+        token.generation != generation_) {
+        return false;
+    }
+    switch (token.leaseClass) {
+    case LeaseClass::UiConfiguration:
+        return uiLeaseActive_;
+    case LeaseClass::GameProcess:
+        return gameLeaseActive_;
+    }
+    return false;
 }
 
-ActivationToken SessionController::beginSeatActivation(std::uint32_t seatId) noexcept {
+ActivationToken SessionController::acquireSeatLease(
+    std::uint32_t seatId,
+    LeaseClass leaseClass) noexcept {
     std::lock_guard lock(mutex_);
     const auto runtime = seat(seatId);
-    return runtime ? runtime->beginActivation() : ActivationToken{};
+    return runtime ? runtime->acquireLease(leaseClass) : ActivationToken{};
 }
 
 bool SessionController::publishProcess(const ActivationToken& token,
@@ -142,7 +185,9 @@ bool SessionController::bindController(
 controller::PollResult SessionController::pollController(
     const ActivationToken& token,
     const controller::InventorySnapshot& inventory) noexcept {
-    if (!token.valid()) return {controller::IoStatus::InvalidBinding, std::nullopt};
+    if (!token.valid() || token.leaseClass != LeaseClass::GameProcess) {
+        return {controller::IoStatus::InvalidBinding, std::nullopt};
+    }
 
     std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
@@ -161,7 +206,9 @@ controller::IoStatus SessionController::setControllerVibration(
     const controller::InventorySnapshot& inventory,
     std::uint16_t lowFrequencyMotor,
     std::uint16_t highFrequencyMotor) noexcept {
-    if (!token.valid()) return controller::IoStatus::InvalidBinding;
+    if (!token.valid() || token.leaseClass != LeaseClass::GameProcess) {
+        return controller::IoStatus::InvalidBinding;
+    }
 
     std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
@@ -179,7 +226,9 @@ controller::IoStatus SessionController::setControllerVibration(
 
 std::optional<controller::VirtualXInputMapping>
 SessionController::virtualXInputMapping(const ActivationToken& token) const noexcept {
-    if (!token.valid()) return std::nullopt;
+    if (!token.valid() || token.leaseClass != LeaseClass::GameProcess) {
+        return std::nullopt;
+    }
 
     std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
@@ -196,10 +245,10 @@ SessionController::virtualXInputMapping(const ActivationToken& token) const noex
     return mapping;
 }
 
-bool SessionController::endSeatActivation(const ActivationToken& token) noexcept {
+bool SessionController::releaseSeatLease(const ActivationToken& token) noexcept {
     std::lock_guard lock(mutex_);
     const auto runtime = seat(token.seatId);
-    return runtime && runtime->endActivation(token);
+    return runtime && runtime->releaseLease(token);
 }
 
 std::optional<SeatRuntimeSnapshot> SessionController::snapshot(

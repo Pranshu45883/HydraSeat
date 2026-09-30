@@ -435,3 +435,30 @@ add_test(NAME HostProtocolV1Tests COMMAND host_protocol_v1_tests)
 add_executable(runtime_host_v1_tests tests/test_runtime_host_v1.cpp)
 target_link_libraries(runtime_host_v1_tests PRIVATE hydra_host_authority)
 add_test(NAME RuntimeHostV1Tests COMMAND runtime_host_v1_tests)
+
+add_library(hydra_host_transport STATIC
+    src/host_transport.cpp
+)
+target_include_directories(hydra_host_transport PUBLIC include)
+target_link_libraries(hydra_host_transport PUBLIC hydra_host_authority)
+if(WIN32)
+    target_link_libraries(hydra_host_transport PUBLIC Kernel32.lib)
+endif()
+
+add_executable(host_transport_session_tests
+    tests/test_host_transport_session.cpp
+)
+target_link_libraries(host_transport_session_tests PRIVATE hydra_host_transport)
+add_test(NAME HostTransportSessionTests COMMAND host_transport_session_tests)
+
+add_executable(host_pipe_tests tests/test_host_pipe.cpp)
+target_link_libraries(host_pipe_tests PRIVATE hydra_host_transport)
+add_test(NAME HostPipeTests COMMAND host_pipe_tests)
+
+if(WIN32)
+    add_executable(hydra_host src/host_main.cpp)
+    target_link_libraries(hydra_host PRIVATE hydra_host_transport)
+
+    add_executable(hydraseat_hostctl src/hostctl_main.cpp)
+    target_link_libraries(hydraseat_hostctl PRIVATE hydra_host_transport)
+endif()

@@ -1,3 +1,4 @@
+#include <QScrollArea>
 #include "ui/pages/seats_page.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -10,7 +11,17 @@ SeatsPage::SeatsPage(
     std::shared_ptr<hydra::runtime::AuthorityBridge> bridge,
     QWidget* parent)
     : QWidget(parent), m_sessionController(std::move(sessionController)), m_bridge(std::move(bridge)) {
-    auto* layout = new QVBoxLayout(this);
+        auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
+    auto* container = new QWidget();
+    container->setStyleSheet("background-color: transparent;");
+    auto* layout = new QVBoxLayout(container);
+    
+    auto* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->addWidget(scrollArea);
+    scrollArea->setWidget(container);
     layout->setContentsMargins(32, 32, 32, 32);
     layout->setSpacing(24);
 
@@ -27,6 +38,8 @@ SeatsPage::SeatsPage(
     
     auto buildSeat = [this](int seatId, SeatWidgets& w) -> QFrame* {
         auto* frame = new QFrame(this);
+        frame->setMinimumWidth(400);
+        frame->setMaximumWidth(500);
         frame->setStyleSheet("background-color: #151515; border-radius: 8px; border: 1px solid #292929; padding: 20px;");
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);
@@ -123,6 +136,7 @@ SeatsPage::SeatsPage(
     seatsLayout->addWidget(buildSeat(1, m_seat1));
     seatsLayout->addWidget(buildSeat(2, m_seat2));
 
+        seatsLayout->addStretch();
     layout->addLayout(seatsLayout);
     layout->addStretch();
 }

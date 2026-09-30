@@ -123,6 +123,7 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
     card.currentEndpointId = session.endpointId;
 
     card.frame = new QFrame();
+    card.frame->setMaximumWidth(600);
     card.frame->setStyleSheet("background-color: #151515; border-radius: 8px; border: 1px solid #292929; padding: 16px;");
     auto* fl = new QVBoxLayout(card.frame);
     fl->setContentsMargins(0,0,0,0);
@@ -235,6 +236,7 @@ void AudioPage::updateState(const EngineStatePayload& payload) {
         if (ep.isAvailable()) actOut++;
         
         auto* frame = new QFrame();
+        frame->setMaximumWidth(400);
         frame->setStyleSheet("background-color: #151515; border-radius: 6px; padding: 12px; border: 1px solid #292929;");
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);

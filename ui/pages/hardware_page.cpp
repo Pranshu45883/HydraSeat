@@ -51,6 +51,8 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
     int col = 0;
     for (const auto& dev : devices) {
         auto* frame = new QFrame();
+        frame->setMinimumWidth(300);
+        frame->setMaximumWidth(400);
         frame->setStyleSheet("background-color: #151515; border-radius: 6px; padding: 12px 16px; border: 1px solid #292929;");
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);
@@ -68,6 +70,7 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
         if (col >= 2) { col = 0; row++; }
     }
     
+    gridLayout->setColumnStretch(2, 1);
     sl->addLayout(gridLayout);
     m_listLayout->insertWidget(m_listLayout->count() - 1, sectionWidget);
 }
@@ -91,6 +94,8 @@ void HardwarePage::addControllerSection(const hydra::controller::InventorySnapsh
     int col = 0;
     for (const auto& phys : inventory.physicalControllers) {
         auto* frame = new QFrame();
+        frame->setMinimumWidth(300);
+        frame->setMaximumWidth(400);
         frame->setStyleSheet("background-color: #151515; border-radius: 6px; padding: 12px 16px; border: 1px solid #292929;");
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);
@@ -113,6 +118,7 @@ void HardwarePage::addControllerSection(const hydra::controller::InventorySnapsh
         if (col >= 2) { col = 0; row++; }
     }
     
+    gridLayout->setColumnStretch(2, 1);
     sl->addLayout(gridLayout);
     m_listLayout->insertWidget(m_listLayout->count() - 1, sectionWidget);
 }

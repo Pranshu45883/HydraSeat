@@ -35,6 +35,7 @@ AppWindow::~AppWindow() = default;
 void AppWindow::setupUi() {
     setWindowTitle("HydraSeat");
     resize(1150, 750);
+    setMinimumSize(1100, 700);
 
     setStyleSheet(R"(
         QMainWindow { background-color: #0A0A0A; color: #F5F5F5; font-family: 'Segoe UI', Arial, sans-serif; }

@@ -66,6 +66,7 @@ void ApplicationsPage::updateState(const EngineStatePayload& payload) {
 
     for (const auto& session : payload.audioSessions) {
         auto* frame = new QFrame();
+        frame->setMaximumWidth(800);
         frame->setStyleSheet("background-color: #151515; border-radius: 6px; border: 1px solid #292929; padding: 12px 16px;");
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);

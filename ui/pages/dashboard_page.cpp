@@ -1,3 +1,4 @@
+#include <QScrollArea>
 #include "ui/pages/dashboard_page.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -7,7 +8,17 @@ namespace hydra::ui {
 
 DashboardPage::DashboardPage(std::shared_ptr<hydra::runtime::SessionController> sessionController, QWidget* parent)
     : QWidget(parent), m_sessionController(std::move(sessionController)) {
-    auto* layout = new QVBoxLayout(this);
+        auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
+    auto* container = new QWidget();
+    container->setStyleSheet("background-color: transparent;");
+    auto* layout = new QVBoxLayout(container);
+    
+    auto* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->addWidget(scrollArea);
+    scrollArea->setWidget(container);
     layout->setContentsMargins(32, 32, 32, 32);
     layout->setSpacing(24);
 
@@ -22,6 +33,7 @@ DashboardPage::DashboardPage(std::shared_ptr<hydra::runtime::SessionController> 
     auto* metricsLayout = new QGridLayout();
     metricsLayout->setSpacing(16);
     setupMetrics(metricsLayout);
+        metricsLayout->setColumnStretch(3, 1);
     layout->addLayout(metricsLayout);
 
     auto* seatsTitle = new QLabel("CURRENT SEATS", this);
@@ -31,6 +43,7 @@ DashboardPage::DashboardPage(std::shared_ptr<hydra::runtime::SessionController> 
     auto* seatsLayout = new QGridLayout();
     seatsLayout->setSpacing(16);
     setupSeats(seatsLayout);
+        seatsLayout->setColumnStretch(2, 1);
     layout->addLayout(seatsLayout);
 
     layout->addStretch();
@@ -38,6 +51,10 @@ DashboardPage::DashboardPage(std::shared_ptr<hydra::runtime::SessionController> 
 
 static QFrame* createMetricCard(const QString& title, const QString& subtitle, QLabel*& valLabel) {
     auto* frame = new QFrame();
+    frame->setMinimumWidth(400);
+    frame->setMaximumWidth(450);
+    frame->setMinimumWidth(220);
+    frame->setMaximumWidth(300);
     frame->setStyleSheet("background-color: #151515; border-radius: 8px; border: 1px solid #292929; padding: 18px;");
     auto* l = new QVBoxLayout(frame);
     l->setContentsMargins(0,0,0,0);

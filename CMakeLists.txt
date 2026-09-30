@@ -880,3 +880,89 @@ if(WIN32)
         COMMAND reset_process_backend_tests
     )
 endif()
+
+# Activate preserved trust/metrics/compatibility foundations required by
+# production installer, update, and support flows.
+add_library(hydra_artifact_trust STATIC
+    src/artifact_trust.cpp
+)
+target_include_directories(hydra_artifact_trust PUBLIC include)
+
+add_library(hydra_session_metrics STATIC
+    src/session_metrics.cpp
+)
+target_include_directories(hydra_session_metrics PUBLIC include)
+target_link_libraries(hydra_session_metrics PUBLIC
+    hydra_input_isolation
+)
+
+add_library(hydra_compatibility_result STATIC
+    src/compatibility_result.cpp
+)
+target_include_directories(hydra_compatibility_result PUBLIC include)
+target_link_libraries(hydra_compatibility_result PUBLIC
+    hydra_session_metrics
+)
+
+add_library(hydra_support_bundle STATIC
+    src/support_bundle.cpp
+)
+target_include_directories(hydra_support_bundle PUBLIC include)
+target_link_libraries(hydra_support_bundle PUBLIC
+    hydra_compatibility_result
+    hydra_crash_journal
+    hydra_session_metrics
+)
+
+add_library(hydra_privilege_broker STATIC
+    src/privilege_broker.cpp
+)
+target_include_directories(hydra_privilege_broker PUBLIC include)
+target_link_libraries(hydra_privilege_broker PUBLIC
+    hydra_artifact_trust
+)
+
+add_library(hydra_installer_transaction STATIC
+    src/installer_transaction.cpp
+)
+target_include_directories(hydra_installer_transaction PUBLIC include)
+target_link_libraries(hydra_installer_transaction PUBLIC
+    hydra_artifact_trust
+    hydra_recovery_core
+)
+
+add_library(hydra_update_transaction STATIC
+    src/update_transaction.cpp
+)
+target_include_directories(hydra_update_transaction PUBLIC include)
+target_link_libraries(hydra_update_transaction PUBLIC
+    hydra_installer_transaction
+)
+
+add_executable(artifact_trust_backend_tests tests/test_artifact_trust.cpp)
+target_link_libraries(artifact_trust_backend_tests PRIVATE hydra_artifact_trust)
+add_test(NAME ArtifactTrustBackendTests COMMAND artifact_trust_backend_tests)
+
+add_executable(session_metrics_backend_tests tests/test_session_metrics.cpp)
+target_link_libraries(session_metrics_backend_tests PRIVATE hydra_session_metrics)
+add_test(NAME SessionMetricsBackendTests COMMAND session_metrics_backend_tests)
+
+add_executable(compatibility_result_backend_tests tests/test_compatibility_result.cpp)
+target_link_libraries(compatibility_result_backend_tests PRIVATE hydra_compatibility_result)
+add_test(NAME CompatibilityResultBackendTests COMMAND compatibility_result_backend_tests)
+
+add_executable(support_bundle_backend_tests tests/test_support_bundle.cpp)
+target_link_libraries(support_bundle_backend_tests PRIVATE hydra_support_bundle)
+add_test(NAME SupportBundleBackendTests COMMAND support_bundle_backend_tests)
+
+add_executable(privilege_broker_backend_tests tests/test_privilege_broker.cpp)
+target_link_libraries(privilege_broker_backend_tests PRIVATE hydra_privilege_broker)
+add_test(NAME PrivilegeBrokerBackendTests COMMAND privilege_broker_backend_tests)
+
+add_executable(installer_transaction_backend_tests tests/test_installer_transaction.cpp)
+target_link_libraries(installer_transaction_backend_tests PRIVATE hydra_installer_transaction)
+add_test(NAME InstallerTransactionBackendTests COMMAND installer_transaction_backend_tests)
+
+add_executable(update_transaction_backend_tests tests/test_update_transaction.cpp)
+target_link_libraries(update_transaction_backend_tests PRIVATE hydra_update_transaction)
+add_test(NAME UpdateTransactionBackendTests COMMAND update_transaction_backend_tests)

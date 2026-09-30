@@ -586,3 +586,164 @@ add_test(NAME GateCProtocolCoreTests COMMAND gate_c_protocol_core_tests)
 add_test(NAME GateCProbeSnapshotCoreTests COMMAND gate_c_probe_snapshot_core_tests)
 add_test(NAME VirtualRawInputCoreTests COMMAND virtual_raw_input_core_tests)
 add_test(NAME VirtualXInputStateCoreTests COMMAND virtual_xinput_state_core_tests)
+
+add_library(hydra_gate_c_architecture STATIC
+    src/gate_c_architecture.cpp
+)
+target_include_directories(hydra_gate_c_architecture PUBLIC include)
+
+add_executable(gate_c_architecture_backend_tests
+    tests/test_gate_c_architecture.cpp
+)
+target_link_libraries(gate_c_architecture_backend_tests PRIVATE
+    hydra_gate_c_architecture
+)
+add_test(NAME GateCArchitectureBackendTests
+    COMMAND gate_c_architecture_backend_tests
+)
+
+if(WIN32)
+    add_library(hydra_gate_c_adapter SHARED
+        src/gate_c_adapter.cpp
+    )
+    target_compile_definitions(hydra_gate_c_adapter PRIVATE
+        HYDRA_GATE_C_ADAPTER_BUILD=1
+    )
+    target_include_directories(hydra_gate_c_adapter PUBLIC include)
+    target_link_libraries(hydra_gate_c_adapter PRIVATE
+        hydra_virtual_input_core
+    )
+
+    add_library(hydra_gate_c_shim_support STATIC
+        src/gate_c_cursor_focus_shim.cpp
+        src/gate_c_raw_input_shim.cpp
+        src/gate_c_shim_iat.cpp
+    )
+    target_include_directories(hydra_gate_c_shim_support PUBLIC include)
+
+    add_library(hydra_gate_c_shim SHARED
+        src/gate_c_shim.cpp
+    )
+    target_compile_definitions(hydra_gate_c_shim PRIVATE
+        HYDRA_GATE_C_SHIM_BUILD=1
+    )
+    target_include_directories(hydra_gate_c_shim PUBLIC include)
+    target_link_libraries(hydra_gate_c_shim PRIVATE
+        hydra_gate_c_adapter
+        hydra_gate_c_shim_support
+        User32.lib
+    )
+    set_target_properties(hydra_gate_c_shim PROPERTIES
+        OUTPUT_NAME hydra_gate_c_shim
+    )
+
+    add_executable(hydra_gate_c_target src/gate_c_target.cpp)
+    target_link_libraries(hydra_gate_c_target PRIVATE
+        hydra_gate_c_architecture
+        hydra_virtual_input_core
+        hydra_gate_c_adapter
+        User32.lib
+    )
+    if(MINGW)
+        target_link_options(hydra_gate_c_target PRIVATE -municode)
+    endif()
+
+    add_executable(hydra_gate_c_api_probe src/gate_c_api_probe.cpp)
+    target_link_libraries(hydra_gate_c_api_probe PRIVATE
+        hydra_gate_c_architecture
+        hydra_virtual_input_core
+        hydra_gate_c_adapter
+        User32.lib
+    )
+    add_dependencies(hydra_gate_c_api_probe hydra_gate_c_shim)
+    if(MINGW)
+        target_link_options(hydra_gate_c_api_probe PRIVATE -municode)
+    endif()
+
+    add_library(hydra_gate_c_external_bridge SHARED
+        src/gate_c_external_bridge.cpp
+    )
+    target_include_directories(hydra_gate_c_external_bridge PUBLIC include)
+    target_link_libraries(hydra_gate_c_external_bridge PRIVATE
+        hydra_gate_c_architecture
+        hydra_virtual_input_core
+        hydra_gate_c_adapter
+        hydra_gate_c_shim
+        User32.lib
+    )
+    set_target_properties(hydra_gate_c_external_bridge PROPERTIES
+        OUTPUT_NAME hydra_gate_c_external_bridge
+    )
+
+    add_executable(hydra_gate_c_external_harness
+        src/gate_c_external_harness.cpp
+    )
+    target_link_libraries(hydra_gate_c_external_harness PRIVATE
+        hydra_gate_c_architecture
+        hydra_virtual_input_core
+        User32.lib
+    )
+    if(MINGW)
+        target_link_options(hydra_gate_c_external_harness PRIVATE -municode)
+    endif()
+
+    add_executable(gate_c_adapter_backend_tests
+        tests/test_gate_c_adapter.cpp
+    )
+    target_link_libraries(gate_c_adapter_backend_tests PRIVATE
+        hydra_gate_c_adapter
+    )
+
+    add_executable(gate_c_xinput_adapter_backend_tests
+        tests/test_gate_c_xinput_adapter.cpp
+    )
+    target_link_libraries(gate_c_xinput_adapter_backend_tests PRIVATE
+        hydra_gate_c_adapter
+    )
+
+    add_executable(gate_c_polling_shim_backend_tests
+        tests/test_gate_c_polling_shim.cpp
+    )
+    target_link_libraries(gate_c_polling_shim_backend_tests PRIVATE
+        hydra_gate_c_adapter
+        hydra_gate_c_shim
+        hydra_gate_c_shim_support
+        User32.lib
+    )
+
+    add_executable(gate_c_cursor_focus_shim_backend_tests
+        tests/test_gate_c_cursor_focus_shim.cpp
+    )
+    target_link_libraries(gate_c_cursor_focus_shim_backend_tests PRIVATE
+        hydra_gate_c_shim_support
+    )
+
+    add_executable(gate_c_raw_input_shim_backend_tests
+        tests/test_gate_c_raw_input_shim.cpp
+    )
+    target_link_libraries(gate_c_raw_input_shim_backend_tests PRIVATE
+        hydra_gate_c_shim_support
+    )
+
+    add_test(NAME GateCAdapterBackendTests
+        COMMAND gate_c_adapter_backend_tests
+    )
+    add_test(NAME GateCXInputAdapterBackendTests
+        COMMAND gate_c_xinput_adapter_backend_tests
+    )
+    add_test(NAME GateCPollingShimBackendTests
+        COMMAND gate_c_polling_shim_backend_tests
+    )
+    add_test(NAME GateCCursorFocusShimBackendTests
+        COMMAND gate_c_cursor_focus_shim_backend_tests
+    )
+    add_test(NAME GateCRawInputShimBackendTests
+        COMMAND gate_c_raw_input_shim_backend_tests
+    )
+    add_test(NAME GateCTargetBackendSelfTest
+        COMMAND hydra_gate_c_target --self-test
+    )
+    add_test(NAME GateCExternalHarnessBackendHelp
+        COMMAND hydra_gate_c_external_harness --help
+    )
+endif()

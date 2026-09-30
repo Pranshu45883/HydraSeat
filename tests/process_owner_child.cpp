@@ -1,7 +1,9 @@
 #ifdef _WIN32
 #include <windows.h>
 
+#include <cstdint>
 #include <cwchar>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +16,23 @@ bool parseUnsigned(const wchar_t* text, DWORD& value) {
     if (!end || *end != L'\0') return false;
     value = static_cast<DWORD>(parsed);
     return true;
+}
+
+bool parseUnsigned64(const wchar_t* text, std::uint64_t& value) {
+    if (!text || *text == L'\0') return false;
+    wchar_t* end = nullptr;
+    const unsigned long long parsed = std::wcstoull(text, &end, 10);
+    if (!end || *end != L'\0') return false;
+    value = static_cast<std::uint64_t>(parsed);
+    return true;
+}
+
+std::optional<std::wstring> environmentValue(const wchar_t* name) {
+    std::vector<wchar_t> buffer(32768u, L'\0');
+    const DWORD length = GetEnvironmentVariableW(
+        name, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0 || length >= buffer.size()) return std::nullopt;
+    return std::wstring(buffer.data(), length);
 }
 
 std::wstring quote(const std::wstring& value) {
@@ -67,6 +86,9 @@ int wmain(int argc, wchar_t* argv[]) {
 
     std::wstring readyEvent;
     std::wstring descendantReadyEvent;
+    std::wstring expectedXInputPipe;
+    DWORD expectedXInputSeat = 0;
+    std::uint64_t expectedXInputSourceGeneration = 0;
     DWORD lifetimeMs = 30000;
     bool exitAfterSpawn = false;
 
@@ -76,6 +98,15 @@ int wmain(int argc, wchar_t* argv[]) {
         } else if (std::wcscmp(argv[i], L"--spawn-child-ready-event") == 0 &&
                    i + 1 < argc) {
             descendantReadyEvent = argv[++i];
+        } else if (std::wcscmp(argv[i], L"--expect-xinput-pipe") == 0 &&
+                   i + 1 < argc) {
+            expectedXInputPipe = argv[++i];
+        } else if (std::wcscmp(argv[i], L"--expect-xinput-seat") == 0 &&
+                   i + 1 < argc) {
+            if (!parseUnsigned(argv[++i], expectedXInputSeat)) return 2;
+        } else if (std::wcscmp(argv[i], L"--expect-xinput-source-generation") == 0 &&
+                   i + 1 < argc) {
+            if (!parseUnsigned64(argv[++i], expectedXInputSourceGeneration)) return 2;
         } else if (std::wcscmp(argv[i], L"--lifetime-ms") == 0 && i + 1 < argc) {
             if (!parseUnsigned(argv[++i], lifetimeMs)) return 2;
         } else if (std::wcscmp(argv[i], L"--exit-after-spawn") == 0) {
@@ -86,6 +117,28 @@ int wmain(int argc, wchar_t* argv[]) {
     }
 
     if (readyEvent.empty()) return 4;
+
+    const bool expectsXInput = !expectedXInputPipe.empty() ||
+                               expectedXInputSeat != 0 ||
+                               expectedXInputSourceGeneration != 0;
+    if (expectsXInput) {
+        const auto pipe = environmentValue(L"HYDRA_XINPUT_PIPE");
+        const auto seat = environmentValue(L"HYDRA_XINPUT_SEAT_ID");
+        const auto activation = environmentValue(L"HYDRA_XINPUT_ACTIVATION_GENERATION");
+        const auto source = environmentValue(L"HYDRA_XINPUT_SOURCE_GENERATION");
+        if (!pipe || !seat || !activation || !source) return 8;
+        if (*pipe != expectedXInputPipe ||
+            *seat != std::to_wstring(expectedXInputSeat) ||
+            *source != std::to_wstring(expectedXInputSourceGeneration)) {
+            return 9;
+        }
+        std::uint64_t activationGeneration = 0;
+        if (!parseUnsigned64(activation->c_str(), activationGeneration) ||
+            activationGeneration == 0) {
+            return 10;
+        }
+    }
+
     if (!descendantReadyEvent.empty() &&
         !spawnDescendant(descendantReadyEvent, lifetimeMs)) {
         return 7;

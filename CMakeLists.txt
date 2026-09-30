@@ -556,3 +556,33 @@ target_link_libraries(two_seat_launch_foundation_tests PRIVATE
 add_test(NAME TwoSeatLaunchFoundationTests
     COMMAND two_seat_launch_foundation_tests
 )
+
+add_library(hydra_virtual_input_core STATIC
+    src/gate_c_protocol.cpp
+    src/gate_c_transport.cpp
+    src/gate_c_probe_snapshot.cpp
+    src/virtual_input_state.cpp
+    src/virtual_raw_input.cpp
+    src/virtual_xinput_state.cpp
+)
+target_include_directories(hydra_virtual_input_core PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_virtual_input_core PUBLIC Bcrypt.lib)
+endif()
+
+foreach(test_name IN ITEMS
+    gate_c_protocol
+    gate_c_probe_snapshot
+    virtual_raw_input
+    virtual_xinput_state
+)
+    add_executable(${test_name}_core_tests tests/test_${test_name}.cpp)
+    target_link_libraries(${test_name}_core_tests PRIVATE
+        hydra_virtual_input_core
+    )
+endforeach()
+
+add_test(NAME GateCProtocolCoreTests COMMAND gate_c_protocol_core_tests)
+add_test(NAME GateCProbeSnapshotCoreTests COMMAND gate_c_probe_snapshot_core_tests)
+add_test(NAME VirtualRawInputCoreTests COMMAND virtual_raw_input_core_tests)
+add_test(NAME VirtualXInputStateCoreTests COMMAND virtual_xinput_state_core_tests)

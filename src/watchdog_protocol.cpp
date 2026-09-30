@@ -1,4 +1,5 @@
 #include "hydra/watchdog_protocol.hpp"
+#include "hydra/recovery_process_attachment.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -593,3 +594,473 @@ std::string_view watchdogTriggerReasonName(
 }
 
 } // namespace hydra::watchdog
+
+namespace hydra::recovery {
+namespace {
+
+void setAttachmentError(std::string* error, std::string_view value) {
+    if (error != nullptr) *error = value;
+}
+
+bool zeroRuntimeSession(const runtime::RuntimeSessionId& sessionId) noexcept {
+    return std::all_of(sessionId.bytes.begin(), sessionId.bytes.end(),
+                       [](std::uint8_t value) { return value == 0; });
+}
+
+bool sameWatchdogLeaseIdentity(const watchdog::WatchdogLease& left,
+                               const watchdog::WatchdogLease& right) noexcept {
+    return left.sessionId == right.sessionId && left.generation == right.generation;
+}
+
+void appendU16(std::vector<std::byte>& bytes, std::uint16_t value) {
+    bytes.push_back(static_cast<std::byte>(value & 0xffu));
+    bytes.push_back(static_cast<std::byte>((value >> 8u) & 0xffu));
+}
+
+void appendU32(std::vector<std::byte>& bytes, std::uint32_t value) {
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        bytes.push_back(static_cast<std::byte>((value >> shift) & 0xffu));
+    }
+}
+
+void appendU64(std::vector<std::byte>& bytes, std::uint64_t value) {
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        bytes.push_back(static_cast<std::byte>((value >> shift) & 0xffu));
+    }
+}
+
+bool readU16(std::span<const std::byte> bytes, std::size_t& offset,
+             std::uint16_t& value) {
+    if (bytes.size() - offset < 2u) return false;
+    value = static_cast<std::uint16_t>(
+        std::to_integer<std::uint8_t>(bytes[offset]) |
+        static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(std::to_integer<std::uint8_t>(bytes[offset + 1u]))
+            << 8u));
+    offset += 2u;
+    return true;
+}
+
+bool readU32(std::span<const std::byte> bytes, std::size_t& offset,
+             std::uint32_t& value) {
+    if (bytes.size() - offset < 4u) return false;
+    value = 0;
+    for (unsigned shift = 0; shift < 32; shift += 8) {
+        value |= static_cast<std::uint32_t>(
+            std::to_integer<std::uint8_t>(bytes[offset++])) << shift;
+    }
+    return true;
+}
+
+bool readU64(std::span<const std::byte> bytes, std::size_t& offset,
+             std::uint64_t& value) {
+    if (bytes.size() - offset < 8u) return false;
+    value = 0;
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        value |= static_cast<std::uint64_t>(
+            std::to_integer<std::uint8_t>(bytes[offset++])) << shift;
+    }
+    return true;
+}
+
+RecoveryAttachmentResult attachmentResult(
+    RecoveryAttachmentCode code,
+    std::optional<RecoveryProcessAttachmentRegistration> current,
+    std::string diagnostic) {
+    RecoveryAttachmentResult result;
+    result.code = code;
+    result.current = std::move(current);
+    result.diagnostic = std::move(diagnostic);
+    if (result.diagnostic.size() > 2048u) result.diagnostic.resize(2048u);
+    return result;
+}
+
+} // namespace
+
+bool validateRecoveryProcessAttachmentIdentity(
+    const RecoveryProcessAttachmentIdentity& identity,
+    std::string* error) {
+    if (identity.schemaVersion != kRecoveryProcessAttachmentVersion) {
+        setAttachmentError(error, "recovery attachment schema version is unsupported");
+        return false;
+    }
+    if (identity.seatId == 0u || identity.seatId > kMaximumRecoveryProcessAttachments) {
+        setAttachmentError(error, "recovery attachment Seat is outside the v1 two-Seat bound");
+        return false;
+    }
+    if (zeroRuntimeSession(identity.hostSessionId)) {
+        setAttachmentError(error, "recovery attachment host session is zero");
+        return false;
+    }
+    if (identity.sessionGeneration == 0u || identity.seatGameGeneration == 0u ||
+        identity.recoveryEpoch == 0u) {
+        setAttachmentError(error, "recovery attachment generation fields must be nonzero");
+        return false;
+    }
+    if (identity.process.processId == 0u ||
+        identity.process.creationTime100ns == 0u) {
+        setAttachmentError(error, "recovery attachment requires exact PID plus creation time");
+        return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+}
+
+std::vector<std::byte> encodeRecoveryProcessAttachmentIdentity(
+    const RecoveryProcessAttachmentIdentity& identity) {
+    if (!validateRecoveryProcessAttachmentIdentity(identity, nullptr)) return {};
+    std::vector<std::byte> bytes;
+    bytes.reserve(kRecoveryProcessAttachmentIdentityBytes);
+    appendU32(bytes, kRecoveryProcessAttachmentMagic);
+    appendU16(bytes, identity.schemaVersion);
+    appendU16(bytes, 0u);
+    appendU32(bytes, identity.seatId);
+    for (const auto value : identity.hostSessionId.bytes) {
+        bytes.push_back(static_cast<std::byte>(value));
+    }
+    appendU64(bytes, identity.sessionGeneration);
+    appendU64(bytes, identity.seatGameGeneration);
+    appendU32(bytes, identity.process.processId);
+    appendU32(bytes, 0u);
+    appendU64(bytes, identity.process.creationTime100ns);
+    appendU64(bytes, identity.recoveryEpoch);
+    if (bytes.size() != kRecoveryProcessAttachmentIdentityBytes) return {};
+    return bytes;
+}
+
+std::optional<RecoveryProcessAttachmentIdentity>
+decodeRecoveryProcessAttachmentIdentity(
+    std::span<const std::byte> bytes,
+    std::string* error) {
+    if (bytes.size() != kRecoveryProcessAttachmentIdentityBytes) {
+        setAttachmentError(error, "recovery attachment identity size is invalid");
+        return std::nullopt;
+    }
+    std::size_t offset = 0u;
+    std::uint32_t magic = 0u;
+    std::uint16_t version = 0u;
+    std::uint16_t reserved16 = 0u;
+    std::uint32_t reserved32 = 0u;
+    RecoveryProcessAttachmentIdentity identity;
+    if (!readU32(bytes, offset, magic) || !readU16(bytes, offset, version) ||
+        !readU16(bytes, offset, reserved16) ||
+        !readU32(bytes, offset, identity.seatId)) {
+        setAttachmentError(error, "recovery attachment identity header is truncated");
+        return std::nullopt;
+    }
+    if (offset + identity.hostSessionId.bytes.size() > bytes.size()) {
+        setAttachmentError(error, "recovery attachment host session is truncated");
+        return std::nullopt;
+    }
+    for (auto& value : identity.hostSessionId.bytes) {
+        value = std::to_integer<std::uint8_t>(bytes[offset++]);
+    }
+    if (!readU64(bytes, offset, identity.sessionGeneration) ||
+        !readU64(bytes, offset, identity.seatGameGeneration) ||
+        !readU32(bytes, offset, identity.process.processId) ||
+        !readU32(bytes, offset, reserved32) ||
+        !readU64(bytes, offset, identity.process.creationTime100ns) ||
+        !readU64(bytes, offset, identity.recoveryEpoch) || offset != bytes.size()) {
+        setAttachmentError(error, "recovery attachment identity payload is truncated");
+        return std::nullopt;
+    }
+    if (magic != kRecoveryProcessAttachmentMagic ||
+        version != kRecoveryProcessAttachmentVersion ||
+        reserved16 != 0u || reserved32 != 0u) {
+        setAttachmentError(error, "recovery attachment magic/version/reserved field is invalid");
+        return std::nullopt;
+    }
+    identity.schemaVersion = version;
+    if (!validateRecoveryProcessAttachmentIdentity(identity, error)) {
+        return std::nullopt;
+    }
+    return identity;
+}
+
+bool validateRecoveryProcessAttachmentRegistration(
+    const RecoveryProcessAttachmentRegistration& registration,
+    std::string* error) {
+    if (!validateRecoveryProcessAttachmentIdentity(registration.identity, error)) {
+        return false;
+    }
+    if (!watchdog::validateRollbackPlan(registration.manifest, error)) {
+        return false;
+    }
+    if (registration.manifest.lease.generation !=
+        registration.identity.recoveryEpoch) {
+        setAttachmentError(error, "recovery attachment epoch does not match watchdog lease generation");
+        return false;
+    }
+
+    std::size_t attachedProcessActions = 0u;
+    for (const auto& action : registration.manifest.actions) {
+        if (action.generation != registration.identity.recoveryEpoch) {
+            setAttachmentError(error, "recovery attachment action generation does not match its epoch");
+            return false;
+        }
+        if (action.kind != watchdog::RollbackActionKind::TerminateOwnedProcess) {
+            continue;
+        }
+        ++attachedProcessActions;
+        if (action.process != registration.identity.process) {
+            setAttachmentError(error, "recovery attachment manifest targets a different process identity");
+            return false;
+        }
+    }
+    if (attachedProcessActions != 1u) {
+        setAttachmentError(error, "recovery attachment manifest must contain exactly one exact-process action");
+        return false;
+    }
+    if (error != nullptr) error->clear();
+    return true;
+}
+
+RecoveryAttachmentResult RecoveryProcessAttachmentAuthority::compareAgainstCurrent(
+    const RecoveryProcessAttachmentRegistration& current,
+    const RecoveryProcessAttachmentIdentity& identity,
+    const watchdog::WatchdogLease& lease) const {
+    if (identity.seatId != current.identity.seatId) {
+        return attachmentResult(RecoveryAttachmentCode::SeatMismatch, current,
+                                "recovery attachment belongs to a different Seat");
+    }
+    if (identity.hostSessionId != current.identity.hostSessionId) {
+        return attachmentResult(RecoveryAttachmentCode::SessionMismatch, current,
+                                "recovery attachment belongs to a different host session");
+    }
+    if (identity.sessionGeneration < current.identity.sessionGeneration) {
+        return attachmentResult(RecoveryAttachmentCode::StaleSessionGeneration, current,
+                                "recovery attachment session generation is stale");
+    }
+    if (identity.sessionGeneration != current.identity.sessionGeneration) {
+        return attachmentResult(RecoveryAttachmentCode::SessionGenerationMismatch, current,
+                                "recovery attachment session generation does not match");
+    }
+    if (identity.seatGameGeneration < current.identity.seatGameGeneration) {
+        return attachmentResult(RecoveryAttachmentCode::StaleSeatGameGeneration, current,
+                                "recovery attachment Seat-game generation is stale");
+    }
+    if (identity.seatGameGeneration != current.identity.seatGameGeneration) {
+        return attachmentResult(RecoveryAttachmentCode::SeatGameGenerationMismatch, current,
+                                "recovery attachment Seat-game generation does not match");
+    }
+    if (identity.process != current.identity.process) {
+        return attachmentResult(RecoveryAttachmentCode::ProcessIdentityMismatch, current,
+                                "recovery attachment PID/creation identity does not match");
+    }
+    if (identity.recoveryEpoch != current.identity.recoveryEpoch ||
+        lease != current.manifest.lease) {
+        return attachmentResult(RecoveryAttachmentCode::LeaseMismatch, current,
+                                "recovery attachment lease/epoch does not match");
+    }
+    if (identity != current.identity) {
+        return attachmentResult(RecoveryAttachmentCode::ConflictingRegistration, current,
+                                "recovery attachment identity conflicts with the armed registration");
+    }
+    return attachmentResult(RecoveryAttachmentCode::Ok, current,
+                            "exact recovery attachment is armed");
+}
+
+RecoveryAttachmentResult RecoveryProcessAttachmentAuthority::registerAttachment(
+    RecoveryProcessAttachmentRegistration registration) {
+    std::string error;
+    if (!validateRecoveryProcessAttachmentIdentity(registration.identity, &error)) {
+        return attachmentResult(RecoveryAttachmentCode::InvalidIdentity, std::nullopt,
+                                std::move(error));
+    }
+    if (!validateRecoveryProcessAttachmentRegistration(registration, &error)) {
+        return attachmentResult(RecoveryAttachmentCode::InvalidPlan, std::nullopt,
+                                std::move(error));
+    }
+
+    const auto activeSeat = std::find_if(
+        active_.begin(), active_.end(), [&](const auto& current) {
+            return current.identity.seatId == registration.identity.seatId;
+        });
+    if (activeSeat != active_.end()) {
+        if (*activeSeat == registration) {
+            return attachmentResult(RecoveryAttachmentCode::AlreadySatisfied,
+                                    *activeSeat,
+                                    "exact recovery attachment is already registered");
+        }
+        auto mismatch = compareAgainstCurrent(
+            *activeSeat, registration.identity, registration.manifest.lease);
+        if (mismatch.code == RecoveryAttachmentCode::Ok) {
+            mismatch.code = RecoveryAttachmentCode::ConflictingRegistration;
+            mismatch.diagnostic =
+                "same exact attachment identity cannot replace a different armed manifest";
+        }
+        return mismatch;
+    }
+
+    for (const auto& current : active_) {
+        if (current.identity.process == registration.identity.process) {
+            return attachmentResult(RecoveryAttachmentCode::SeatMismatch, current,
+                                    "exact process identity is already attached to another Seat");
+        }
+        if (current.identity.process.processId == registration.identity.process.processId) {
+            return attachmentResult(RecoveryAttachmentCode::ProcessIdentityMismatch, current,
+                                    "an active attachment already owns this PID with another creation time");
+        }
+        if (sameWatchdogLeaseIdentity(current.manifest.lease,
+                                      registration.manifest.lease)) {
+            return attachmentResult(RecoveryAttachmentCode::LeaseMismatch, current,
+                                    "watchdog lease identity is already bound to another Seat attachment");
+        }
+    }
+
+    for (const auto& completed : lastDisarmed_) {
+        if (sameWatchdogLeaseIdentity(completed.manifest.lease,
+                                      registration.manifest.lease)) {
+            return attachmentResult(RecoveryAttachmentCode::ReplayRejected, completed,
+                                    "a completed watchdog lease identity cannot authorize a new attachment");
+        }
+    }
+
+    const auto prior = std::find_if(
+        lastDisarmed_.begin(), lastDisarmed_.end(), [&](const auto& current) {
+            return current.identity.seatId == registration.identity.seatId;
+        });
+    if (prior != lastDisarmed_.end()) {
+        if (*prior == registration) {
+            return attachmentResult(RecoveryAttachmentCode::ReplayRejected, *prior,
+                                    "a completed exact recovery attachment cannot be replayed");
+        }
+        if (prior->identity.hostSessionId == registration.identity.hostSessionId) {
+            if (registration.identity.sessionGeneration <
+                prior->identity.sessionGeneration) {
+                return attachmentResult(RecoveryAttachmentCode::StaleSessionGeneration,
+                                        *prior,
+                                        "recovery attachment session generation predates the last completed epoch");
+            }
+            if (registration.identity.sessionGeneration ==
+                prior->identity.sessionGeneration) {
+                if (registration.identity.seatGameGeneration <
+                    prior->identity.seatGameGeneration) {
+                    return attachmentResult(RecoveryAttachmentCode::StaleSeatGameGeneration,
+                                            *prior,
+                                            "recovery attachment Seat-game generation predates the last completed epoch");
+                }
+                if (registration.identity.recoveryEpoch <= prior->identity.recoveryEpoch) {
+                    return attachmentResult(RecoveryAttachmentCode::ReplayRejected, *prior,
+                                            "recovery attachment epoch did not advance past the last completed epoch");
+                }
+            }
+        }
+    }
+
+    if (active_.size() >= kMaximumRecoveryProcessAttachments) {
+        return attachmentResult(RecoveryAttachmentCode::SeatLimitExceeded,
+                                std::nullopt,
+                                "v1 recovery attachment authority already owns two Seats");
+    }
+    const auto insertedIdentity = registration.identity;
+    active_.push_back(std::move(registration));
+    std::sort(active_.begin(), active_.end(), [](const auto& left, const auto& right) {
+        return left.identity.seatId < right.identity.seatId;
+    });
+    const auto inserted = std::find_if(
+        active_.begin(), active_.end(), [&](const auto& value) {
+            return value.identity == insertedIdentity;
+        });
+    return attachmentResult(RecoveryAttachmentCode::Ok,
+                            inserted == active_.end()
+                                ? std::optional<RecoveryProcessAttachmentRegistration>{}
+                                : std::optional<RecoveryProcessAttachmentRegistration>{*inserted},
+                            "exact recovery attachment registered");
+}
+
+RecoveryAttachmentResult RecoveryProcessAttachmentAuthority::verifyArmed(
+    const RecoveryProcessAttachmentIdentity& identity,
+    const watchdog::WatchdogLease& lease) const {
+    std::string error;
+    if (!validateRecoveryProcessAttachmentIdentity(identity, &error)) {
+        return attachmentResult(RecoveryAttachmentCode::InvalidIdentity, std::nullopt,
+                                std::move(error));
+    }
+    const auto current = std::find_if(
+        active_.begin(), active_.end(), [&](const auto& value) {
+            return value.identity.seatId == identity.seatId;
+        });
+    if (current != active_.end()) {
+        return compareAgainstCurrent(*current, identity, lease);
+    }
+    const auto otherSeat = std::find_if(
+        active_.begin(), active_.end(), [&](const auto& value) {
+            return value.identity.process == identity.process;
+        });
+    if (otherSeat != active_.end()) {
+        return attachmentResult(RecoveryAttachmentCode::SeatMismatch, *otherSeat,
+                                "exact process attachment is armed for another Seat");
+    }
+    return attachmentResult(RecoveryAttachmentCode::NotArmed, std::nullopt,
+                            "recovery attachment is not armed");
+}
+
+RecoveryAttachmentResult RecoveryProcessAttachmentAuthority::disarm(
+    const RecoveryProcessAttachmentIdentity& identity,
+    const watchdog::WatchdogLease& lease) {
+    const auto current = std::find_if(
+        active_.begin(), active_.end(), [&](const auto& value) {
+            return value.identity.seatId == identity.seatId;
+        });
+    if (current == active_.end()) {
+        const auto prior = std::find_if(
+            lastDisarmed_.begin(), lastDisarmed_.end(), [&](const auto& value) {
+                return value.identity == identity && value.manifest.lease == lease;
+            });
+        if (prior != lastDisarmed_.end()) {
+            return attachmentResult(RecoveryAttachmentCode::AlreadySatisfied, *prior,
+                                    "exact recovery attachment was already disarmed");
+        }
+        return verifyArmed(identity, lease);
+    }
+
+    auto matched = compareAgainstCurrent(*current, identity, lease);
+    if (!matched.succeeded()) return matched;
+    const auto completed = *current;
+    const auto prior = std::find_if(
+        lastDisarmed_.begin(), lastDisarmed_.end(), [&](const auto& value) {
+            return value.identity.seatId == completed.identity.seatId;
+        });
+    if (prior == lastDisarmed_.end()) {
+        lastDisarmed_.push_back(completed);
+    } else {
+        *prior = completed;
+    }
+    active_.erase(current);
+    return attachmentResult(RecoveryAttachmentCode::Ok, completed,
+                            "exact recovery attachment disarmed");
+}
+
+std::vector<RecoveryProcessAttachmentRegistration>
+RecoveryProcessAttachmentAuthority::activeAttachments() const {
+    auto result = active_;
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        return left.identity.seatId < right.identity.seatId;
+    });
+    return result;
+}
+
+std::string_view recoveryAttachmentCodeName(RecoveryAttachmentCode code) noexcept {
+    switch (code) {
+    case RecoveryAttachmentCode::Ok: return "ok";
+    case RecoveryAttachmentCode::AlreadySatisfied: return "already-satisfied";
+    case RecoveryAttachmentCode::InvalidIdentity: return "invalid-identity";
+    case RecoveryAttachmentCode::InvalidPlan: return "invalid-plan";
+    case RecoveryAttachmentCode::SeatLimitExceeded: return "seat-limit-exceeded";
+    case RecoveryAttachmentCode::SeatMismatch: return "seat-mismatch";
+    case RecoveryAttachmentCode::SessionMismatch: return "session-mismatch";
+    case RecoveryAttachmentCode::StaleSessionGeneration: return "stale-session-generation";
+    case RecoveryAttachmentCode::SessionGenerationMismatch: return "session-generation-mismatch";
+    case RecoveryAttachmentCode::StaleSeatGameGeneration: return "stale-seat-game-generation";
+    case RecoveryAttachmentCode::SeatGameGenerationMismatch: return "seat-game-generation-mismatch";
+    case RecoveryAttachmentCode::ProcessIdentityMismatch: return "process-identity-mismatch";
+    case RecoveryAttachmentCode::LeaseMismatch: return "lease-mismatch";
+    case RecoveryAttachmentCode::ConflictingRegistration: return "conflicting-registration";
+    case RecoveryAttachmentCode::ReplayRejected: return "replay-rejected";
+    case RecoveryAttachmentCode::NotArmed: return "not-armed";
+    }
+    return "unknown";
+}
+
+} // namespace hydra::recovery

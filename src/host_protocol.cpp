@@ -61,6 +61,10 @@ bool validMessageType(MessageType type) noexcept {
     case MessageType::ReleaseUiLeaseResult:
     case MessageType::PairController:
     case MessageType::PairControllerResult:
+    case MessageType::RouteAudio:
+    case MessageType::RouteAudioResult:
+    case MessageType::ResetAudio:
+    case MessageType::ResetAudioResult:
         return true;
     }
     return false;
@@ -140,6 +144,33 @@ bool validControllerId(std::string_view value) noexcept {
     return true;
 }
 
+bool validAudioEndpointId(std::string_view value) noexcept {
+    if (value.empty() ||
+        value.size() > kHostProtocolMaxAudioEndpointIdBytes) {
+        return false;
+    }
+    for (const unsigned char ch : value) {
+        if (ch < 0x21u || ch > 0x7eu) return false;
+    }
+    return true;
+}
+
+bool validAudioMutationStatus(AudioMutationStatus status) noexcept {
+    switch (status) {
+    case AudioMutationStatus::Success:
+    case AudioMutationStatus::InvalidProcess:
+    case AudioMutationStatus::ProcessNotFound:
+    case AudioMutationStatus::AudioSessionNotFound:
+    case AudioMutationStatus::EndpointNotFound:
+    case AudioMutationStatus::EndpointUnavailable:
+    case AudioMutationStatus::IdentityMismatch:
+    case AudioMutationStatus::RoutingFailed:
+    case AudioMutationStatus::OsApiError:
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 std::string_view messageTypeName(MessageType type) noexcept {
@@ -157,6 +188,10 @@ std::string_view messageTypeName(MessageType type) noexcept {
     case MessageType::ReleaseUiLeaseResult: return "ReleaseUiLeaseResult";
     case MessageType::PairController: return "PairController";
     case MessageType::PairControllerResult: return "PairControllerResult";
+    case MessageType::RouteAudio: return "RouteAudio";
+    case MessageType::RouteAudioResult: return "RouteAudioResult";
+    case MessageType::ResetAudio: return "ResetAudio";
+    case MessageType::ResetAudioResult: return "ResetAudioResult";
     }
     return "Unknown";
 }
@@ -452,6 +487,116 @@ std::optional<ControllerPairRequest> decodeControllerPairRequest(
     return request;
 }
 
+std::vector<std::byte> encodeProcessRequest(const ProcessRequest& request) {
+    if (!validSeatId(request.seatId) || request.processId == 0 ||
+        request.creationIdentity == 0) {
+        return {};
+    }
+    std::vector<std::byte> out;
+    out.reserve(16);
+    appendInteger(out, request.seatId);
+    appendInteger(out, request.processId);
+    appendInteger(out, request.creationIdentity);
+    return out;
+}
+
+std::optional<ProcessRequest> decodeProcessRequest(
+    std::span<const std::byte> payload) {
+    if (payload.size() != 16) return std::nullopt;
+    std::size_t offset = 0;
+    ProcessRequest request;
+    if (!readInteger(payload, offset, request.seatId) ||
+        !readInteger(payload, offset, request.processId) ||
+        !readInteger(payload, offset, request.creationIdentity) ||
+        !validSeatId(request.seatId) || request.processId == 0 ||
+        request.creationIdentity == 0) {
+        return std::nullopt;
+    }
+    return request;
+}
+
+std::vector<std::byte> encodeAudioRouteRequest(
+    const AudioRouteRequest& request) {
+    if (!validSeatId(request.process.seatId) ||
+        request.process.processId == 0 ||
+        request.process.creationIdentity == 0 ||
+        !validAudioEndpointId(request.endpointId)) {
+        return {};
+    }
+
+    std::vector<std::byte> out;
+    out.reserve(20 + request.endpointId.size());
+    appendInteger(out, request.process.seatId);
+    appendInteger(out, request.process.processId);
+    appendInteger(out, request.process.creationIdentity);
+    appendInteger(out, static_cast<std::uint32_t>(request.endpointId.size()));
+    for (const char ch : request.endpointId) {
+        out.push_back(static_cast<std::byte>(
+            static_cast<unsigned char>(ch)));
+    }
+    return out;
+}
+
+std::optional<AudioRouteRequest> decodeAudioRouteRequest(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 21 ||
+        payload.size() > 20 + kHostProtocolMaxAudioEndpointIdBytes) {
+        return std::nullopt;
+    }
+
+    std::size_t offset = 0;
+    AudioRouteRequest request;
+    std::uint32_t length = 0;
+    if (!readInteger(payload, offset, request.process.seatId) ||
+        !readInteger(payload, offset, request.process.processId) ||
+        !readInteger(payload, offset, request.process.creationIdentity) ||
+        !readInteger(payload, offset, length) ||
+        !validSeatId(request.process.seatId) ||
+        request.process.processId == 0 ||
+        request.process.creationIdentity == 0 ||
+        length == 0 || length > kHostProtocolMaxAudioEndpointIdBytes ||
+        payload.size() != offset + length) {
+        return std::nullopt;
+    }
+
+    request.endpointId.reserve(length);
+    for (std::size_t index = 0; index < length; ++index) {
+        request.endpointId.push_back(static_cast<char>(
+            std::to_integer<unsigned char>(payload[offset + index])));
+    }
+    if (!validAudioEndpointId(request.endpointId)) return std::nullopt;
+    return request;
+}
+
+std::vector<std::byte> encodeAudioMutationResult(
+    const AudioMutationResult& result) {
+    if (!validAudioMutationStatus(result.status)) return {};
+    std::vector<std::byte> out;
+    out.reserve(8);
+    appendInteger(out, static_cast<std::uint16_t>(result.status));
+    appendInteger(out, std::uint16_t{0});
+    appendInteger(out, std::uint32_t{0});
+    return out;
+}
+
+std::optional<AudioMutationResult> decodeAudioMutationResult(
+    std::span<const std::byte> payload) {
+    if (payload.size() != 8) return std::nullopt;
+    std::size_t offset = 0;
+    std::uint16_t rawStatus = 0;
+    std::uint16_t reserved16 = 0;
+    std::uint32_t reserved32 = 0;
+    if (!readInteger(payload, offset, rawStatus) ||
+        !readInteger(payload, offset, reserved16) ||
+        !readInteger(payload, offset, reserved32) ||
+        reserved16 != 0 || reserved32 != 0) {
+        return std::nullopt;
+    }
+    const auto status = static_cast<AudioMutationStatus>(rawStatus);
+    if (!validAudioMutationStatus(status)) return std::nullopt;
+    return AudioMutationResult{status};
+}
+
 std::vector<std::byte> encodePing(std::uint64_t nonce) {
     if (nonce == 0) return {};
     std::vector<std::byte> out;
@@ -524,7 +669,9 @@ std::optional<ErrorPayload> decodeError(
 bool isMutatingRequest(MessageType type) noexcept {
     return type == MessageType::AcquireUiLease ||
            type == MessageType::ReleaseUiLease ||
-           type == MessageType::PairController;
+           type == MessageType::PairController ||
+           type == MessageType::RouteAudio ||
+           type == MessageType::ResetAudio;
 }
 
 MessageType responseTypeFor(MessageType request) noexcept {
@@ -535,6 +682,8 @@ MessageType responseTypeFor(MessageType request) noexcept {
     case MessageType::AcquireUiLease: return MessageType::AcquireUiLeaseResult;
     case MessageType::ReleaseUiLease: return MessageType::ReleaseUiLeaseResult;
     case MessageType::PairController: return MessageType::PairControllerResult;
+    case MessageType::RouteAudio: return MessageType::RouteAudioResult;
+    case MessageType::ResetAudio: return MessageType::ResetAudioResult;
     default: return MessageType::Error;
     }
 }

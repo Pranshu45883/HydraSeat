@@ -98,6 +98,30 @@ int main() {
     invalidPair.persistentControllerId = "has space";
     assert(encodeControllerPairRequest(invalidPair).empty());
 
+    const ProcessRequest processRequest{1, 4242, 0x1122334455667788ull};
+    const auto processBytes = encodeProcessRequest(processRequest);
+    assert(processBytes.size() == 16);
+    assert(decodeProcessRequest(processBytes) == processRequest);
+    assert(encodeProcessRequest(ProcessRequest{1, 0, 1}).empty());
+    assert(encodeProcessRequest(ProcessRequest{3, 1, 1}).empty());
+
+    const AudioRouteRequest audioRoute{
+        processRequest,
+        "{0.0.0.00000000}.{12345678-1234-1234-1234-1234567890AB}"};
+    const auto audioRouteBytes = encodeAudioRouteRequest(audioRoute);
+    assert(!audioRouteBytes.empty());
+    assert(decodeAudioRouteRequest(audioRouteBytes) == audioRoute);
+
+    auto invalidAudioRoute = audioRoute;
+    invalidAudioRoute.endpointId = "endpoint with spaces";
+    assert(encodeAudioRouteRequest(invalidAudioRoute).empty());
+
+    const AudioMutationResult audioResult{
+        AudioMutationStatus::IdentityMismatch};
+    const auto audioResultBytes = encodeAudioMutationResult(audioResult);
+    assert(audioResultBytes.size() == 8);
+    assert(decodeAudioMutationResult(audioResultBytes) == audioResult);
+
     const auto ping = encodePing(0x1234u);
     assert(decodePing(ping) == std::optional<std::uint64_t>{0x1234u});
     assert(encodePing(0).empty());
@@ -115,6 +139,8 @@ int main() {
     assert(isMutatingRequest(MessageType::AcquireUiLease));
     assert(isMutatingRequest(MessageType::ReleaseUiLease));
     assert(isMutatingRequest(MessageType::PairController));
+    assert(isMutatingRequest(MessageType::RouteAudio));
+    assert(isMutatingRequest(MessageType::ResetAudio));
     assert(!isMutatingRequest(MessageType::GetSnapshot));
 
     assert(responseTypeFor(MessageType::Hello) == MessageType::HelloAck);
@@ -126,6 +152,10 @@ int main() {
            MessageType::ReleaseUiLeaseResult);
     assert(responseTypeFor(MessageType::PairController) ==
            MessageType::PairControllerResult);
+    assert(responseTypeFor(MessageType::RouteAudio) ==
+           MessageType::RouteAudioResult);
+    assert(responseTypeFor(MessageType::ResetAudio) ==
+           MessageType::ResetAudioResult);
     assert(responseTypeFor(MessageType::Snapshot) == MessageType::Error);
 
     return 0;

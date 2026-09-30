@@ -18,7 +18,9 @@ constexpr std::size_t kMaxFramesPerConnection = 4096u;
 // the session releases every lease it acquired when the client disconnects.
 class HostConnectionSession final {
 public:
-    explicit HostConnectionSession(runtime::RuntimeHost& host) noexcept;
+    explicit HostConnectionSession(
+        runtime::RuntimeHost& host,
+        runtime::AudioRouter* audioRouter = nullptr) noexcept;
     ~HostConnectionSession();
 
     Frame handle(const Frame& request);
@@ -32,6 +34,7 @@ private:
     const runtime::ActivationToken* uiLease(std::uint32_t seatId) const noexcept;
 
     runtime::RuntimeHost& host_;
+    runtime::AudioRouter* audioRouter_{nullptr};
     bool helloComplete_{false};
     ClientRole role_{ClientRole::ReadOnly};
     std::array<std::optional<runtime::ActivationToken>, kHostSeatCount> uiLeases_{};
@@ -70,6 +73,19 @@ public:
         std::uint32_t seatId,
         const std::string& persistentControllerId,
         std::uint8_t runtimeXInputSlot,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<AudioMutationStatus> routeAudio(
+        std::uint32_t seatId,
+        std::uint32_t processId,
+        std::uint64_t creationIdentity,
+        const std::string& endpointId,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<AudioMutationStatus> resetAudio(
+        std::uint32_t seatId,
+        std::uint32_t processId,
+        std::uint64_t creationIdentity,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
         std::string* error = nullptr);
     bool ping(std::uint64_t nonce,

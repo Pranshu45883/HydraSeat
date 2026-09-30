@@ -747,3 +747,45 @@ if(WIN32)
         COMMAND hydra_gate_c_external_harness --help
     )
 endif()
+
+add_library(hydra_hidhide_session_guard STATIC
+    src/hidhide_session_backend.cpp
+    src/hidhide_session_native.cpp
+)
+target_include_directories(hydra_hidhide_session_guard PUBLIC include)
+target_link_libraries(hydra_hidhide_session_guard PUBLIC
+    hydra_input_isolation
+)
+if(WIN32)
+    target_link_libraries(hydra_hidhide_session_guard PUBLIC
+        Advapi32.lib
+        Cfgmgr32.lib
+    )
+endif()
+
+add_library(hydra_hidhide_recovery STATIC
+    src/hidhide_session_recovery.cpp
+)
+target_include_directories(hydra_hidhide_recovery PUBLIC include)
+target_link_libraries(hydra_hidhide_recovery PUBLIC
+    hydra_hidhide_session_guard
+    hydra_recovery_core
+)
+
+add_executable(hidhide_session_guard_tests
+    tests/test_hidhide_session_backend.cpp
+)
+target_link_libraries(hidhide_session_guard_tests PRIVATE
+    hydra_hidhide_session_guard
+)
+add_test(NAME HidHideSessionGuardTests COMMAND hidhide_session_guard_tests)
+
+add_executable(hidhide_session_recovery_backend_tests
+    tests/test_hidhide_session_recovery.cpp
+)
+target_link_libraries(hidhide_session_recovery_backend_tests PRIVATE
+    hydra_hidhide_recovery
+)
+add_test(NAME HidHideSessionRecoveryBackendTests
+    COMMAND hidhide_session_recovery_backend_tests
+)

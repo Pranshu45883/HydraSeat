@@ -410,3 +410,28 @@ add_test(NAME WatchdogCoreTests COMMAND watchdog_core_tests)
 add_executable(startup_policy_tests tests/test_startup_policy.cpp)
 target_link_libraries(startup_policy_tests PRIVATE hydra_recovery_core)
 add_test(NAME StartupPolicyTests COMMAND startup_policy_tests)
+
+# Canonical host authority boundary. This target owns SessionController behind a
+# pointer-free, bounded protocol model; transport and launch mutation land in
+# dependent backend PRs.
+add_library(hydra_host_authority STATIC
+    src/host_protocol.cpp
+    src/runtime_host.cpp
+    src/runtime_authority.cpp
+    src/controller_identity.cpp
+    src/controller_inventory.cpp
+    src/controller_io.cpp
+    src/controller_virtual_xinput.cpp
+)
+target_include_directories(hydra_host_authority PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_host_authority PUBLIC ${WIN32_LIBS})
+endif()
+
+add_executable(host_protocol_v1_tests tests/test_host_protocol_v1.cpp)
+target_link_libraries(host_protocol_v1_tests PRIVATE hydra_host_authority)
+add_test(NAME HostProtocolV1Tests COMMAND host_protocol_v1_tests)
+
+add_executable(runtime_host_v1_tests tests/test_runtime_host_v1.cpp)
+target_link_libraries(runtime_host_v1_tests PRIVATE hydra_host_authority)
+add_test(NAME RuntimeHostV1Tests COMMAND runtime_host_v1_tests)

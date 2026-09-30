@@ -15,6 +15,29 @@ namespace hydra::hostipc {
 HostConnectionSession::HostConnectionSession(runtime::RuntimeHost& host) noexcept
     : host_(host) {}
 
+HostConnectionSession::~HostConnectionSession() {
+    for (auto& lease : uiLeases_) {
+        if (lease) {
+            (void)host_.releaseUiLease(*lease);
+            lease.reset();
+        }
+    }
+}
+
+runtime::ActivationToken* HostConnectionSession::uiLease(
+    std::uint32_t seatId) noexcept {
+    if (seatId == 0 || seatId > uiLeases_.size()) return nullptr;
+    auto& lease = uiLeases_[seatId - 1u];
+    return lease ? &*lease : nullptr;
+}
+
+const runtime::ActivationToken* HostConnectionSession::uiLease(
+    std::uint32_t seatId) const noexcept {
+    if (seatId == 0 || seatId > uiLeases_.size()) return nullptr;
+    const auto& lease = uiLeases_[seatId - 1u];
+    return lease ? &*lease : nullptr;
+}
+
 Frame HostConnectionSession::error(
     std::uint64_t correlationId,
     ErrorCode code,
@@ -56,6 +79,13 @@ Frame HostConnectionSession::handle(const Frame& request) {
         return response;
     }
 
+    if (isMutatingRequest(request.type) && role_ != ClientRole::Control) {
+        return error(
+            request.correlationId,
+            ErrorCode::PermissionDenied,
+            "control role is required for Seat mutation");
+    }
+
     switch (request.type) {
     case MessageType::Hello:
         return error(
@@ -92,11 +122,94 @@ Frame HostConnectionSession::handle(const Frame& request) {
         return response;
     }
 
+    case MessageType::AcquireUiLease: {
+        const auto requestValue = decodeSeatRequest(request.payload);
+        if (!requestValue) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "invalid UI lease request payload");
+        }
+        if (uiLease(requestValue->seatId) != nullptr) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "this connection already owns the Seat UI lease");
+        }
+        const auto lease = host_.acquireUiLease(requestValue->seatId);
+        if (!lease.valid()) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "Seat UI lease is already owned or unavailable");
+        }
+        uiLeases_[requestValue->seatId - 1u] = lease;
+
+        Frame response;
+        response.type = MessageType::AcquireUiLeaseResult;
+        response.correlationId = request.correlationId;
+        response.payload = encodeSnapshot(host_.snapshot());
+        return response;
+    }
+
+    case MessageType::ReleaseUiLease: {
+        const auto requestValue = decodeSeatRequest(request.payload);
+        if (!requestValue) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "invalid UI lease release payload");
+        }
+        auto* lease = uiLease(requestValue->seatId);
+        if (lease == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "this connection does not own the Seat UI lease");
+        }
+        const auto token = *lease;
+        if (!host_.releaseUiLease(token)) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "Seat UI lease became stale before release");
+        }
+        uiLeases_[requestValue->seatId - 1u].reset();
+
+        Frame response;
+        response.type = MessageType::ReleaseUiLeaseResult;
+        response.correlationId = request.correlationId;
+        response.payload = encodeSnapshot(host_.snapshot());
+        return response;
+    }
+
+    case MessageType::PairController: {
+        const auto pair = decodeControllerPairRequest(request.payload);
+        if (!pair) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "invalid controller pairing payload");
+        }
+        const auto* lease = uiLease(pair->seatId);
+        if (lease == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "controller pairing requires this connection's Seat UI lease");
+        }
+        if (!host_.pairController(
+                *lease, pair->persistentControllerId,
+                pair->runtimeXInputSlot)) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "current controller inventory rejected the pairing request");
+        }
+
+        Frame response;
+        response.type = MessageType::PairControllerResult;
+        response.correlationId = request.correlationId;
+        response.payload = encodeSnapshot(host_.snapshot());
+        return response;
+    }
+
     default:
         return error(
             request.correlationId,
             ErrorCode::Unsupported,
-            "request is not enabled by host protocol v1");
+            "request direction is not enabled by host protocol v2");
     }
 }
 
@@ -327,7 +440,7 @@ std::wstring currentHostPipeName() {
     if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId)) {
         return {};
     }
-    return L"\\\\.\\pipe\\HydraSeat.Host.v1." + std::to_wstring(sessionId);
+    return L"\\\\.\\pipe\\HydraSeat.Host.v2." + std::to_wstring(sessionId);
 #else
     return {};
 #endif
@@ -488,6 +601,94 @@ std::optional<HostSnapshot> HostPipeClient::getSnapshot(
     }
     const auto snapshot = decodeSnapshot(response->payload);
     if (!snapshot) setError(error, "invalid host snapshot payload");
+    return snapshot;
+}
+
+std::optional<HostSnapshot> HostPipeClient::acquireUiLease(
+    std::uint32_t seatId,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeSeatRequest(SeatRequest{seatId});
+    if (payload.empty()) {
+        setError(error, "invalid Seat id for UI lease");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::AcquireUiLease, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::AcquireUiLeaseResult) {
+        setError(error, "unexpected UI lease acquire response");
+        return std::nullopt;
+    }
+    const auto snapshot = decodeSnapshot(response->payload);
+    if (!snapshot) setError(error, "invalid UI lease acquire snapshot");
+    return snapshot;
+}
+
+std::optional<HostSnapshot> HostPipeClient::releaseUiLease(
+    std::uint32_t seatId,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeSeatRequest(SeatRequest{seatId});
+    if (payload.empty()) {
+        setError(error, "invalid Seat id for UI lease release");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::ReleaseUiLease, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::ReleaseUiLeaseResult) {
+        setError(error, "unexpected UI lease release response");
+        return std::nullopt;
+    }
+    const auto snapshot = decodeSnapshot(response->payload);
+    if (!snapshot) setError(error, "invalid UI lease release snapshot");
+    return snapshot;
+}
+
+std::optional<HostSnapshot> HostPipeClient::pairController(
+    std::uint32_t seatId,
+    const std::string& persistentControllerId,
+    std::uint8_t runtimeXInputSlot,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeControllerPairRequest(
+        ControllerPairRequest{
+            seatId, runtimeXInputSlot, persistentControllerId});
+    if (payload.empty()) {
+        setError(error, "invalid controller pairing request");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::PairController, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::PairControllerResult) {
+        setError(error, "unexpected controller pairing response");
+        return std::nullopt;
+    }
+    const auto snapshot = decodeSnapshot(response->payload);
+    if (!snapshot) setError(error, "invalid controller pairing snapshot");
     return snapshot;
 }
 

@@ -1,11 +1,12 @@
 #include "hydra/host_protocol.hpp"
 
+#include "hydra/controller_identity.hpp"
+
 #include <limits>
 #include <type_traits>
 #include <utility>
 
 namespace hydra::hostipc {
-
 namespace {
 
 template <typename T>
@@ -16,23 +17,33 @@ void appendInteger(std::vector<std::byte>& out, T value) {
     using U = Unsigned<T>;
     U raw = static_cast<U>(value);
     for (std::size_t index = 0; index < sizeof(T); ++index) {
-        const auto octet = static_cast<unsigned int>((raw >> (index * 8u)) & U{255});
+        const auto octet =
+            static_cast<unsigned int>((raw >> (index * 8u)) & U{255});
         out.push_back(static_cast<std::byte>(octet));
     }
 }
 
 template <typename T>
-bool readInteger(std::span<const std::byte> bytes, std::size_t& offset, T& value) {
-    if (offset > bytes.size() || bytes.size() - offset < sizeof(T)) return false;
+bool readInteger(std::span<const std::byte> bytes,
+                 std::size_t& offset,
+                 T& value) {
+    if (offset > bytes.size() || bytes.size() - offset < sizeof(T)) {
+        return false;
+    }
     using U = Unsigned<T>;
     U raw = 0;
     for (std::size_t index = 0; index < sizeof(T); ++index) {
         raw |= static_cast<U>(
-            std::to_integer<unsigned int>(bytes[offset + index])) << (index * 8u);
+                   std::to_integer<unsigned int>(bytes[offset + index]))
+               << (index * 8u);
     }
     offset += sizeof(T);
     value = static_cast<T>(raw);
     return true;
+}
+
+bool validSeatId(std::uint32_t seatId) noexcept {
+    return seatId == 1u || seatId == 2u;
 }
 
 bool validMessageType(MessageType type) noexcept {
@@ -44,6 +55,12 @@ bool validMessageType(MessageType type) noexcept {
     case MessageType::Ping:
     case MessageType::Pong:
     case MessageType::Error:
+    case MessageType::AcquireUiLease:
+    case MessageType::AcquireUiLeaseResult:
+    case MessageType::ReleaseUiLease:
+    case MessageType::ReleaseUiLeaseResult:
+    case MessageType::PairController:
+    case MessageType::PairControllerResult:
         return true;
     }
     return false;
@@ -61,40 +78,65 @@ bool validError(ErrorCode code) noexcept {
     case ErrorCode::PermissionDenied:
     case ErrorCode::Unsupported:
     case ErrorCode::InternalError:
+    case ErrorCode::InvalidState:
         return true;
     }
     return false;
 }
 
-void setDecodeError(DecodeResult* result, ErrorCode code, std::string diagnostic) {
+void setDecodeError(DecodeResult* result,
+                    ErrorCode code,
+                    std::string diagnostic) {
     if (!result) return;
     result->error = code;
     result->diagnostic = std::move(diagnostic);
 }
 
 constexpr std::uint32_t kSeatFlagActive = 1u << 0u;
-constexpr std::uint32_t kSeatFlagProcess = 1u << 1u;
-constexpr std::uint32_t kSeatFlagWindow = 1u << 2u;
-constexpr std::uint32_t kSeatFlagController = 1u << 3u;
+constexpr std::uint32_t kSeatFlagUiLease = 1u << 1u;
+constexpr std::uint32_t kSeatFlagGameLease = 1u << 2u;
+constexpr std::uint32_t kSeatFlagProcess = 1u << 3u;
+constexpr std::uint32_t kSeatFlagWindow = 1u << 4u;
+constexpr std::uint32_t kSeatFlagController = 1u << 5u;
 constexpr std::uint32_t kSeatFlagMask =
-    kSeatFlagActive | kSeatFlagProcess | kSeatFlagWindow | kSeatFlagController;
+    kSeatFlagActive | kSeatFlagUiLease | kSeatFlagGameLease |
+    kSeatFlagProcess | kSeatFlagWindow | kSeatFlagController;
 
 std::uint32_t seatFlags(const SeatSnapshot& seat) noexcept {
     std::uint32_t flags = 0;
     if (seat.active) flags |= kSeatFlagActive;
+    if (seat.uiLeaseActive) flags |= kSeatFlagUiLease;
+    if (seat.gameLeaseActive) flags |= kSeatFlagGameLease;
     if (seat.processOwned) flags |= kSeatFlagProcess;
     if (seat.windowOwned) flags |= kSeatFlagWindow;
     if (seat.controllerBound) flags |= kSeatFlagController;
     return flags;
 }
 
-bool validSeatSnapshot(const SeatSnapshot& seat, std::uint32_t expectedSeatId) noexcept {
+bool validSeatSnapshot(const SeatSnapshot& seat,
+                       std::uint32_t expectedSeatId) noexcept {
     if (seat.seatId != expectedSeatId) return false;
-    if (!seat.active && (seat.processOwned || seat.windowOwned || seat.controllerBound)) {
+    const bool leaseActive = seat.uiLeaseActive || seat.gameLeaseActive;
+    if (seat.active != leaseActive) return false;
+    if (!seat.active &&
+        (seat.processOwned || seat.windowOwned || seat.controllerBound)) {
+        return false;
+    }
+    if (seat.active && seat.generation == 0) return false;
+    if (!seat.gameLeaseActive && (seat.processOwned || seat.windowOwned)) {
         return false;
     }
     if (seat.windowOwned && !seat.processOwned) return false;
-    if (seat.active && seat.generation == 0) return false;
+    return true;
+}
+
+bool validControllerId(std::string_view value) noexcept {
+    if (value.empty() || value.size() > kHostProtocolMaxControllerIdBytes) {
+        return false;
+    }
+    for (const unsigned char ch : value) {
+        if (ch < 0x21u || ch > 0x7eu) return false;
+    }
     return true;
 }
 
@@ -109,6 +151,12 @@ std::string_view messageTypeName(MessageType type) noexcept {
     case MessageType::Ping: return "Ping";
     case MessageType::Pong: return "Pong";
     case MessageType::Error: return "Error";
+    case MessageType::AcquireUiLease: return "AcquireUiLease";
+    case MessageType::AcquireUiLeaseResult: return "AcquireUiLeaseResult";
+    case MessageType::ReleaseUiLease: return "ReleaseUiLease";
+    case MessageType::ReleaseUiLeaseResult: return "ReleaseUiLeaseResult";
+    case MessageType::PairController: return "PairController";
+    case MessageType::PairControllerResult: return "PairControllerResult";
     }
     return "Unknown";
 }
@@ -121,6 +169,7 @@ std::string_view errorCodeName(ErrorCode code) noexcept {
     case ErrorCode::PermissionDenied: return "PermissionDenied";
     case ErrorCode::Unsupported: return "Unsupported";
     case ErrorCode::InternalError: return "InternalError";
+    case ErrorCode::InvalidState: return "InvalidState";
     }
     return "Unknown";
 }
@@ -166,7 +215,8 @@ std::optional<Frame> decodeFrame(
         !readInteger(bytes, offset, correlationId) ||
         !readInteger(bytes, offset, payloadSize) ||
         !readInteger(bytes, offset, reserved)) {
-        setDecodeError(result, ErrorCode::Malformed, "frame header decode failed");
+        setDecodeError(result, ErrorCode::Malformed,
+                       "frame header decode failed");
         return std::nullopt;
     }
     if (magic != kHostProtocolMagic) {
@@ -174,7 +224,8 @@ std::optional<Frame> decodeFrame(
         return std::nullopt;
     }
     if (version != kHostProtocolVersion) {
-        setDecodeError(result, ErrorCode::VersionMismatch, "host protocol version mismatch");
+        setDecodeError(result, ErrorCode::VersionMismatch,
+                       "host protocol version mismatch");
         return std::nullopt;
     }
     const auto type = static_cast<MessageType>(rawType);
@@ -184,14 +235,16 @@ std::optional<Frame> decodeFrame(
     }
     if (payloadSize > kHostProtocolMaxPayloadBytes ||
         bytes.size() != kHostProtocolHeaderBytes + payloadSize) {
-        setDecodeError(result, ErrorCode::Malformed, "invalid frame payload length");
+        setDecodeError(result, ErrorCode::Malformed,
+                       "invalid frame payload length");
         return std::nullopt;
     }
 
     Frame frame;
     frame.type = type;
     frame.correlationId = correlationId;
-    frame.payload.assign(bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.end());
+    frame.payload.assign(
+        bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.end());
     return frame;
 }
 
@@ -200,9 +253,7 @@ std::vector<std::byte> encodeHello(const Hello& value) {
     std::vector<std::byte> out;
     out.reserve(8);
     appendInteger(out, static_cast<std::uint8_t>(value.role));
-    for (int index = 0; index < 7; ++index) {
-        appendInteger(out, std::uint8_t{0});
-    }
+    for (int index = 0; index < 7; ++index) appendInteger(out, std::uint8_t{0});
     return out;
 }
 
@@ -248,10 +299,8 @@ std::optional<HelloAck> decodeHelloAck(std::span<const std::byte> payload) {
         return std::nullopt;
     }
     const auto role = static_cast<ClientRole>(rawRole);
-    if (!validRole(role) ||
-        seatCount != kHostSeatCount ||
-        version != kHostProtocolVersion ||
-        reserved != 0) {
+    if (!validRole(role) || seatCount != kHostSeatCount ||
+        version != kHostProtocolVersion || reserved != 0) {
         return std::nullopt;
     }
     return HelloAck{role, version, seatCount};
@@ -277,7 +326,8 @@ std::vector<std::byte> encodeSnapshot(const HostSnapshot& snapshot) {
     return out;
 }
 
-std::optional<HostSnapshot> decodeSnapshot(std::span<const std::byte> payload) {
+std::optional<HostSnapshot> decodeSnapshot(
+    std::span<const std::byte> payload) {
     if (payload.size() != 56) return std::nullopt;
     std::size_t offset = 0;
     HostSnapshot snapshot;
@@ -302,15 +352,104 @@ std::optional<HostSnapshot> decodeSnapshot(std::span<const std::byte> payload) {
             (flags & ~kSeatFlagMask) != 0) {
             return std::nullopt;
         }
+
         seat.active = (flags & kSeatFlagActive) != 0;
+        seat.uiLeaseActive = (flags & kSeatFlagUiLease) != 0;
+        seat.gameLeaseActive = (flags & kSeatFlagGameLease) != 0;
         seat.processOwned = (flags & kSeatFlagProcess) != 0;
         seat.windowOwned = (flags & kSeatFlagWindow) != 0;
         seat.controllerBound = (flags & kSeatFlagController) != 0;
-        if (!validSeatSnapshot(seat, static_cast<std::uint32_t>(index + 1))) {
+        if (!validSeatSnapshot(
+                seat, static_cast<std::uint32_t>(index + 1))) {
             return std::nullopt;
         }
     }
     return snapshot;
+}
+
+std::vector<std::byte> encodeSeatRequest(const SeatRequest& request) {
+    if (!validSeatId(request.seatId)) return {};
+    std::vector<std::byte> out;
+    out.reserve(8);
+    appendInteger(out, request.seatId);
+    appendInteger(out, std::uint32_t{0});
+    return out;
+}
+
+std::optional<SeatRequest> decodeSeatRequest(
+    std::span<const std::byte> payload) {
+    if (payload.size() != 8) return std::nullopt;
+    std::size_t offset = 0;
+    SeatRequest request;
+    std::uint32_t reserved = 0;
+    if (!readInteger(payload, offset, request.seatId) ||
+        !readInteger(payload, offset, reserved) ||
+        reserved != 0 || !validSeatId(request.seatId)) {
+        return std::nullopt;
+    }
+    return request;
+}
+
+std::vector<std::byte> encodeControllerPairRequest(
+    const ControllerPairRequest& request) {
+    if (!validSeatId(request.seatId) ||
+        request.runtimeXInputSlot >= controller::kXInputSlotCount ||
+        !validControllerId(request.persistentControllerId)) {
+        return {};
+    }
+
+    std::vector<std::byte> out;
+    out.reserve(12 + request.persistentControllerId.size());
+    appendInteger(out, request.seatId);
+    appendInteger(out, request.runtimeXInputSlot);
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(
+        out, static_cast<std::uint32_t>(request.persistentControllerId.size()));
+    for (const char ch : request.persistentControllerId) {
+        out.push_back(static_cast<std::byte>(
+            static_cast<unsigned char>(ch)));
+    }
+    return out;
+}
+
+std::optional<ControllerPairRequest> decodeControllerPairRequest(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 12 ||
+        payload.size() > 12 + kHostProtocolMaxControllerIdBytes) {
+        return std::nullopt;
+    }
+
+    std::size_t offset = 0;
+    ControllerPairRequest request;
+    std::uint8_t reserved1 = 0;
+    std::uint8_t reserved2 = 0;
+    std::uint8_t reserved3 = 0;
+    std::uint32_t length = 0;
+    if (!readInteger(payload, offset, request.seatId) ||
+        !readInteger(payload, offset, request.runtimeXInputSlot) ||
+        !readInteger(payload, offset, reserved1) ||
+        !readInteger(payload, offset, reserved2) ||
+        !readInteger(payload, offset, reserved3) ||
+        !readInteger(payload, offset, length)) {
+        return std::nullopt;
+    }
+    if (!validSeatId(request.seatId) ||
+        request.runtimeXInputSlot >= controller::kXInputSlotCount ||
+        reserved1 != 0 || reserved2 != 0 || reserved3 != 0 ||
+        length == 0 || length > kHostProtocolMaxControllerIdBytes ||
+        payload.size() != offset + length) {
+        return std::nullopt;
+    }
+
+    request.persistentControllerId.reserve(length);
+    for (std::size_t index = 0; index < length; ++index) {
+        request.persistentControllerId.push_back(static_cast<char>(
+            std::to_integer<unsigned char>(payload[offset + index])));
+    }
+    if (!validControllerId(request.persistentControllerId)) return std::nullopt;
+    return request;
 }
 
 std::vector<std::byte> encodePing(std::uint64_t nonce) {
@@ -321,7 +460,8 @@ std::vector<std::byte> encodePing(std::uint64_t nonce) {
     return out;
 }
 
-std::optional<std::uint64_t> decodePing(std::span<const std::byte> payload) {
+std::optional<std::uint64_t> decodePing(
+    std::span<const std::byte> payload) {
     if (payload.size() != 8) return std::nullopt;
     std::size_t offset = 0;
     std::uint64_t nonce = 0;
@@ -330,8 +470,7 @@ std::optional<std::uint64_t> decodePing(std::span<const std::byte> payload) {
 }
 
 std::vector<std::byte> encodeError(const ErrorPayload& error) {
-    if (!validError(error.code) ||
-        error.code == ErrorCode::None ||
+    if (!validError(error.code) || error.code == ErrorCode::None ||
         error.diagnostic.size() > kHostProtocolMaxDiagnosticBytes ||
         error.diagnostic.size() > std::numeric_limits<std::uint32_t>::max()) {
         return {};
@@ -343,12 +482,14 @@ std::vector<std::byte> encodeError(const ErrorPayload& error) {
     appendInteger(out, std::uint16_t{0});
     appendInteger(out, static_cast<std::uint32_t>(error.diagnostic.size()));
     for (const char ch : error.diagnostic) {
-        out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
+        out.push_back(static_cast<std::byte>(
+            static_cast<unsigned char>(ch)));
     }
     return out;
 }
 
-std::optional<ErrorPayload> decodeError(std::span<const std::byte> payload) {
+std::optional<ErrorPayload> decodeError(
+    std::span<const std::byte> payload) {
     if (payload.size() < 8 ||
         payload.size() > 8 + kHostProtocolMaxDiagnosticBytes) {
         return std::nullopt;
@@ -360,26 +501,30 @@ std::optional<ErrorPayload> decodeError(std::span<const std::byte> payload) {
     std::uint32_t length = 0;
     if (!readInteger(payload, offset, rawCode) ||
         !readInteger(payload, offset, reserved) ||
-        !readInteger(payload, offset, length)) {
+        !readInteger(payload, offset, length) ||
+        reserved != 0 ||
+        length > kHostProtocolMaxDiagnosticBytes ||
+        payload.size() != offset + length) {
         return std::nullopt;
     }
 
     const auto code = static_cast<ErrorCode>(rawCode);
-    if (!validError(code) ||
-        code == ErrorCode::None ||
-        reserved != 0 ||
-        length > kHostProtocolMaxDiagnosticBytes ||
-        payload.size() != 8u + length) {
-        return std::nullopt;
-    }
+    if (!validError(code) || code == ErrorCode::None) return std::nullopt;
 
-    std::string diagnostic;
-    diagnostic.reserve(length);
+    ErrorPayload error;
+    error.code = code;
+    error.diagnostic.reserve(length);
     for (std::size_t index = 0; index < length; ++index) {
-        diagnostic.push_back(static_cast<char>(
+        error.diagnostic.push_back(static_cast<char>(
             std::to_integer<unsigned char>(payload[offset + index])));
     }
-    return ErrorPayload{code, std::move(diagnostic)};
+    return error;
+}
+
+bool isMutatingRequest(MessageType type) noexcept {
+    return type == MessageType::AcquireUiLease ||
+           type == MessageType::ReleaseUiLease ||
+           type == MessageType::PairController;
 }
 
 MessageType responseTypeFor(MessageType request) noexcept {
@@ -387,6 +532,9 @@ MessageType responseTypeFor(MessageType request) noexcept {
     case MessageType::Hello: return MessageType::HelloAck;
     case MessageType::GetSnapshot: return MessageType::Snapshot;
     case MessageType::Ping: return MessageType::Pong;
+    case MessageType::AcquireUiLease: return MessageType::AcquireUiLeaseResult;
+    case MessageType::ReleaseUiLease: return MessageType::ReleaseUiLeaseResult;
+    case MessageType::PairController: return MessageType::PairControllerResult;
     default: return MessageType::Error;
     }
 }

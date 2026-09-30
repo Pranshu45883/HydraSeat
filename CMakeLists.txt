@@ -428,13 +428,17 @@ if(WIN32)
     target_link_libraries(hydra_host_authority PUBLIC ${WIN32_LIBS})
 endif()
 
-add_executable(host_protocol_v1_tests tests/test_host_protocol_v1.cpp)
-target_link_libraries(host_protocol_v1_tests PRIVATE hydra_host_authority)
-add_test(NAME HostProtocolV1Tests COMMAND host_protocol_v1_tests)
+add_executable(host_protocol_v2_tests tests/test_host_protocol_v2.cpp)
+target_link_libraries(host_protocol_v2_tests PRIVATE hydra_host_authority)
+add_test(NAME HostProtocolV2Tests COMMAND host_protocol_v2_tests)
 
 add_executable(runtime_host_v1_tests tests/test_runtime_host_v1.cpp)
 target_link_libraries(runtime_host_v1_tests PRIVATE hydra_host_authority)
 add_test(NAME RuntimeHostV1Tests COMMAND runtime_host_v1_tests)
+
+add_executable(runtime_lease_authority_tests tests/test_runtime_leases.cpp)
+target_link_libraries(runtime_lease_authority_tests PRIVATE hydra_host_authority)
+add_test(NAME RuntimeLeaseAuthorityTests COMMAND runtime_lease_authority_tests)
 
 add_library(hydra_host_transport STATIC
     src/host_transport.cpp

@@ -3,6 +3,7 @@
 #include "hydra/host_protocol.hpp"
 #include "hydra/runtime_host.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -11,14 +12,14 @@
 namespace hydra::hostipc {
 
 constexpr std::uint32_t kDefaultHostPipeTimeoutMs = 5000u;
-constexpr std::size_t kMaxFramesPerConnection = 32u;
+constexpr std::size_t kMaxFramesPerConnection = 4096u;
 
-// Per-connection protocol state. The first frame must be Hello; after that this
-// transport layer remains read-only until trusted launch/lifecycle commands land
-// in a dependent backend layer.
+// Per-connection protocol state. UI configuration leases are connection-scoped:
+// the session releases every lease it acquired when the client disconnects.
 class HostConnectionSession final {
 public:
     explicit HostConnectionSession(runtime::RuntimeHost& host) noexcept;
+    ~HostConnectionSession();
 
     Frame handle(const Frame& request);
 
@@ -27,9 +28,13 @@ private:
                 ErrorCode code,
                 std::string diagnostic) const;
 
+    runtime::ActivationToken* uiLease(std::uint32_t seatId) noexcept;
+    const runtime::ActivationToken* uiLease(std::uint32_t seatId) const noexcept;
+
     runtime::RuntimeHost& host_;
     bool helloComplete_{false};
     ClientRole role_{ClientRole::ReadOnly};
+    std::array<std::optional<runtime::ActivationToken>, kHostSeatCount> uiLeases_{};
 };
 
 std::wstring currentHostPipeName();
@@ -51,6 +56,20 @@ public:
     bool connected() const noexcept;
 
     std::optional<HostSnapshot> getSnapshot(
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<HostSnapshot> acquireUiLease(
+        std::uint32_t seatId,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<HostSnapshot> releaseUiLease(
+        std::uint32_t seatId,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<HostSnapshot> pairController(
+        std::uint32_t seatId,
+        const std::string& persistentControllerId,
+        std::uint8_t runtimeXInputSlot,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
         std::string* error = nullptr);
     bool ping(std::uint64_t nonce,

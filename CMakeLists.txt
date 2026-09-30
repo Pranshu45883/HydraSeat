@@ -966,3 +966,35 @@ add_test(NAME InstallerTransactionBackendTests COMMAND installer_transaction_bac
 add_executable(update_transaction_backend_tests tests/test_update_transaction.cpp)
 target_link_libraries(update_transaction_backend_tests PRIVATE hydra_update_transaction)
 add_test(NAME UpdateTransactionBackendTests COMMAND update_transaction_backend_tests)
+
+add_library(hydra_two_player_setup_model STATIC
+    src/two_player_setup_editor.cpp
+)
+target_include_directories(hydra_two_player_setup_model PUBLIC include)
+target_link_libraries(hydra_two_player_setup_model PUBLIC
+    hydra_profile_provider_foundation
+)
+
+add_library(hydra_setup_package STATIC
+    src/setup_package.cpp
+)
+target_include_directories(hydra_setup_package PUBLIC include)
+target_link_libraries(hydra_setup_package PUBLIC
+    hydra_two_player_setup_model
+)
+
+add_executable(two_player_setup_model_tests
+    tests/test_two_player_setup_editor.cpp
+)
+target_link_libraries(two_player_setup_model_tests PRIVATE
+    hydra_two_player_setup_model
+)
+add_test(NAME TwoPlayerSetupModelTests COMMAND two_player_setup_model_tests)
+
+add_executable(setup_package_backend_tests
+    tests/test_setup_package.cpp
+)
+target_link_libraries(setup_package_backend_tests PRIVATE
+    hydra_setup_package
+)
+add_test(NAME SetupPackageBackendTests COMMAND setup_package_backend_tests)

@@ -81,6 +81,7 @@ set(HYDRA_SOURCES
     src/audio_endpoint_inventory.cpp
     src/audio_session_observer.cpp
     src/windows_audio_router.cpp
+    src/gui_win32.cpp
     ${UI_SOURCES}
 )
 
@@ -136,11 +137,12 @@ endif()
 
 # Test Suite Executable Target
 enable_testing()
-add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp tests/test_routing_worker.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
 endif()
 if(Qt6_FOUND)
+    target_sources(hydra_tests PRIVATE tests/test_routing_worker.cpp)
     target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
 endif()
 add_test(NAME EngineUnitTests COMMAND hydra_tests)

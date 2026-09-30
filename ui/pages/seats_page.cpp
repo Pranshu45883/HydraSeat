@@ -11,107 +11,110 @@ SeatsPage::SeatsPage(
     QWidget* parent)
     : QWidget(parent), m_sessionController(std::move(sessionController)), m_bridge(std::move(bridge)) {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(24, 24, 24, 24);
+    layout->setContentsMargins(32, 32, 32, 32);
     layout->setSpacing(24);
 
-    auto* title = new QLabel("Seats Overview", this);
-    title->setStyleSheet("font-size: 28px; font-weight: bold; color: #F5F5F5;");
+    auto* title = new QLabel("Seats Management", this);
+    title->setStyleSheet("font-size: 28px; font-weight: bold; color: #F5F5F5; font-family: 'Segoe UI', sans-serif;");
     layout->addWidget(title);
 
+    auto* subtitle = new QLabel("Manage runtime authority, applications, and controller bindings per seat", this);
+    subtitle->setStyleSheet("font-size: 14px; color: #B5B5B5; font-family: 'Segoe UI', sans-serif; margin-bottom: 8px;");
+    layout->addWidget(subtitle);
+
     auto* seatsLayout = new QHBoxLayout();
+    seatsLayout->setSpacing(16);
     
     auto buildSeat = [this](int seatId, SeatWidgets& w) -> QFrame* {
         auto* frame = new QFrame(this);
-        frame->setStyleSheet("background-color: #151515; border-radius: 8px; padding: 16px; border: 1px solid #2A2A2A;");
+        frame->setStyleSheet("background-color: #151515; border-radius: 8px; border: 1px solid #292929; padding: 20px;");
         auto* fl = new QVBoxLayout(frame);
+        fl->setContentsMargins(0,0,0,0);
+        fl->setSpacing(12);
         
         auto* headerLayout = new QHBoxLayout();
         auto* seatTitle = new QLabel(QString("Seat %1").arg(seatId), frame);
-        seatTitle->setStyleSheet("font-size: 20px; font-weight: bold; color: #F5F5F5; border: none;");
+        seatTitle->setStyleSheet("font-size: 18px; font-weight: bold; color: #F5F5F5; border: none;");
         headerLayout->addWidget(seatTitle);
+        
+        w.stateBadge = new QLabel("● Authority Idle", frame);
+        w.stateBadge->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; border: none; margin-left: 12px;");
+        headerLayout->addWidget(w.stateBadge);
+        
         headerLayout->addStretch();
         
-        w.authorityLabel = new QLabel("", frame);
-        w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; margin-right: 8px; border: none;");
-        headerLayout->addWidget(w.authorityLabel);
-        
-        w.activateBtn = new QPushButton("Activate", frame);
-        w.activateBtn->setStyleSheet(
-            "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
+        w.actionBtn = new QPushButton("Activate", frame);
+        w.actionBtn->setStyleSheet(
+            "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 6px; padding: 0 16px; font-weight: bold; height: 34px; }"
             "QPushButton:hover { background-color: #FF1A1A; }"
             "QPushButton:disabled { background-color: #202020; color: #777777; }"
         );
-        headerLayout->addWidget(w.activateBtn);
+        headerLayout->addWidget(w.actionBtn);
+        connect(w.actionBtn, &QPushButton::clicked, [this, seatId]() { onActivateRequested(seatId); });
         
-        w.deactivateBtn = new QPushButton("Deactivate", frame);
-        w.deactivateBtn->setStyleSheet(
-            "QPushButton { background-color: #202020; color: #F5F5F5; border: 1px solid #2A2A2A; border-radius: 4px; padding: 4px 12px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #2A2A2A; }"
-            "QPushButton:disabled { background-color: #151515; color: #777777; }"
-        );
-        headerLayout->addWidget(w.deactivateBtn);
-        
-        connect(w.activateBtn, &QPushButton::clicked, [this, seatId]() { onActivateRequested(seatId); });
-        connect(w.deactivateBtn, &QPushButton::clicked, [this, seatId]() { onDeactivateRequested(seatId); });
-
         fl->addLayout(headerLayout);
-
-        w.contentLabel = new QLabel("Loading...", frame);
-        w.contentLabel->setStyleSheet("font-size: 14px; line-height: 1.5; color: #B5B5B5; border: none;");
-        fl->addWidget(w.contentLabel);
         
-        // Controller Section
-        auto* ctrlTitle = new QLabel("Controller Assignment", frame);
-        ctrlTitle->setStyleSheet("font-size: 16px; font-weight: bold; color: #F5F5F5; margin-top: 16px; margin-bottom: 4px; border: none;");
+        auto addField = [&](const QString& labelText, QLabel*& val) {
+            auto* h = new QHBoxLayout();
+            auto* lab = new QLabel(labelText);
+            lab->setStyleSheet("font-size: 13px; color: #777777; border: none;");
+            lab->setFixedWidth(100);
+            val = new QLabel("Not assigned");
+            val->setStyleSheet("font-size: 13px; color: #F5F5F5; border: none;");
+            h->addWidget(lab);
+            h->addWidget(val);
+            h->addStretch();
+            fl->addLayout(h);
+        };
+        
+        addField("Application", w.appVal);
+        addField("Window", w.winVal);
+        addField("Audio", w.audioVal);
+        
+        auto* divider = new QFrame();
+        divider->setFrameShape(QFrame::HLine);
+        divider->setStyleSheet("border: none; background-color: #292929; max-height: 1px; margin-top: 12px; margin-bottom: 12px;");
+        fl->addWidget(divider);
+        
+        auto* ctrlTitle = new QLabel("CONTROLLER", frame);
+        ctrlTitle->setStyleSheet("font-size: 12px; font-weight: bold; color: #777777; border: none; margin-bottom: 4px;");
         fl->addWidget(ctrlTitle);
-
-        w.bindingStateLabel = new QLabel("Status:\n○ Not Assigned", frame);
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; border: none; margin-bottom: 12px;");
-        fl->addWidget(w.bindingStateLabel);
-
+        
+        w.ctrlStatus = new QLabel("Not Assigned", frame);
+        w.ctrlStatus->setStyleSheet("font-size: 13px; color: #F5F5F5; border: none; margin-bottom: 8px;");
+        fl->addWidget(w.ctrlStatus);
+        
         auto* physLabel = new QLabel("Physical Controller", frame);
-        physLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; margin-bottom: 2px; border: none;");
+        physLabel->setStyleSheet("font-size: 12px; color: #B5B5B5; border: none;");
         fl->addWidget(physLabel);
-
+        
         w.physCombo = new QComboBox(frame);
-        w.physCombo->setStyleSheet("padding: 6px; background-color: #202020; color: #F5F5F5; border: 1px solid #2A2A2A; border-radius: 4px;");
+        w.physCombo->setStyleSheet("QComboBox { padding: 4px 8px; background-color: #151515; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; height: 34px; }"
+                                   "QComboBox:focus { border: 1px solid #E10600; }");
         fl->addWidget(w.physCombo);
-
+        
         auto* srcLabel = new QLabel("XInput Runtime Source", frame);
-        srcLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; margin-top: 8px; margin-bottom: 2px; border: none;");
+        srcLabel->setStyleSheet("font-size: 12px; color: #B5B5B5; border: none; margin-top: 8px;");
         fl->addWidget(srcLabel);
-
+        
         w.srcCombo = new QComboBox(frame);
-        w.srcCombo->setStyleSheet("padding: 6px; background-color: #202020; color: #F5F5F5; border: 1px solid #2A2A2A; border-radius: 4px;");
+        w.srcCombo->setStyleSheet("QComboBox { padding: 4px 8px; background-color: #151515; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; height: 34px; }"
+                                  "QComboBox:focus { border: 1px solid #E10600; }");
         fl->addWidget(w.srcCombo);
-
+        
         w.pairBtn = new QPushButton("Pair Controller", frame);
         w.pairBtn->setStyleSheet(
-            "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 4px; padding: 8px 16px; font-weight: bold; margin-top: 12px; }"
-            "QPushButton:hover { background-color: #FF1A1A; }"
-            "QPushButton:disabled { background-color: #202020; color: #777777; }"
+            "QPushButton { background-color: #202020; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; height: 34px; font-weight: bold; margin-top: 12px; }"
+            "QPushButton:hover { background-color: #2A2A2A; }"
+            "QPushButton:disabled { background-color: #151515; color: #777777; border: 1px solid #202020; }"
         );
-        w.pairBtn->setDisabled(true);
         fl->addWidget(w.pairBtn);
-
+        connect(w.pairBtn, &QPushButton::clicked, [this, seatId]() { onPairRequested(seatId); });
+        
         w.feedbackLabel = new QLabel("", frame);
-        w.feedbackLabel->setStyleSheet("font-size: 12px; color: #E10600; margin-top: 4px; border: none;");
-        w.feedbackLabel->setWordWrap(true);
+        w.feedbackLabel->setStyleSheet("font-size: 12px; color: #E10600; border: none;");
         w.feedbackLabel->setVisible(false);
         fl->addWidget(w.feedbackLabel);
-
-        auto checkPairBtn = [&w]() {
-            bool validPhys = w.physCombo->currentIndex() >= 0 && !w.physCombo->currentData().toString().isEmpty();
-            bool validSrc = w.srcCombo->currentIndex() >= 0 && !w.srcCombo->currentData().toString().isEmpty();
-            w.pairBtn->setEnabled(validPhys && validSrc);
-        };
-
-        connect(w.physCombo, &QComboBox::currentIndexChanged, checkPairBtn);
-        connect(w.srcCombo, &QComboBox::currentIndexChanged, checkPairBtn);
-
-        connect(w.pairBtn, &QPushButton::clicked, [this, seatId]() {
-            onPairRequested(seatId);
-        });
 
         fl->addStretch();
         return frame;
@@ -124,261 +127,176 @@ SeatsPage::SeatsPage(
     layout->addStretch();
 }
 
-QString SeatsPage::formatSeatDetails(uint32_t seatId) {
-    auto snapshot = m_sessionController->snapshot(seatId);
-    if (!snapshot) return "○ UNAVAILABLE";
-
-    QString text;
-    if (snapshot->active()) {
-        text += "● AVAILABLE\n\n";
-    } else {
-        text += "○ AVAILABLE\n\n";
-    }
-
-    text += "Application\n";
-    if (snapshot->process) {
-        text += QString("%1\nPID %2\n\n")
-                    .arg(snapshot->process->creationIdentity ? "Attached" : "Unknown")
-                    .arg(snapshot->process->pid);
-    } else {
-        text += "Not assigned\n\n";
-    }
+void SeatsPage::updateState(const EngineStatePayload& payload) {
+    m_lastPayload = payload;
     
-    text += "Window\n";
-    if (snapshot->targetHwnd) {
-        text += QString("HWND: 0x%1\n\n").arg(snapshot->targetHwnd, 0, 16);
-    } else {
-        text += "Not assigned\n\n";
-    }
+    auto updateSeatData = [&](uint32_t seatId, SeatWidgets& w) {
+        auto snapshot = m_sessionController->snapshot(seatId);
+        if (!snapshot) {
+            w.stateBadge->setText("○ Unavailable");
+            w.stateBadge->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; border: none; margin-left: 12px;");
+            w.actionBtn->setDisabled(true);
+            return;
+        }
 
-    text += "Audio\n";
-    if (snapshot->audioEndpoint) {
-        text += QString("%1\n● Routed\n\n").arg(QString::fromStdWString(snapshot->audioEndpoint->endpointId));
-    } else {
-        text += "Not assigned\n\n";
-    }
+        if (snapshot->gameLeaseActive && snapshot->uiLeaseActive) {
+            w.stateBadge->setText("● UI + Game Active");
+            w.stateBadge->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-left: 12px;");
+            w.actionBtn->setText("Deactivate");
+            w.actionBtn->setStyleSheet(
+                "QPushButton { background-color: #202020; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; padding: 0 16px; font-weight: bold; height: 34px; }"
+                "QPushButton:hover { background-color: #2A2A2A; }"
+            );
+        } else if (snapshot->gameLeaseActive) {
+            w.stateBadge->setText("● Game Active");
+            w.stateBadge->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-left: 12px;");
+            w.actionBtn->setText("Deactivate");
+            w.actionBtn->setStyleSheet(
+                "QPushButton { background-color: #202020; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; padding: 0 16px; font-weight: bold; height: 34px; }"
+                "QPushButton:hover { background-color: #2A2A2A; }"
+            );
+        } else if (snapshot->uiLeaseActive) {
+            w.stateBadge->setText("● UI Configuring");
+            w.stateBadge->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-left: 12px;");
+            w.actionBtn->setText("Deactivate");
+            w.actionBtn->setStyleSheet(
+                "QPushButton { background-color: #202020; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; padding: 0 16px; font-weight: bold; height: 34px; }"
+                "QPushButton:hover { background-color: #2A2A2A; }"
+            );
+        } else {
+            w.stateBadge->setText("● Authority Idle");
+            w.stateBadge->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; border: none; margin-left: 12px;");
+            w.actionBtn->setText("Activate");
+            w.actionBtn->setStyleSheet(
+                "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 6px; padding: 0 16px; font-weight: bold; height: 34px; }"
+                "QPushButton:hover { background-color: #FF1A1A; }"
+                "QPushButton:disabled { background-color: #202020; color: #777777; }"
+            );
+        }
+        
+        w.actionBtn->setDisabled(false);
 
-    return text;
+        if (snapshot->process) {
+            w.appVal->setText(QString("PID %1").arg(snapshot->process->pid));
+        } else {
+            w.appVal->setText("Not assigned");
+        }
+        
+        if (snapshot->targetHwnd) {
+            w.winVal->setText(QString("HWND: 0x%1").arg(snapshot->targetHwnd, 0, 16));
+        } else {
+            w.winVal->setText("Not assigned");
+        }
+
+        if (snapshot->audioEndpoint) {
+            w.audioVal->setText(QString::fromStdWString(snapshot->audioEndpoint->endpointId));
+        } else {
+            w.audioVal->setText("Not assigned");
+        }
+        
+        updateBindingState(seatId, w);
+    };
+
+    updateSeatData(1, m_seat1);
+    updateSeatData(2, m_seat2);
+    
+    populateCombos(m_seat1);
+    populateCombos(m_seat2);
 }
 
 void SeatsPage::populateCombos(SeatWidgets& w) {
-    w.physCombo->blockSignals(true);
-    w.srcCombo->blockSignals(true);
+    if (w.physCombo->hasFocus() || w.srcCombo->hasFocus()) return;
 
     QString prevPhys = w.physCombo->currentData().toString();
     QString prevSrc = w.srcCombo->currentData().toString();
 
+    w.physCombo->blockSignals(true);
+    w.srcCombo->blockSignals(true);
+
     w.physCombo->clear();
-    if (m_lastPayload.controllerInventory.physicalControllers.empty()) {
-        w.physCombo->addItem("[ No physical controllers detected ]", "");
-    } else {
-        w.physCombo->addItem("[ Select physical controller... ▼ ]", "");
-        for (const auto& phys : m_lastPayload.controllerInventory.physicalControllers) {
-            w.physCombo->addItem(QString::fromStdWString(phys.displayName), QString::fromStdWString(phys.persistentId));
-        }
-    }
-
     w.srcCombo->clear();
-    bool hasXInput = false;
-    for (const auto& src : m_lastPayload.controllerInventory.sources) {
-        if (src.api == hydra::controller::ApiSurface::XInput && src.connected && src.runtimeXInputSlot) hasXInput = true;
-    }
 
-    if (!hasXInput) {
-        w.srcCombo->addItem("[ No XInput runtime sources detected ]", "");
-    } else {
-        w.srcCombo->addItem("[ Select XInput runtime source... ▼ ]", "");
-        for (const auto& src : m_lastPayload.controllerInventory.sources) {
-            if (src.api == hydra::controller::ApiSurface::XInput && src.connected && src.runtimeXInputSlot) {
-                w.srcCombo->addItem(QString("XInput Slot %1").arg(*src.runtimeXInputSlot), *src.runtimeXInputSlot);
-            }
-        }
+    w.physCombo->addItem("-- None --", QString());
+    for (const auto& phys : m_lastPayload.controllerInventory.physicalControllers) {
+        w.physCombo->addItem(QString::fromStdWString(phys.displayName), QString::fromStdWString(phys.persistentId));
+    }
+    
+    w.srcCombo->addItem("-- None --", QString());
+    for (const auto& src : m_lastPayload.controllerInventory.sources) {
+        w.srcCombo->addItem(QString::fromStdWString(src.displayName), QString::fromStdString(src.runtimeKey));
     }
 
     int pIdx = w.physCombo->findData(prevPhys);
     if (pIdx > 0) w.physCombo->setCurrentIndex(pIdx);
-    else w.physCombo->setCurrentIndex(0);
 
     int sIdx = w.srcCombo->findData(prevSrc);
     if (sIdx > 0) w.srcCombo->setCurrentIndex(sIdx);
-    else w.srcCombo->setCurrentIndex(0);
 
     w.physCombo->blockSignals(false);
     w.srcCombo->blockSignals(false);
-    
-    // Trigger enablement check
-    bool validPhys = w.physCombo->currentIndex() > 0 && !w.physCombo->currentData().toString().isEmpty();
-    bool validSrc = w.srcCombo->currentIndex() > 0 && !w.srcCombo->currentData().toString().isEmpty();
-    w.pairBtn->setEnabled(validPhys && validSrc);
 }
 
 void SeatsPage::updateBindingState(uint32_t seatId, SeatWidgets& w) {
     auto snapshot = m_sessionController->snapshot(seatId);
     if (!snapshot || !snapshot->controllerBinding) {
-        w.bindingStateLabel->setText("Status:\n○ Not Assigned");
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; border: none; margin-bottom: 12px;");
+        w.ctrlStatus->setText("Not Assigned");
+        w.ctrlStatus->setStyleSheet("font-size: 13px; color: #777777; border: none; margin-bottom: 8px;");
+        if (snapshot && snapshot->uiLeaseActive) w.pairBtn->setDisabled(false);
+        else w.pairBtn->setDisabled(true);
         return;
     }
-
-    const auto& binding = *snapshot->controllerBinding;
     
-    // Check if stale
-    bool stale = true;
-    bool connected = false;
-    for (const auto& src : m_lastPayload.controllerInventory.sources) {
-        if (src.api == binding.api && src.runtimeXInputSlot == binding.runtimeXInputSlot) {
-            connected = src.connected;
-            if (src.sourceGeneration == binding.sourceGeneration) {
-                stale = false;
-            }
-            break;
-        }
-    }
-
-    QString physName = binding.persistentControllerId ? QString::fromStdWString(*binding.persistentControllerId) : "Unknown Physical Controller";
-    for (const auto& p : m_lastPayload.controllerInventory.physicalControllers) {
-        if (binding.persistentControllerId && p.persistentId == *binding.persistentControllerId) {
-            physName = QString::fromStdWString(p.displayName);
-            break;
-        }
-    }
-
-    QString slotStr = binding.runtimeXInputSlot ? QString::number(*binding.runtimeXInputSlot) : "?";
-
-    if (stale) {
-        w.bindingStateLabel->setText(QString("Status:\n⚠ Stale (Slot %1)\n%2").arg(slotStr).arg(physName));
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-bottom: 12px;");
-    } else if (connected) {
-        w.bindingStateLabel->setText(QString("Status:\n● Paired (Slot %1)\n%2").arg(slotStr).arg(physName));
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-bottom: 12px;");
-    } else {
-        w.bindingStateLabel->setText(QString("Status:\n○ Disconnected (Slot %1)\n%2").arg(slotStr).arg(physName));
-        w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; border: none; margin-bottom: 12px;");
-    }
+    w.ctrlStatus->setText("● Bound");
+    w.ctrlStatus->setStyleSheet("font-size: 13px; color: #E10600; font-weight: bold; border: none; margin-bottom: 8px;");
+    
+    if (snapshot->uiLeaseActive) w.pairBtn->setDisabled(false);
+    else w.pairBtn->setDisabled(true);
 }
 
-void SeatsPage::updateState(const EngineStatePayload& payload) {
-    m_lastPayload = payload;
+void SeatsPage::onActivateRequested(uint32_t seatId) {
+    auto snapshot = m_sessionController->snapshot(seatId);
+    if (!snapshot) return;
     
-    auto updateAuthorityUI = [this](uint32_t seatId, SeatWidgets& w) {
-        bool active = m_bridge->isUiLeaseActive(seatId);
-        auto snapshot = m_sessionController->snapshot(seatId);
-        if (active) {
-            if (snapshot && snapshot->gameLeaseActive) {
-                w.authorityLabel->setText("● UI + Game Active");
-            } else {
-                w.authorityLabel->setText("● UI Configuring");
-            }
-            w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; margin-right: 8px; border: none;");
-            w.activateBtn->hide();
-            w.deactivateBtn->show();
-        } else {
-            if (snapshot && snapshot->gameLeaseActive) {
-                w.authorityLabel->setText("● Game Active");
-                w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; margin-right: 8px; border: none;");
-            } else {
-                w.authorityLabel->setText("○ Authority Idle");
-                w.authorityLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; margin-right: 8px; border: none;");
-            }
-            w.activateBtn->show();
-            w.deactivateBtn->hide();
+    SeatWidgets& w = (seatId == 1) ? m_seat1 : m_seat2;
+    w.feedbackLabel->setVisible(false);
+
+    if (snapshot->uiLeaseActive || snapshot->gameLeaseActive) {
+        if (!m_bridge->releaseUiLease(seatId)) {
+            w.feedbackLabel->setText("Failed to release UI lease");
+            w.feedbackLabel->setVisible(true);
         }
-    };
-
-    updateAuthorityUI(1, m_seat1);
-    updateAuthorityUI(2, m_seat2);
-
-    m_seat1.contentLabel->setText(formatSeatDetails(1));
-    m_seat2.contentLabel->setText(formatSeatDetails(2));
-
-    populateCombos(m_seat1);
-    populateCombos(m_seat2);
-    
-    updateBindingState(1, m_seat1);
-    updateBindingState(2, m_seat2);
+    } else {
+        if (!m_bridge->requestUiLease(seatId)) {
+            w.feedbackLabel->setText("Failed to request UI lease. Another authority might own it.");
+            w.feedbackLabel->setVisible(true);
+        }
+    }
 }
 
 void SeatsPage::onPairRequested(uint32_t seatId) {
     SeatWidgets& w = (seatId == 1) ? m_seat1 : m_seat2;
+    w.feedbackLabel->setVisible(false);
+
+    QString physId = w.physCombo->currentData().toString();
+    QString srcId = w.srcCombo->currentData().toString();
+
+    if (physId.isEmpty() || srcId.isEmpty()) {
+        w.feedbackLabel->setText("Select both a physical controller and a runtime source.");
+        w.feedbackLabel->setVisible(true);
+        return;
+    }
+
+    hydra::controller::SeatBinding binding;
+    binding.seatId = seatId;
+    binding.runtimeKey = srcId.toStdString();
+    binding.persistentControllerId = physId.toStdWString();
     
-    if (w.physCombo->currentIndex() <= 0 || w.srcCombo->currentIndex() <= 0) {
-        return;
-    }
-
-    w.bindingStateLabel->setText("Status:\n◌ Pairing...");
-    w.bindingStateLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none; margin-bottom: 12px;");
-    w.physCombo->setDisabled(true);
-    w.srcCombo->setDisabled(true);
-    w.pairBtn->setDisabled(true);
-    w.feedbackLabel->setVisible(false);
-
-    std::wstring physId = w.physCombo->currentData().toString().toStdWString();
-    uint8_t slot = static_cast<uint8_t>(w.srcCombo->currentData().toUInt());
-
-    auto result = hydra::controller::pairPhysicalControllerToXInput(
-        seatId, physId, slot, m_lastPayload.controllerInventory);
-
-    if (result.status != hydra::controller::PairingStatus::Ok || !result.binding) {
-        switch (result.status) {
-            case hydra::controller::PairingStatus::InvalidSeat:
-                w.feedbackLabel->setText("✕ Invalid Seat error.");
-                break;
-            case hydra::controller::PairingStatus::InvalidPersistentId:
-                w.feedbackLabel->setText("✕ Invalid controller error.");
-                break;
-            case hydra::controller::PairingStatus::PhysicalControllerNotFound:
-                w.feedbackLabel->setText("✕ Controller disappeared.");
-                break;
-            case hydra::controller::PairingStatus::AmbiguousPhysicalController:
-                w.feedbackLabel->setText("✕ Ambiguous identity error.");
-                break;
-            case hydra::controller::PairingStatus::RuntimeSlotOutOfRange:
-                w.feedbackLabel->setText("✕ Invalid XInput source.");
-                break;
-            case hydra::controller::PairingStatus::RuntimeSourceNotFound:
-                w.feedbackLabel->setText("✕ XInput source unavailable.");
-                break;
-            case hydra::controller::PairingStatus::RuntimeSourceDisconnected:
-                w.feedbackLabel->setText("✕ Controller disconnected.");
-                break;
-            default:
-                w.feedbackLabel->setText("✕ Pairing failed.");
-                break;
-        }
-        w.feedbackLabel->setVisible(true);
-        w.physCombo->setDisabled(false);
-        w.srcCombo->setDisabled(false);
-        w.pairBtn->setDisabled(false);
-        return;
-    }
-
-    bool success = m_bridge->pairController(seatId, *result.binding, m_lastPayload.controllerInventory);
-
-    if (!success) {
-        w.feedbackLabel->setText("✕ Pairing failed or authority unavailable.");
-        w.feedbackLabel->setVisible(true);
-        w.physCombo->setDisabled(false);
-        w.srcCombo->setDisabled(false);
-        w.pairBtn->setDisabled(false);
-        return;
-    }
-
-    w.feedbackLabel->setVisible(false);
-    w.physCombo->setDisabled(false);
-    w.srcCombo->setDisabled(false);
-    w.pairBtn->setDisabled(false);
-}
-
-void SeatsPage::onActivateRequested(uint32_t seatId) {
-    if (!m_bridge->requestUiLease(seatId)) {
-        SeatWidgets& w = (seatId == 1) ? m_seat1 : m_seat2;
-        w.feedbackLabel->setText("✕ Failed to activate Seat.");
+    bool result = m_bridge->pairController(seatId, binding, m_lastPayload.controllerInventory);
+    
+    if (!result) {
+        w.feedbackLabel->setText("Pairing failed (stale binding or unowned seat).");
         w.feedbackLabel->setVisible(true);
     }
-}
-
-void SeatsPage::onDeactivateRequested(uint32_t seatId) {
-    m_bridge->releaseUiLease(seatId);
 }
 
 } // namespace hydra::ui

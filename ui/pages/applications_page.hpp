@@ -17,7 +17,6 @@ private:
     std::shared_ptr<hydra::runtime::SessionController> m_sessionController;
     QVBoxLayout* m_listLayout{nullptr};
     
-    // Check if an app is bound to any seat
     QString getAssignedSeat(const std::optional<hydra::runtime::ProcessIdentity>& identity) const;
 };
 } // namespace hydra::ui

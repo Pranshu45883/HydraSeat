@@ -2,7 +2,10 @@
 #include <QWidget>
 #include <memory>
 #include <QVBoxLayout>
-#include <QTextEdit>
+#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QScrollArea>
+#include <QLabel>
 #include "hydra/runtime_authority.hpp"
 #include "ui/engine_poller.hpp"
 
@@ -15,6 +18,11 @@ public slots:
     void updateState(const EngineStatePayload& payload);
 private:
     std::shared_ptr<hydra::runtime::SessionController> m_sessionController;
-    QTextEdit* m_logText{nullptr};
+    QVBoxLayout* m_listLayout{nullptr};
+    
+    QFrame* buildSeatDiagnostics(uint32_t seatId);
+    void updateSeatDiagnostics(uint32_t seatId, QFrame* frame);
+    
+    QList<QFrame*> m_seatFrames;
 };
 } // namespace hydra::ui

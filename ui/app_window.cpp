@@ -34,18 +34,14 @@ AppWindow::~AppWindow() = default;
 
 void AppWindow::setupUi() {
     setWindowTitle("HydraSeat");
-    resize(1024, 768);
+    resize(1150, 750);
 
     setStyleSheet(R"(
-        QMainWindow { background-color: #0A0A0A; color: #F5F5F5; }
-        QListWidget { background-color: #111111; color: #B5B5B5; border: none; font-size: 14px; border-right: 1px solid #2A2A2A; }
-        QListWidget::item { padding: 12px; }
-        QListWidget::item:hover:!selected { background-color: #292929; color: #F5F5F5; }
-        QListWidget::item:selected { background-color: #151515; color: #FFFFFF; border-left: 4px solid #E10600; font-weight: bold; }
-        QLabel { color: #F5F5F5; }
-        QScrollBar:vertical { background: #111111; width: 12px; margin: 0px 0px 0px 0px; }
-        QScrollBar::handle:vertical { background: #2A2A2A; min-height: 20px; border-radius: 6px; }
-        QScrollBar::handle:vertical:hover { background: #E10600; }
+        QMainWindow { background-color: #0A0A0A; color: #F5F5F5; font-family: 'Segoe UI', Arial, sans-serif; }
+        QLabel { color: #F5F5F5; font-family: 'Segoe UI', Arial, sans-serif; }
+        QScrollBar:vertical { background: #101010; width: 10px; margin: 0px; }
+        QScrollBar::handle:vertical { background: #333333; border-radius: 5px; min-height: 30px; }
+        QScrollBar::handle:vertical:hover { background: #444444; }
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
     )");
@@ -62,11 +58,26 @@ void AppWindow::setupUi() {
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
+    auto* sidebarContainer = new QWidget(innerWidget);
+    sidebarContainer->setFixedWidth(220);
+    sidebarContainer->setStyleSheet("background-color: #0A0A0A; border-right: 1px solid #1C1C1C;");
+    auto* sidebarLayout = new QVBoxLayout(sidebarContainer);
+    sidebarLayout->setContentsMargins(16, 24, 16, 24);
+    sidebarLayout->setSpacing(8);
+
+    auto* brandLabel = new QLabel("HYDRASEAT", sidebarContainer);
+    brandLabel->setStyleSheet("font-size: 15px; font-weight: bold; color: #F5F5F5; letter-spacing: 2px; margin-bottom: 16px; border: none;");
+    sidebarLayout->addWidget(brandLabel);
+
     setupSidebar();
-    m_sidebar->setParent(innerWidget);
+    m_sidebar->setParent(sidebarContainer);
+    sidebarLayout->addWidget(m_sidebar);
+
+    mainLayout->addWidget(sidebarContainer);
     
     // Main Workspace Stack
     m_workspaceStack = new QStackedWidget(innerWidget);
+    m_workspaceStack->setStyleSheet("background-color: #0A0A0A; border: none;");
     
     // Instantiate Pages
     auto* dashboardPage = new DashboardPage(m_sessionController, m_workspaceStack);
@@ -76,12 +87,17 @@ void AppWindow::setupUi() {
     auto* hardwarePage = new HardwarePage(m_sessionController, m_workspaceStack);
     auto* diagnosticsPage = new DiagnosticsPage(m_sessionController, m_workspaceStack);
 
+    // We MUST add them in the exact order that matches the indices in setupSidebar
     m_workspaceStack->addWidget(dashboardPage);
     m_workspaceStack->addWidget(seatsPage);
     m_workspaceStack->addWidget(applicationsPage);
     m_workspaceStack->addWidget(audioPage);
     m_workspaceStack->addWidget(hardwarePage);
     m_workspaceStack->addWidget(diagnosticsPage);
+    
+    // Settings (placeholder for now)
+    auto* settingsPage = new QWidget(m_workspaceStack);
+    m_workspaceStack->addWidget(settingsPage);
 
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, dashboardPage, &DashboardPage::updateState);
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, seatsPage, &SeatsPage::updateState);
@@ -90,49 +106,76 @@ void AppWindow::setupUi() {
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, hardwarePage, &HardwarePage::updateState);
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, diagnosticsPage, &DiagnosticsPage::updateState);
 
-    mainLayout->addWidget(m_sidebar);
     mainLayout->addWidget(m_workspaceStack, 1);
 
     outerLayout->addWidget(innerWidget, 1);
 
     setupStatusbar();
     
-    m_sidebar->setCurrentRow(0);
+    // Select first interactive item (Dashboard)
+    m_sidebar->setCurrentRow(1);
 }
 
 void AppWindow::setupSidebar() {
     m_sidebar = new QListWidget();
-    m_sidebar->setFixedWidth(200);
     m_sidebar->setFocusPolicy(Qt::NoFocus);
+    m_sidebar->setStyleSheet(R"(
+        QListWidget { background-color: transparent; border: none; outline: 0; }
+        QListWidget::item { padding: 8px 12px; margin-bottom: 4px; border-radius: 6px; color: #B5B5B5; font-size: 13px; font-family: 'Segoe UI', sans-serif; }
+        QListWidget::item:hover:!selected { background-color: #151515; color: #F5F5F5; }
+        QListWidget::item:selected { background-color: #181818; color: #F5F5F5; font-weight: bold; border-left: 3px solid #E10600; padding-left: 9px; }
+    )");
 
-    m_sidebar->addItem("Dashboard");
-    m_sidebar->addItem("Seats");
-    m_sidebar->addItem("Applications");
-    m_sidebar->addItem("Audio");
-    m_sidebar->addItem("Hardware");
-    m_sidebar->addItem("Diagnostics");
-    m_sidebar->addItem("Settings");
+    auto addHeader = [&](const QString& text) {
+        auto* item = new QListWidgetItem(text);
+        item->setFlags(Qt::NoItemFlags);
+        item->setFont(QFont("Segoe UI", 10, QFont::Bold));
+        item->setForeground(QColor("#777777"));
+        m_sidebar->addItem(item);
+    };
+
+    auto addNav = [&](const QString& text, int targetIndex) {
+        auto* item = new QListWidgetItem(text);
+        item->setData(Qt::UserRole, targetIndex);
+        m_sidebar->addItem(item);
+    };
+
+    addHeader("OVERVIEW");
+    addNav("Dashboard", 0);
+    
+    addHeader("MANAGEMENT");
+    addNav("Seats", 1);
+    addNav("Applications", 2);
+    addNav("Audio", 3);
+    addNav("Hardware", 4);
+    
+    addHeader("SYSTEM");
+    addNav("Diagnostics", 5);
+    addNav("Settings", 6);
 
     connect(m_sidebar, &QListWidget::currentRowChanged, this, &AppWindow::onNavigationChanged);
 }
 
 void AppWindow::setupStatusbar() {
     auto* statusContainer = new QWidget(this);
-    statusContainer->setStyleSheet("background-color: #111111; border-top: 1px solid #2A2A2A; padding: 4px;");
+    statusContainer->setStyleSheet("background-color: #101010; border-top: 1px solid #1C1C1C; padding: 4px;");
     auto* statusLayout = new QHBoxLayout(statusContainer);
     statusLayout->setContentsMargins(16, 4, 16, 4);
 
     auto* brandLabel = new QLabel("HydraSeat Engine", statusContainer);
-    brandLabel->setStyleSheet("font-weight: bold; color: #777777; border: none;");
+    brandLabel->setStyleSheet("font-size: 12px; color: #B5B5B5; border: none;");
+    
+    auto* connLabel = new QLabel("Runtime connected", statusContainer);
+    connLabel->setStyleSheet("font-size: 12px; color: #777777; border: none; margin-left: 12px;");
     
     m_statusLabel = new QLabel("● Running", statusContainer);
-    m_statusLabel->setStyleSheet("color: #E10600; font-weight: bold; border: none;");
+    m_statusLabel->setStyleSheet("font-size: 12px; color: #E10600; font-weight: bold; border: none;");
 
     statusLayout->addWidget(brandLabel);
+    statusLayout->addWidget(connLabel);
     statusLayout->addStretch();
     statusLayout->addWidget(m_statusLabel);
 
-    // Append status container to the outer VBox layout
     auto* outerLayout = qobject_cast<QVBoxLayout*>(centralWidget()->layout());
     if (outerLayout) {
         outerLayout->addWidget(statusContainer);
@@ -140,8 +183,14 @@ void AppWindow::setupStatusbar() {
 }
 
 void AppWindow::onNavigationChanged(int index) {
-    if (m_workspaceStack && index >= 0 && index < m_workspaceStack->count()) {
-        m_workspaceStack->setCurrentIndex(index);
+    if (!m_sidebar || !m_workspaceStack) return;
+    auto* item = m_sidebar->item(index);
+    if (!item) return;
+    
+    bool ok;
+    int targetIndex = item->data(Qt::UserRole).toInt(&ok);
+    if (ok && targetIndex >= 0 && targetIndex < m_workspaceStack->count()) {
+        m_workspaceStack->setCurrentIndex(targetIndex);
     }
 }
 

@@ -1,899 +1,314 @@
 #include "ui/pages/audio_page.hpp"
 
-#include <QLabel>
-#include <QFrame>
-#include <QFileInfo>
-#include <QTimer>
-#include <QStandardItemModel>
-#include <QPainter>
-
-#include <windows.h>
-#include <psapi.h>
-#pragma comment(lib, "Psapi.lib")
-
 namespace hydra::ui {
 
-// ---------------------------------------------------------------------------
-// Static helpers
-// ---------------------------------------------------------------------------
+AudioPage::AudioPage(std::shared_ptr<hydra::runtime::SessionController> sessionController, RoutingController* router, QWidget* parent)
+    : QWidget(parent), m_sessionController(std::move(sessionController)), m_router(router) {
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(32, 32, 32, 32);
+    layout->setSpacing(24);
 
-QString AudioPage::resolveProcessName(uint32_t pid) {
-    if (pid == 0) return QStringLiteral("System");
-    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!h) return QString("PID %1").arg(pid);
-    wchar_t buf[MAX_PATH] = {};
-    DWORD sz = MAX_PATH;
-    QueryFullProcessImageNameW(h, 0, buf, &sz);
-    CloseHandle(h);
-    QString full = QString::fromWCharArray(buf);
-    if (full.isEmpty()) return QString("PID %1").arg(pid);
-    return QFileInfo(full).baseName();
-}
+    auto* title = new QLabel("Audio Routing", this);
+    title->setStyleSheet("font-size: 28px; font-weight: bold; color: #F5F5F5; font-family: 'Segoe UI', sans-serif;");
+    layout->addWidget(title);
 
-QString AudioPage::resolveProcessNameCached(uint32_t pid) {
-    if (m_processNameCache.contains(pid)) {
-        return m_processNameCache.value(pid);
+    auto* subtitle = new QLabel("Manage per-application audio output assignments", this);
+    subtitle->setStyleSheet("font-size: 14px; color: #B5B5B5; font-family: 'Segoe UI', sans-serif; margin-bottom: 8px;");
+    layout->addWidget(subtitle);
+
+    auto* toolbarLayout = new QHBoxLayout();
+    m_searchBox = new QLineEdit(this);
+    m_searchBox->setPlaceholderText("Search applications...");
+    m_searchBox->setFixedWidth(300);
+    m_searchBox->setStyleSheet("padding: 6px; background-color: #151515; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; height: 34px;");
+    toolbarLayout->addWidget(m_searchBox);
+
+    m_filterCombo = new QComboBox(this);
+    m_filterCombo->addItem("All");
+    m_filterCombo->addItem("Active Only");
+    m_filterCombo->setStyleSheet("padding: 4px 8px; background-color: #151515; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; height: 34px;");
+    toolbarLayout->addWidget(m_filterCombo);
+    toolbarLayout->addStretch();
+    layout->addLayout(toolbarLayout);
+    
+    auto* splitLayout = new QHBoxLayout();
+    splitLayout->setSpacing(24);
+    
+    // Left side: Sessions
+    auto* leftWidget = new QWidget();
+    auto* leftLayout = new QVBoxLayout(leftWidget);
+    leftLayout->setContentsMargins(0,0,0,0);
+    
+    m_sessionsCountLabel = new QLabel("AUDIO SESSIONS   0 total / 0 active");
+    m_sessionsCountLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; margin-bottom: 8px;");
+    leftLayout->addWidget(m_sessionsCountLabel);
+    
+    auto* sessScroll = new QScrollArea();
+    sessScroll->setWidgetResizable(true);
+    sessScroll->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
+    auto* sessContainer = new QWidget();
+    sessContainer->setStyleSheet("background-color: transparent;");
+    m_sessionsLayout = new QVBoxLayout(sessContainer);
+    m_sessionsLayout->setContentsMargins(0,0,0,0);
+    m_sessionsLayout->setSpacing(12);
+    m_sessionsLayout->addStretch();
+    sessScroll->setWidget(sessContainer);
+    leftLayout->addWidget(sessScroll);
+    splitLayout->addWidget(leftWidget, 2);
+    
+    // Right side: Outputs
+    auto* rightWidget = new QWidget();
+    auto* rightLayout = new QVBoxLayout(rightWidget);
+    rightLayout->setContentsMargins(0,0,0,0);
+    
+    m_outputsCountLabel = new QLabel("AUDIO OUTPUTS   0 total / 0 active");
+    m_outputsCountLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; margin-bottom: 8px;");
+    rightLayout->addWidget(m_outputsCountLabel);
+    
+    auto* outScroll = new QScrollArea();
+    outScroll->setWidgetResizable(true);
+    outScroll->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
+    auto* outContainer = new QWidget();
+    outContainer->setStyleSheet("background-color: transparent;");
+    m_outputsLayout = new QVBoxLayout(outContainer);
+    m_outputsLayout->setContentsMargins(0,0,0,0);
+    m_outputsLayout->setSpacing(8);
+    m_outputsLayout->addStretch();
+    outScroll->setWidget(outContainer);
+    rightLayout->addWidget(outScroll);
+    splitLayout->addWidget(rightWidget, 1);
+    
+    layout->addLayout(splitLayout);
+
+    if (m_router) {
+        connect(m_router, &RoutingController::routingCompleted, this, &AudioPage::onRoutingCompleted);
+        connect(m_router, &RoutingController::resetCompleted, this, &AudioPage::onResetCompleted);
     }
-    QString name = resolveProcessName(pid);
-    m_processNameCache.insert(pid, name);
-    return name;
-}
-
-QPixmap AudioPage::resolveProcessIcon(uint32_t pid) {
-    // Return a simple colored circle as a fallback icon.
-    // Qt6 removed QImage::fromHICON from the public API.
-    // Shell icon extraction can be added via QtWin if that module is available,
-    // but we keep this dependency-free for now.
-    (void)pid;
-    QPixmap px(20, 20);
-    px.fill(Qt::transparent);
-    QPainter p(&px);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setBrush(QColor(0xE1, 0x06, 0x00, 180));
-    p.setPen(Qt::NoPen);
-    p.drawEllipse(0, 0, 20, 20);
-    return px;
-}
-
-QString AudioPage::resolveEndpointFriendlyName(
-    const std::optional<std::wstring>& id,
-    const std::vector<hydra::windows::AudioRenderEndpoint>& endpoints)
-{
-    if (!id || id->empty()) return QStringLiteral("Not reported");
-    for (const auto& ep : endpoints) {
-        if ((ep.stableId && ep.stableId == id) || ep.endpointId == *id) {
-            return QString::fromStdWString(ep.friendlyName);
-        }
-    }
-    return QStringLiteral("Unknown endpoint");
 }
 
 QString AudioPage::stateText(hydra::windows::AudioSessionState state) {
     switch (state) {
-        case hydra::windows::AudioSessionState::Active:   return QStringLiteral("● ACTIVE");
-        case hydra::windows::AudioSessionState::Inactive: return QStringLiteral("○ INACTIVE");
-        case hydra::windows::AudioSessionState::Expired:  return QStringLiteral("✕ EXPIRED");
-        default:                                           return QStringLiteral("? UNKNOWN");
+        case hydra::windows::AudioSessionState::Active: return "● ACTIVE";
+        case hydra::windows::AudioSessionState::Inactive: return "● INACTIVE";
+        default: return "○ EXPIRED";
     }
 }
 
-// ---------------------------------------------------------------------------
-// Constructor
-// ---------------------------------------------------------------------------
-
-AudioPage::AudioPage(
-    std::shared_ptr<hydra::runtime::SessionController> sessionController,
-    RoutingController* routingController,
-    QWidget* parent)
-    : QWidget(parent)
-    , m_sessionController(std::move(sessionController))
-    , m_routingController(routingController)
-{
-    setStyleSheet(R"(
-        QWidget { background-color: #0A0A0A; color: #F5F5F5; }
-        QFrame#sessionCard {
-            background-color: #151515;
-            border-radius: 10px;
-            border: 1px solid #2A2A2A;
-        }
-        QFrame#endpointCard {
-            background-color: #151515;
-            border-radius: 8px;
-            border: 1px solid #2A2A2A;
-        }
-        QLineEdit {
-            background-color: #202020;
-            border: 1px solid #2A2A2A;
-            border-radius: 6px;
-            color: #F5F5F5;
-            padding: 6px 10px;
-            font-size: 13px;
-        }
-        QLineEdit:focus { border-color: #E10600; }
-        QComboBox {
-            background-color: #202020;
-            border: 1px solid #2A2A2A;
-            border-radius: 6px;
-            color: #F5F5F5;
-            padding: 5px 10px;
-            font-size: 13px;
-        }
-        QComboBox::drop-down { border: none; }
-        QComboBox QAbstractItemView {
-            background-color: #202020;
-            color: #F5F5F5;
-            selection-background-color: #E10600;
-        }
-        QPushButton#routeBtn {
-            background-color: #E10600;
-            color: #F5F5F5;
-            border-radius: 6px;
-            padding: 7px 16px;
-            font-weight: bold;
-            font-size: 13px;
-            border: none;
-        }
-        QPushButton#routeBtn:hover { background-color: #FF1A1A; }
-        QPushButton#routeBtn:disabled { background-color: #202020; color: #777777; }
-        QPushButton#resetBtn {
-            background-color: #202020;
-            color: #F5F5F5;
-            border-radius: 6px;
-            padding: 7px 16px;
-            font-size: 13px;
-            border: none;
-        }
-        QPushButton#resetBtn:hover { background-color: #292929; }
-        QPushButton#resetBtn:disabled { background-color: #151515; color: #777777; }
-        QScrollArea { border: none; background-color: transparent; }
-    )");
-
-    auto* outerLayout = new QVBoxLayout(this);
-    outerLayout->setContentsMargins(24, 24, 24, 24);
-    outerLayout->setSpacing(0);
-
-    // --- Page header ---
-    auto* headerLayout = new QVBoxLayout();
-    auto* title = new QLabel(QStringLiteral("Audio Routing"), this);
-    title->setStyleSheet(QStringLiteral("font-size: 28px; font-weight: bold; color: #F5F5F5; margin-bottom: 4px;"));
-    auto* subtitle = new QLabel(QStringLiteral("Manage per-application audio output assignments."), this);
-    subtitle->setStyleSheet(QStringLiteral("font-size: 13px; color: #777777; margin-bottom: 20px;"));
-    headerLayout->addWidget(title);
-    headerLayout->addWidget(subtitle);
-    outerLayout->addLayout(headerLayout);
-
-    // --- Search + filter bar ---
-    auto* searchRow = new QHBoxLayout();
-    searchRow->setSpacing(10);
-
-    m_searchBox = new QLineEdit(this);
-    m_searchBox->setPlaceholderText(QStringLiteral("Search applications..."));
-    connect(m_searchBox, &QLineEdit::textChanged, this, &AudioPage::onSearchOrFilterChanged);
-
-    m_filterCombo = new QComboBox(this);
-    m_filterCombo->setFixedWidth(120);
-    m_filterCombo->addItem(QStringLiteral("All"));
-    m_filterCombo->addItem(QStringLiteral("Active"));
-    m_filterCombo->addItem(QStringLiteral("Inactive"));
-    connect(m_filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AudioPage::onSearchOrFilterChanged);
-
-    searchRow->addWidget(m_searchBox, 1);
-    searchRow->addWidget(m_filterCombo);
-    outerLayout->addLayout(searchRow);
-    outerLayout->addSpacing(16);
-
-    // --- Two-column split ---
-    auto* splitLayout = new QHBoxLayout();
-    splitLayout->setSpacing(24);
-
-    // LEFT: Sessions (65%)
-    auto* sessionsContainer = new QWidget(this);
-    auto* sessionsVLayout = new QVBoxLayout(sessionsContainer);
-    sessionsVLayout->setContentsMargins(0, 0, 0, 0);
-    sessionsVLayout->setSpacing(8);
-
-    auto* sessionsHeaderRow = new QHBoxLayout();
-    auto* sessionsTitle = new QLabel(QStringLiteral("AUDIO SESSIONS"), sessionsContainer);
-    sessionsTitle->setStyleSheet(QStringLiteral("font-size: 11px; font-weight: bold; color: #777777; letter-spacing: 1px;"));
-    m_sessionCountLabel = new QLabel(QStringLiteral(""), sessionsContainer);
-    m_sessionCountLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #777777;"));
-    sessionsHeaderRow->addWidget(sessionsTitle);
-    sessionsHeaderRow->addStretch();
-    sessionsHeaderRow->addWidget(m_sessionCountLabel);
-    sessionsVLayout->addLayout(sessionsHeaderRow);
-    sessionsVLayout->addSpacing(4);
-
-    auto* sessionsScroll = new QScrollArea(sessionsContainer);
-    sessionsScroll->setWidgetResizable(true);
-    auto* sessionsList = new QWidget(sessionsScroll);
-    sessionsList->setStyleSheet(QStringLiteral("background-color: transparent;"));
-    m_sessionsLayout = new QVBoxLayout(sessionsList);
-    m_sessionsLayout->setContentsMargins(0, 0, 6, 0);
-    m_sessionsLayout->setSpacing(10);
-    sessionsScroll->setWidget(sessionsList);
-    sessionsVLayout->addWidget(sessionsScroll);
-    splitLayout->addWidget(sessionsContainer, 65);
-
-    // RIGHT: Outputs (35%)
-    auto* outputsContainer = new QWidget(this);
-    auto* outputsVLayout = new QVBoxLayout(outputsContainer);
-    outputsVLayout->setContentsMargins(0, 0, 0, 0);
-    outputsVLayout->setSpacing(8);
-
-    auto* outputsHeaderRow = new QHBoxLayout();
-    auto* outputsTitle = new QLabel(QStringLiteral("AUDIO OUTPUTS"), outputsContainer);
-    outputsTitle->setStyleSheet(QStringLiteral("font-size: 11px; font-weight: bold; color: #777777; letter-spacing: 1px;"));
-    m_endpointCountLabel = new QLabel(QStringLiteral(""), outputsContainer);
-    m_endpointCountLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #777777;"));
-    outputsHeaderRow->addWidget(outputsTitle);
-    outputsHeaderRow->addStretch();
-    outputsHeaderRow->addWidget(m_endpointCountLabel);
-    outputsVLayout->addLayout(outputsHeaderRow);
-    outputsVLayout->addSpacing(4);
-
-    auto* outputsScroll = new QScrollArea(outputsContainer);
-    outputsScroll->setWidgetResizable(true);
-    auto* outputsList = new QWidget(outputsScroll);
-    outputsList->setStyleSheet(QStringLiteral("background-color: transparent;"));
-    m_outputsLayout = new QVBoxLayout(outputsList);
-    m_outputsLayout->setContentsMargins(0, 0, 6, 0);
-    m_outputsLayout->setSpacing(8);
-    outputsScroll->setWidget(outputsList);
-    outputsVLayout->addWidget(outputsScroll);
-    splitLayout->addWidget(outputsContainer, 35);
-
-    outerLayout->addLayout(splitLayout, 1);
-
-    // Wire routing controller signals
-    connect(m_routingController, &RoutingController::routingCompleted,
-            this, &AudioPage::onRoutingCompleted);
-    connect(m_routingController, &RoutingController::resetCompleted,
-            this, &AudioPage::onResetCompleted);
-}
-
-// ---------------------------------------------------------------------------
-// Public slot: called every 2s by EnginePoller
-// ---------------------------------------------------------------------------
-
-void AudioPage::updateState(const EngineStatePayload& payload) {
-    m_lastPayload = payload;
-    updateCounts();
-    renderSessions();
-    renderOutputs();
-}
-
-// ---------------------------------------------------------------------------
-// Filter helpers
-// ---------------------------------------------------------------------------
-
-QString AudioPage::currentSearchText() const {
-    return m_searchBox ? m_searchBox->text().trimmed().toLower() : QString();
-}
-
-int AudioPage::currentFilterIndex() const {
-    return m_filterCombo ? m_filterCombo->currentIndex() : 0;
-}
-
-bool AudioPage::sessionMatchesFilter(
-    const hydra::windows::AudioSessionObservation& session,
-    const QString& searchText,
-    int filterIndex,
-    const QString& resolvedName) const
-{
-    // State filter
-    if (filterIndex == 1 && session.state != hydra::windows::AudioSessionState::Active)
-        return false;
-    if (filterIndex == 2 && session.state == hydra::windows::AudioSessionState::Active)
-        return false;
-
-    // Text filter
-    if (!searchText.isEmpty()) {
-        bool nameMatch = resolvedName.toLower().contains(searchText);
-        bool pidMatch  = QString::number(session.processId).contains(searchText);
-        if (!nameMatch && !pidMatch) return false;
+QString AudioPage::stateColor(hydra::windows::AudioSessionState state) {
+    switch (state) {
+        case hydra::windows::AudioSessionState::Active: return "#E10600";
+        case hydra::windows::AudioSessionState::Inactive: return "#B5B5B5";
+        default: return "#777777";
     }
-    return true;
 }
 
-// ---------------------------------------------------------------------------
-// Counts
-// ---------------------------------------------------------------------------
-
-void AudioPage::updateCounts() {
-    int totalSessions = static_cast<int>(m_lastPayload.audioSessions.size());
-    int activeSessions = 0;
-    for (const auto& s : m_lastPayload.audioSessions)
-        if (s.state == hydra::windows::AudioSessionState::Active) activeSessions++;
-
-    m_sessionCountLabel->setText(
-        QString("%1 total / %2 active").arg(totalSessions).arg(activeSessions));
-
-    int totalEp = static_cast<int>(m_lastPayload.audioEndpoints.size());
-    int activeEp = 0;
-    for (const auto& e : m_lastPayload.audioEndpoints)
-        if (e.isAvailable()) activeEp++;
-
-    m_endpointCountLabel->setText(
-        QString("%1 total / %2 active").arg(totalEp).arg(activeEp));
+QString AudioPage::resolveEndpointFriendlyName(const std::wstring& endpointId) const {
+    if (endpointId.empty()) return "System Default";
+    for (const auto& ep : m_lastPayload.audioEndpoints) {
+        if (ep.endpointId == endpointId) return QString::fromStdWString(ep.friendlyName);
+    }
+    return QString::fromStdWString(endpointId);
 }
 
-// ---------------------------------------------------------------------------
-// Endpoint combo population (active first, then separator, then inactive)
-// ---------------------------------------------------------------------------
-
-void AudioPage::populateEndpointCombo(
-    QComboBox* combo,
-    const std::vector<hydra::windows::AudioRenderEndpoint>& endpoints)
-{
-    combo->blockSignals(true);
-    QString prevData = combo->currentData().toString();
-    combo->clear();
-
-    bool hasActive = false, hasInactive = false;
-    for (const auto& ep : endpoints) {
-        if (ep.isAvailable()) hasActive = true;
-        else hasInactive = true;
-    }
-
-    if (hasActive) {
-        combo->insertSeparator(combo->count()); // visual group: ACTIVE
-        // Use a disabled item as group header
-        combo->addItem(QStringLiteral("── ACTIVE OUTPUTS ──"), QStringLiteral("__header__"));
-        auto* model = qobject_cast<QStandardItemModel*>(combo->model());
-        if (model) {
-            auto* hdr = model->item(combo->count() - 1);
-            if (hdr) { hdr->setEnabled(false); hdr->setForeground(QColor("#888888")); }
-        }
-        for (const auto& ep : endpoints) {
-            if (ep.isAvailable())
-                combo->addItem(QStringLiteral("● ") + QString::fromStdWString(ep.friendlyName),
-                               QString::fromStdWString(ep.endpointId));
-        }
-    }
-    if (hasInactive) {
-        combo->addItem(QStringLiteral("── OTHER OUTPUTS ──"), QStringLiteral("__header__"));
-        auto* model = qobject_cast<QStandardItemModel*>(combo->model());
-        if (model) {
-            auto* hdr = model->item(combo->count() - 1);
-            if (hdr) { hdr->setEnabled(false); hdr->setForeground(QColor("#888888")); }
-        }
-        for (const auto& ep : endpoints) {
-            if (!ep.isAvailable())
-                combo->addItem(QStringLiteral("○ ") + QString::fromStdWString(ep.friendlyName),
-                               QString::fromStdWString(ep.endpointId));
-        }
-    }
-
-    // Restore previous selection if it still exists
-    int idx = combo->findData(prevData);
-    if (idx >= 0) combo->setCurrentIndex(idx);
-    else {
-        // Select first non-header item
-        for (int i = 0; i < combo->count(); i++) {
-            if (combo->itemData(i).toString() != QStringLiteral("__header__")) {
-                combo->setCurrentIndex(i);
-                break;
-            }
-        }
-    }
-    combo->blockSignals(false);
+bool AudioPage::sessionMatchesFilter(const hydra::windows::AudioSessionObservation& session, const QString& filterText, int filterType) const {
+    if (filterType == 1 && session.state != hydra::windows::AudioSessionState::Active) return false;
+    if (filterText.isEmpty()) return true;
+    return (session.displayName ? QString::fromStdWString(*session.displayName) : "Unknown").contains(filterText, Qt::CaseInsensitive);
 }
 
-// ---------------------------------------------------------------------------
-// Build a new session card widget
-// ---------------------------------------------------------------------------
-
-void AudioPage::buildSessionCard(
-    const hydra::windows::AudioSessionObservation& session,
-    const QString& processName,
-    const QPixmap& icon)
-{
+void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& session) {
     AudioSessionCard card;
     card.pid = session.processId;
-    card.creationIdentity = session.processIdentity
-        ? session.processIdentity->creationIdentity : 0;
-    card.state = session.state;
-    card.endpointStableId = session.endpointStableId;
-    card.displayName = session.displayName;
+    card.creationIdentity = session.processIdentity ? session.processIdentity->creationIdentity : 0;
+    card.currentEndpointId = session.endpointId;
 
-    auto* frame = new QFrame();
-    frame->setObjectName(QStringLiteral("sessionCard"));
-    frame->setContentsMargins(0, 0, 0, 0);
+    card.frame = new QFrame();
+    card.frame->setStyleSheet("background-color: #151515; border-radius: 8px; border: 1px solid #292929; padding: 16px;");
+    auto* fl = new QVBoxLayout(card.frame);
+    fl->setContentsMargins(0,0,0,0);
+    fl->setSpacing(8);
 
-    auto* cardLayout = new QVBoxLayout(frame);
-    cardLayout->setContentsMargins(16, 14, 16, 14);
-    cardLayout->setSpacing(8);
+    auto* headerLayout = new QHBoxLayout();
+    card.nameLabel = new QLabel((session.displayName ? QString::fromStdWString(*session.displayName) : "Unknown"), card.frame);
+    card.nameLabel->setStyleSheet("font-size: 16px; font-weight: bold; color: #F5F5F5; border: none;");
+    headerLayout->addWidget(card.nameLabel);
+    headerLayout->addStretch();
+    card.stateLabel = new QLabel(stateText(session.state), card.frame);
+    card.stateLabel->setStyleSheet(QString("font-size: 12px; font-weight: bold; color: %1; border: none;").arg(stateColor(session.state)));
+    headerLayout->addWidget(card.stateLabel);
+    fl->addLayout(headerLayout);
 
-    // --- Top row: icon + name + state badge ---
-    auto* topRow = new QHBoxLayout();
-    topRow->setSpacing(10);
+    card.pidLabel = new QLabel(QString("PID: %1").arg(session.processId), card.frame);
+    card.pidLabel->setStyleSheet("font-size: 12px; color: #777777; font-family: 'Consolas', monospace; border: none;");
+    fl->addWidget(card.pidLabel);
 
-    if (!icon.isNull()) {
-        auto* iconLabel = new QLabel(frame);
-        iconLabel->setPixmap(icon);
-        iconLabel->setFixedSize(24, 24);
-        topRow->addWidget(iconLabel);
+    card.currentOutputLabel = new QLabel(QString("Current Output: %1").arg(resolveEndpointFriendlyName(session.endpointId)), card.frame);
+    card.currentOutputLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; border: none; margin-bottom: 8px;");
+    fl->addWidget(card.currentOutputLabel);
+    
+    auto* routeToLbl = new QLabel("Route to:", card.frame);
+    routeToLbl->setStyleSheet("font-size: 12px; color: #777777; border: none;");
+    fl->addWidget(routeToLbl);
+
+    card.routeCombo = new QComboBox(card.frame);
+    card.routeCombo->setStyleSheet("QComboBox { padding: 4px 8px; background-color: #101010; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; height: 34px; }"
+                                   "QComboBox:focus { border: 1px solid #E10600; }");
+    card.routeCombo->addItem("System Default", "");
+    for (const auto& ep : m_lastPayload.audioEndpoints) {
+        if (!ep.isAvailable()) continue;
+        card.routeCombo->addItem(QString::fromStdWString(ep.friendlyName), QString::fromStdWString(ep.endpointId));
     }
+    
+    int cIdx = card.routeCombo->findData(QString::fromStdWString(session.endpointId));
+    if (cIdx >= 0) card.routeCombo->setCurrentIndex(cIdx);
+    
+    fl->addWidget(card.routeCombo);
 
-    auto* nameLabel = new QLabel(processName, frame);
-    nameLabel->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: bold; color: #F5F5F5; border: none;"));
-    topRow->addWidget(nameLabel, 1);
-
-    bool isActive = (session.state == hydra::windows::AudioSessionState::Active);
-    card.stateLabel = new QLabel(stateText(session.state), frame);
-    card.stateLabel->setStyleSheet(
-        isActive
-            ? QStringLiteral("font-size: 12px; font-weight: bold; color: #F5F5F5; background-color: #B20500; padding: 3px 8px; border-radius: 4px; border: none;")
-            : QStringLiteral("font-size: 12px; font-weight: bold; color: #777777; background-color: #202020; padding: 3px 8px; border-radius: 4px; border: none;"));
-    topRow->addWidget(card.stateLabel);
-    cardLayout->addLayout(topRow);
-
-    // --- PID + Current output ---
-    QString currentOutputName = resolveEndpointFriendlyName(
-        session.endpointStableId, m_lastPayload.audioEndpoints);
-    auto* metaLabel = new QLabel(
-        QString("PID: %1").arg(session.processId), frame);
-    metaLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #777777; border: none;"));
-    cardLayout->addWidget(metaLabel);
-
-    card.currentOutputLabel = new QLabel(
-        QStringLiteral("Current Output: ") + currentOutputName, frame);
-    card.currentOutputLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #B5B5B5; border: none;"));
-    cardLayout->addWidget(card.currentOutputLabel);
-
-    // --- Separator ---
-    auto* sep = new QFrame(frame);
-    sep->setFrameShape(QFrame::HLine);
-    sep->setStyleSheet(QStringLiteral("color: #2A2A2A; background-color: #2A2A2A; max-height: 1px; border: none;"));
-    cardLayout->addWidget(sep);
-
-    // --- Endpoint dropdown ---
-    auto* routeRow = new QHBoxLayout();
-    auto* routeToLabel = new QLabel(QStringLiteral("Route to:"), frame);
-    routeToLabel->setStyleSheet(QStringLiteral("font-size: 13px; color: #B5B5B5; border: none;"));
-    routeRow->addWidget(routeToLabel);
-
-    card.endpointCombo = new QComboBox(frame);
-    populateEndpointCombo(card.endpointCombo, m_lastPayload.audioEndpoints);
-    routeRow->addWidget(card.endpointCombo, 1);
-    cardLayout->addLayout(routeRow);
-
-    // --- Buttons ---
-    auto* btnRow = new QHBoxLayout();
-    btnRow->setSpacing(8);
-    btnRow->addStretch();
-
-    card.feedbackLabel = new QLabel(QStringLiteral(""), frame);
-    card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5; border: none;"));
+    auto* btnLayout = new QHBoxLayout();
+    card.feedbackLabel = new QLabel("", card.frame);
+    card.feedbackLabel->setStyleSheet("font-size: 12px; color: #E10600; border: none;");
     card.feedbackLabel->setVisible(false);
-    btnRow->addWidget(card.feedbackLabel);
+    btnLayout->addWidget(card.feedbackLabel);
+    btnLayout->addStretch();
 
-    card.resetBtn = new QPushButton(QStringLiteral("Reset"), frame);
-    card.resetBtn->setObjectName(QStringLiteral("resetBtn"));
-    card.resetBtn->setFixedHeight(32);
-    btnRow->addWidget(card.resetBtn);
+    card.resetBtn = new QPushButton("Reset", card.frame);
+    card.resetBtn->setStyleSheet(
+        "QPushButton { background-color: #202020; color: #F5F5F5; border: 1px solid #333333; border-radius: 6px; height: 32px; padding: 0 16px; }"
+        "QPushButton:hover { background-color: #2A2A2A; }"
+    );
+    btnLayout->addWidget(card.resetBtn);
 
-    card.routeBtn = new QPushButton(QStringLiteral("Route Audio"), frame);
-    card.routeBtn->setObjectName(QStringLiteral("routeBtn"));
-    card.routeBtn->setFixedHeight(32);
+    card.routeBtn = new QPushButton("Route Audio", card.frame);
+    card.routeBtn->setStyleSheet(
+        "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 6px; height: 32px; padding: 0 16px; font-weight: bold; }"
+        "QPushButton:hover { background-color: #FF1A1A; }"
+    );
+    btnLayout->addWidget(card.routeBtn);
+    fl->addLayout(btnLayout);
 
-    // Disable routing for PID 0 (system audio)
-    if (session.processId == 0 || !session.processIdentity) {
-        card.routeBtn->setEnabled(false);
-        card.resetBtn->setEnabled(false);
-        card.routeBtn->setToolTip(QStringLiteral("System audio sessions cannot be individually routed"));
-    }
-
-    btnRow->addWidget(card.routeBtn);
-    cardLayout->addLayout(btnRow);
-
-    // Wire buttons — capture pid and creationIdentity by value
-    uint32_t pid = session.processId;
-    uint64_t cid = card.creationIdentity;
-    QComboBox* combo = card.endpointCombo;
-
-    connect(card.routeBtn, &QPushButton::clicked, [this, pid, cid, combo]() {
-        // Skip header items
-        QString epId = combo->currentData().toString();
-        if (epId.isEmpty() || epId == QStringLiteral("__header__")) return;
-        onRouteRequested(pid, cid, epId);
+    uint32_t cpid = card.pid;
+    uint64_t ccid = card.creationIdentity;
+    connect(card.resetBtn, &QPushButton::clicked, [this, cpid, ccid]() {
+        if (m_router) m_router->requestReset(cpid, ccid);
     });
-    connect(card.resetBtn, &QPushButton::clicked, [this, pid, cid]() {
-        onResetRequested(pid, cid);
+    connect(card.routeBtn, &QPushButton::clicked, [this, cpid, ccid, combo = card.routeCombo]() {
+        QString ep = combo->currentData().toString();
+        if (m_router) m_router->requestRoute(cpid, ccid, ep);
     });
 
-    // Apply in-progress state if this PID is currently routing
-    if (m_routingInProgress.value(pid, false)) {
-        card.routeBtn->setEnabled(false);
-        card.resetBtn->setEnabled(false);
-        card.feedbackLabel->setText(QStringLiteral("Routing..."));
-        card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5;"));
-        card.feedbackLabel->setVisible(true);
-    }
-
-    card.frame = frame;
+    m_sessionsLayout->insertWidget(m_sessionsLayout->count() - 1, card.frame);
     m_sessionCards.append(card);
-    m_sessionsLayout->addWidget(frame);
 }
 
-// ---------------------------------------------------------------------------
-// Try to update an existing card in-place (avoids rebuild flicker)
-// ---------------------------------------------------------------------------
-
-bool AudioPage::tryUpdateExistingCard(
-    const hydra::windows::AudioSessionObservation& session)
-{
+bool AudioPage::tryUpdateExistingCard(const hydra::windows::AudioSessionObservation& session) {
     for (auto& card : m_sessionCards) {
-        if (card.pid != session.processId) continue;
-
-        uint64_t currentCid = session.processIdentity ? session.processIdentity->creationIdentity : 0;
-        if (card.creationIdentity != currentCid) {
-            // PID reused by another process, must recreate card
-            m_processNameCache.remove(card.pid);
-            return false;
-        }
-
-        bool changed = false;
-
-        // Update state badge
-        if (card.state != session.state) {
-            card.state = session.state;
-            changed = true;
-            bool isActive = (session.state == hydra::windows::AudioSessionState::Active);
+        if (card.pid == session.processId && card.creationIdentity == (session.processIdentity ? session.processIdentity->creationIdentity : 0)) {
             card.stateLabel->setText(stateText(session.state));
-            card.stateLabel->setStyleSheet(
-                isActive
-                    ? QStringLiteral("font-size: 12px; font-weight: bold; color: #F5F5F5; background-color: #B20500; padding: 3px 8px; border-radius: 4px; border: none;")
-                    : QStringLiteral("font-size: 12px; font-weight: bold; color: #777777; background-color: #202020; padding: 3px 8px; border-radius: 4px; border: none;"));
-        }
-
-        // Update current output
-        if (card.endpointStableId != session.endpointStableId) {
-            card.endpointStableId = session.endpointStableId;
-            changed = true;
-            QString currentOutputName = resolveEndpointFriendlyName(
-                session.endpointStableId, m_lastPayload.audioEndpoints);
-            card.currentOutputLabel->setText(
-                QStringLiteral("Current Output: ") + currentOutputName);
-        }
-
-        // Track displayName change
-        if (card.displayName != session.displayName) {
-            card.displayName = session.displayName;
-            changed = true;
-        }
-
-        // Always ensure dropdown and route button disabled state is correct if routing is in progress
-        if (m_routingInProgress.value(card.pid, false)) {
-            card.routeBtn->setEnabled(false);
-            card.resetBtn->setEnabled(false);
-            card.endpointCombo->setEnabled(false);
-        } else {
-            if (card.pid != 0 && session.processIdentity) {
-                card.routeBtn->setEnabled(true);
-                card.resetBtn->setEnabled(true);
-                card.endpointCombo->setEnabled(true);
+            card.stateLabel->setStyleSheet(QString("font-size: 12px; font-weight: bold; color: %1; border: none;").arg(stateColor(session.state)));
+            if (card.currentEndpointId != session.endpointId) {
+                card.currentEndpointId = session.endpointId;
+                card.currentOutputLabel->setText(QString("Current Output: %1").arg(resolveEndpointFriendlyName(session.endpointId)));
             }
+            return true;
         }
-
-        if (changed) {
-            // Re-populate combo to ensure endpoint states (active/inactive) are fresh
-            populateEndpointCombo(card.endpointCombo, m_lastPayload.audioEndpoints);
-        }
-
-        return true;
     }
     return false;
 }
 
-// ---------------------------------------------------------------------------
-// Render sessions
-// ---------------------------------------------------------------------------
+void AudioPage::updateState(const EngineStatePayload& payload) {
+    m_lastPayload = payload;
 
-void AudioPage::renderSessions() {
-    QString searchText = currentSearchText();
-    int filterIdx = currentFilterIndex();
+    int totalSess = payload.audioSessions.size();
+    int actSess = 0;
+    for (const auto& s : payload.audioSessions) if (s.state == hydra::windows::AudioSessionState::Active) actSess++;
+    m_sessionsCountLabel->setText(QString("AUDIO SESSIONS   %1 total / %2 active").arg(totalSess).arg(actSess));
 
-    // Determine which PIDs should be visible after filtering
-    QSet<uint32_t> visiblePids;
-    struct SessionEntry {
-        hydra::windows::AudioSessionObservation session;
-        QString name;
-        QPixmap icon;
-    };
-    QList<SessionEntry> entries;
-
-    for (const auto& session : m_lastPayload.audioSessions) {
-        if (session.processId == 0) continue; // Skip PID 0 system sessions
-
-        QString name = resolveProcessNameCached(session.processId);
-        if (!sessionMatchesFilter(session, searchText, filterIdx, name)) continue;
-
-        visiblePids.insert(session.processId);
-        entries.append({session, name, {}});
-    }
-
-    // Determine which existing cards are no longer needed
-    QSet<uint32_t> existingPids;
-    for (const auto& card : m_sessionCards)
-        existingPids.insert(card.pid);
-
-    // Remove cards for PIDs that are no longer visible
-    QSet<uint32_t> toRemove = existingPids - visiblePids;
-    if (!toRemove.isEmpty()) {
-        m_sessionCards.removeIf([&toRemove, this](const AudioSessionCard& card) {
-            if (toRemove.contains(card.pid)) {
-                if (card.frame) card.frame->deleteLater();
-                return true;
-            }
-            return false;
-        });
-    }
-
-    // For each visible session: update existing card or build new one
-    // Resolve icons lazily only for new cards
-    for (auto& entry : entries) {
-        bool updated = tryUpdateExistingCard(entry.session);
-        if (!updated) {
-            // New card — resolve icon now
-            entry.icon = resolveProcessIcon(entry.session.processId);
-            buildSessionCard(entry.session, entry.name, entry.icon);
-        }
-    }
-
-    // Show empty state
-    bool hasCards = !m_sessionCards.isEmpty();
-    // Remove any existing "no sessions" label if we now have cards
-    // (The label is not tracked — we just check layout item count vs card count)
-    // Simple approach: if no entries after filter, show message
-    if (entries.isEmpty()) {
-        // Clear all existing cards
-        for (auto& card : m_sessionCards) {
-            if (card.frame) card.frame->deleteLater();
-        }
-        m_sessionCards.clear();
-
-        // Add empty state label if not already there
-        if (m_sessionsLayout->count() == 0) {
-            int nonSystemSessionCount = 0;
-            for (const auto& s : m_lastPayload.audioSessions) {
-                if (s.processId != 0) nonSystemSessionCount++;
-            }
-
-            QString emptyText;
-            if (nonSystemSessionCount == 0) {
-                emptyText = QStringLiteral("No audio applications detected.");
-            } else if (searchText.isEmpty() && filterIdx == 1) { // 1 = Active
-                emptyText = QString("%1 sessions detected — 0 currently active.").arg(nonSystemSessionCount);
-            } else if (!searchText.isEmpty()) {
-                emptyText = QStringLiteral("No sessions match the current filter.");
-            } else {
-                emptyText = QStringLiteral("No audio applications detected.");
-            }
-
-            auto* empty = new QLabel(emptyText, nullptr);
-            empty->setStyleSheet(QStringLiteral("color: #777777; font-size: 14px;"));
-            empty->setAlignment(Qt::AlignCenter);
-            m_sessionsLayout->addWidget(empty);
-            m_sessionsLayout->addStretch();
-        }
-    } else {
-        // Remove any empty-state label (first widget if it's a QLabel with no objectName)
-        if (m_sessionsLayout->count() > 0 && m_sessionCards.isEmpty()) {
-            while (QLayoutItem* item = m_sessionsLayout->takeAt(0)) {
-                if (item->widget()) item->widget()->deleteLater();
-                delete item;
-            }
-        }
-
-        // Ensure stretch at bottom
-        // Remove trailing stretch if present, then re-add
-        int last = m_sessionsLayout->count() - 1;
-        if (last >= 0 && m_sessionsLayout->itemAt(last)->spacerItem()) {
-            delete m_sessionsLayout->takeAt(last);
-        }
-        m_sessionsLayout->addStretch();
-    }
-    (void)hasCards;
-}
-
-// ---------------------------------------------------------------------------
-// Render endpoints
-// ---------------------------------------------------------------------------
-
-void AudioPage::renderOutputs() {
-    // Full rebuild for outputs (there are at most ~20, rarely changes)
+    int totalOut = payload.audioEndpoints.size();
+    int actOut = 0;
+    
+    // Process outputs
     while (QLayoutItem* item = m_outputsLayout->takeAt(0)) {
         if (item->widget()) item->widget()->deleteLater();
         delete item;
     }
-
-    // Sort: active first
-    auto endpoints = m_lastPayload.audioEndpoints;
-    std::stable_sort(endpoints.begin(), endpoints.end(),
-        [](const hydra::windows::AudioRenderEndpoint& a,
-           const hydra::windows::AudioRenderEndpoint& b) {
-            return a.isAvailable() > b.isAvailable();
-        });
-
-    if (endpoints.empty()) {
-        auto* lbl = new QLabel(QStringLiteral("No audio outputs detected."));
-        lbl->setStyleSheet(QStringLiteral("color: #777777; font-size: 13px;"));
-        m_outputsLayout->addWidget(lbl);
-        m_outputsLayout->addStretch();
-        return;
-    }
-
-    for (const auto& ep : endpoints) {
+    for (const auto& ep : payload.audioEndpoints) {
+        if (ep.isAvailable()) actOut++;
+        
         auto* frame = new QFrame();
-        frame->setObjectName(QStringLiteral("endpointCard"));
-
+        frame->setStyleSheet("background-color: #151515; border-radius: 6px; padding: 12px; border: 1px solid #292929;");
         auto* fl = new QVBoxLayout(frame);
-        fl->setContentsMargins(12, 10, 12, 10);
-        fl->setSpacing(3);
-
-        bool active = ep.isAvailable();
+        fl->setContentsMargins(0,0,0,0);
+        
         auto* nameLabel = new QLabel(QString::fromStdWString(ep.friendlyName), frame);
-        nameLabel->setStyleSheet(
-            active
-                ? QStringLiteral("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;")
-                : QStringLiteral("font-size: 14px; font-weight: bold; color: #777777; border: none;"));
-        nameLabel->setWordWrap(true);
+        nameLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
         fl->addWidget(nameLabel);
-
-        QString stateStr;
-        QString stateColor;
-        switch (ep.state) {
-            case hydra::windows::AudioEndpointState::Active:
-                stateStr = QStringLiteral("● Active");
-                stateColor = QStringLiteral("#F5F5F5");
-                break;
-            case hydra::windows::AudioEndpointState::Disabled:
-                stateStr = QStringLiteral("○ Disabled");
-                stateColor = QStringLiteral("#E10600");
-                break;
-            case hydra::windows::AudioEndpointState::Unplugged:
-                stateStr = QStringLiteral("○ Unplugged");
-                stateColor = QStringLiteral("#777777");
-                break;
-            case hydra::windows::AudioEndpointState::NotPresent:
-                stateStr = QStringLiteral("○ Not Present");
-                stateColor = QStringLiteral("#777777");
-                break;
-            default:
-                stateStr = QStringLiteral("? Unknown");
-                stateColor = QStringLiteral("#777777");
-                break;
-        }
-
-        auto* stateLabel = new QLabel(stateStr, frame);
-        stateLabel->setStyleSheet(
-            QString("font-size: 12px; color: %1;").arg(stateColor));
-        fl->addWidget(stateLabel);
-
+        
+        auto* stLabel = new QLabel(ep.isAvailable() ? "● Active" : "○ Not Present", frame);
+        stLabel->setStyleSheet(QString("font-size: 12px; font-weight: bold; color: %1; border: none;").arg(ep.isAvailable() ? "#E10600" : "#777777"));
+        fl->addWidget(stLabel);
+        
         m_outputsLayout->addWidget(frame);
     }
-
     m_outputsLayout->addStretch();
-}
+    
+    m_outputsCountLabel->setText(QString("AUDIO OUTPUTS   %1 total / %2 active").arg(totalOut).arg(actOut));
 
-// ---------------------------------------------------------------------------
-// Filter changed (search box or combo)
-// ---------------------------------------------------------------------------
+    // Update Sessions
+    QString filterText = m_searchBox->text();
+    int filterType = m_filterCombo->currentIndex();
 
-void AudioPage::onSearchOrFilterChanged() {
-    // Clear all existing session cards and rebuild with new filter
-    for (auto& card : m_sessionCards) {
-        if (card.frame) card.frame->deleteLater();
-    }
-    m_sessionCards.clear();
-
-    while (QLayoutItem* item = m_sessionsLayout->takeAt(0)) {
-        if (item->widget()) item->widget()->deleteLater();
-        delete item;
-    }
-
-    renderSessions();
-}
-
-// ---------------------------------------------------------------------------
-// Routing actions
-// ---------------------------------------------------------------------------
-
-void AudioPage::onRouteRequested(uint32_t pid, uint64_t creationIdentity, const QString& endpointId) {
-    if (m_routingInProgress.value(pid, false)) return; // Prevent double-click
-    m_routingInProgress[pid] = true;
-
-    // Update card UI immediately
-    for (auto& card : m_sessionCards) {
-        if (card.pid == pid) {
-            card.routeBtn->setEnabled(false);
-            card.resetBtn->setEnabled(false);
-            card.endpointCombo->setEnabled(false);
-            card.feedbackLabel->setText(QStringLiteral("Routing..."));
-            card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5;"));
-            card.feedbackLabel->setVisible(true);
-            break;
-        }
-    }
-
-    m_routingController->requestRoute(pid, creationIdentity, endpointId);
-}
-
-void AudioPage::onResetRequested(uint32_t pid, uint64_t creationIdentity) {
-    if (m_routingInProgress.value(pid, false)) return;
-    m_routingInProgress[pid] = true;
-
-    for (auto& card : m_sessionCards) {
-        if (card.pid == pid) {
-            card.routeBtn->setEnabled(false);
-            card.resetBtn->setEnabled(false);
-            card.endpointCombo->setEnabled(false);
-            card.feedbackLabel->setText(QStringLiteral("Resetting..."));
-            card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5;"));
-            card.feedbackLabel->setVisible(true);
-            break;
-        }
-    }
-
-    m_routingController->requestReset(pid, creationIdentity);
-}
-
-void AudioPage::onRoutingCompleted(uint32_t pid, hydra::ui::RouteVerificationResult result, const QString& errorMessage) {
-    m_routingInProgress[pid] = false;
-
-    for (auto& card : m_sessionCards) {
-        if (card.pid == pid) {
-            card.routeBtn->setEnabled(true);
-            card.resetBtn->setEnabled(true);
-            card.endpointCombo->setEnabled(true);
-            if (result == hydra::ui::RouteVerificationResult::Success) {
-                QString epId = card.endpointCombo->currentData().toString();
-                QString epName = resolveEndpointFriendlyName(epId.toStdWString(), m_lastPayload.audioEndpoints);
-                card.feedbackLabel->setText(QStringLiteral("✓ Routed to ") + epName);
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5; border: none;"));
-            } else {
-                QString prefix = QStringLiteral("✕ ");
-                if (result == hydra::ui::RouteVerificationResult::FailedRollbackSuccess) prefix += QStringLiteral("Route failed (Rollback OK)\\n");
-                else if (result == hydra::ui::RouteVerificationResult::FailedRollbackFailed) prefix += QStringLiteral("Route failed (Rollback FAILED)\\n");
-                else if (result == hydra::ui::RouteVerificationResult::CrossSeatIsolationFailure) prefix += QStringLiteral("Isolation failure\\n");
-                else if (result == hydra::ui::RouteVerificationResult::ProcessIdentityValidationFailure) prefix += QStringLiteral("Identity validation failed\\n");
-                else prefix += QStringLiteral("Routing failed\\n");
-                
-                card.feedbackLabel->setText(prefix + errorMessage);
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #E10600; border: none;"));
+    for (int i = m_sessionCards.size() - 1; i >= 0; --i) {
+        bool found = false;
+        for (const auto& session : payload.audioSessions) {
+            if (m_sessionCards[i].pid == session.processId && 
+                m_sessionCards[i].creationIdentity == (session.processIdentity ? session.processIdentity->creationIdentity : 0) &&
+                sessionMatchesFilter(session, filterText, filterType)) {
+                found = true;
+                break;
             }
+        }
+        if (!found) {
+            m_sessionCards[i].frame->deleteLater();
+            m_sessionCards.removeAt(i);
+        }
+    }
+
+    for (const auto& session : payload.audioSessions) {
+        if (!sessionMatchesFilter(session, filterText, filterType)) continue;
+        if (!tryUpdateExistingCard(session)) {
+            buildSessionCard(session);
+        }
+    }
+}
+
+void AudioPage::onRoutingCompleted(uint32_t pid, RouteVerificationResult result, const QString& errorMessage) {
+    for (auto& card : m_sessionCards) {
+        if (card.pid == pid) {
             card.feedbackLabel->setVisible(true);
-            // Auto-hide feedback after 5s
-            QTimer::singleShot(5000, card.feedbackLabel, [lbl = card.feedbackLabel]() {
-                if (lbl) lbl->setVisible(false);
-            });
-            break;
+            if (result == RouteVerificationResult::Success) {
+                card.feedbackLabel->setText("Routing successful.");
+                card.feedbackLabel->setStyleSheet("color: #00FF00;");
+            } else {
+                card.feedbackLabel->setText(errorMessage);
+                card.feedbackLabel->setStyleSheet("color: #E10600;");
+            }
+            return;
         }
     }
 }
 
 void AudioPage::onResetCompleted(uint32_t pid, bool success, const QString& errorMessage) {
-    m_routingInProgress[pid] = false;
-
     for (auto& card : m_sessionCards) {
         if (card.pid == pid) {
-            card.routeBtn->setEnabled(true);
-            card.resetBtn->setEnabled(true);
-            card.endpointCombo->setEnabled(true);
-            if (success) {
-                card.feedbackLabel->setText(QStringLiteral("✓ Routing reset"));
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5; border: none;"));
-            } else {
-                card.feedbackLabel->setText(QStringLiteral("✕ Reset failed\n") + errorMessage);
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #E10600; border: none;"));
-            }
             card.feedbackLabel->setVisible(true);
-            QTimer::singleShot(5000, card.feedbackLabel, [lbl = card.feedbackLabel]() {
-                if (lbl) lbl->setVisible(false);
-            });
-            break;
+            if (success) {
+                card.feedbackLabel->setText("Reset successful.");
+                card.feedbackLabel->setStyleSheet("color: #00FF00;");
+            } else {
+                card.feedbackLabel->setText(errorMessage);
+                card.feedbackLabel->setStyleSheet("color: #E10600;");
+            }
+            return;
         }
     }
 }

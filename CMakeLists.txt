@@ -462,3 +462,22 @@ if(WIN32)
     add_executable(hydraseat_hostctl src/hostctl_main.cpp)
     target_link_libraries(hydraseat_hostctl PRIVATE hydra_host_transport)
 endif()
+
+# Exact-owned audio routing transaction boundary. The default backend is
+# observe-only; no undocumented Windows routing mutation is enabled here.
+add_library(hydra_audio_routing_contract STATIC
+    src/audio_routing.cpp
+)
+target_include_directories(hydra_audio_routing_contract PUBLIC include)
+if(WIN32)
+    target_sources(hydra_audio_routing_contract PRIVATE
+        src/audio_session_observer.cpp
+    )
+    target_link_libraries(hydra_audio_routing_contract PUBLIC ${WIN32_LIBS})
+endif()
+
+add_executable(audio_routing_contract_tests tests/test_audio_routing.cpp)
+target_link_libraries(audio_routing_contract_tests PRIVATE
+    hydra_audio_routing_contract
+)
+add_test(NAME AudioRoutingContractTests COMMAND audio_routing_contract_tests)

@@ -221,8 +221,35 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
 
             std::optional<std::wstring> optDisplayName;
             ScopedCoTaskMem displayNameStr;
-            if (SUCCEEDED(pSessionControl->GetDisplayName(&displayNameStr)) && displayNameStr.str) {
-                optDisplayName = std::wstring(displayNameStr.str);
+            if (SUCCEEDED(pSessionControl->GetDisplayName(&displayNameStr)) && displayNameStr.str && wcslen(displayNameStr.str) > 0) {
+                std::wstring name(displayNameStr.str);
+                // Windows localized resource strings start with '@', ignore them
+                if (name.length() > 0 && name[0] != L'@') {
+                    optDisplayName = name;
+                }
+            }
+
+            // Fallback to process executable name
+            if (!optDisplayName && pid != 0) {
+                ScopedHandle hProc;
+                hProc.handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+                if (hProc.handle) {
+                    WCHAR imgPath[MAX_PATH];
+                    DWORD imgSize = MAX_PATH;
+                    if (QueryFullProcessImageNameW(hProc.handle, 0, imgPath, &imgSize)) {
+                        std::wstring fullPath(imgPath);
+                        size_t pos = fullPath.find_last_of(L"\\/");
+                        if (pos != std::wstring::npos) {
+                            optDisplayName = fullPath.substr(pos + 1);
+                        } else {
+                            optDisplayName = fullPath;
+                        }
+                    }
+                }
+            }
+            
+            if (!optDisplayName && pid == 0) {
+                optDisplayName = L"System Sounds";
             }
 
             std::optional<std::wstring> optGroupingParam;

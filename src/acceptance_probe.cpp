@@ -1,7 +1,7 @@
 #include "hydra/acceptance_probe.hpp"
 
 #include "hydra/audio_endpoint_inventory.hpp"
-#include "hydra/controller_runtime.hpp"
+#include "hydra/controller_inventory.hpp"
 #include "hydra/display_topology.hpp"
 #include "hydra/internal/strict_json.hpp"
 
@@ -23,6 +23,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <objbase.h>
 #include <bcrypt.h>
 #include <psapi.h>
 #include <softpub.h>
@@ -325,35 +326,35 @@ ProbeInventory observeInventory() {
         result.displayFingerprintSha256 = sha256Bytes(displayCanonical.data(), displayCanonical.size());
     }
 
-    hydra::audio::EndpointInventory audioInventory(hydra::audio::makeNativeEndpointSource());
-    std::string audioError;
-    result.audioQuerySucceeded = audioInventory.refresh(&audioError) && audioInventory.current().has_value();
-    if (result.audioQuerySucceeded) {
-        std::vector<std::string> rows;
-        for (const auto& endpoint : audioInventory.current()->endpoints) {
-            if (endpoint.flow == hydra::audio::DataFlow::Render &&
-                hydra::audio::isEndpointCurrentlyAvailable(endpoint)) {
-                ++result.activeRenderEndpointCount;
+    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool uninitializeCom = SUCCEEDED(comResult);
+    if (SUCCEEDED(comResult) || comResult == RPC_E_CHANGED_MODE) {
+        const auto audioSnapshot =
+            hydra::windows::AudioEndpointInventory::enumerateRenderEndpoints();
+        result.audioQuerySucceeded = audioSnapshot.isSuccess();
+        if (audioSnapshot.endpoints) {
+            std::vector<std::string> rows;
+            for (const auto& endpoint : *audioSnapshot.endpoints) {
+                if (endpoint.isAvailable()) ++result.activeRenderEndpointCount;
+                rows.push_back(utf8(endpoint.endpointId) + ':' +
+                               std::to_string(static_cast<unsigned>(endpoint.state)) + ':' +
+                               (endpoint.stableId ? utf8(*endpoint.stableId) : std::string("-")));
             }
-            rows.push_back(utf8(endpoint.endpointId) + ':' +
-                           std::to_string(static_cast<unsigned>(endpoint.flow)) + ':' +
-                           std::to_string(endpoint.stateMask) + ':' +
-                           std::to_string(endpoint.defaultRoleMask));
+            std::sort(rows.begin(), rows.end());
+            std::string canonical;
+            for (const auto& row : rows) canonical += row + '\n';
+            result.audioFingerprintSha256 =
+                sha256Bytes(canonical.data(), canonical.size());
         }
-        std::sort(rows.begin(), rows.end());
-        std::string canonical;
-        for (const auto& row : rows) canonical += row + '\n';
-        result.audioFingerprintSha256 = sha256Bytes(canonical.data(), canonical.size());
     }
+    if (uninitializeCom) CoUninitialize();
 
-    auto controllerBackend = hydra::controller::makeNativeControllerSourceBackend();
-    std::vector<hydra::controller::SourceDescriptor> controllers;
-    std::string controllerError;
-    result.controllerQuerySucceeded = controllerBackend &&
-        controllerBackend->scan(controllers, controllerError);
+    hydra::controller::ControllerInventory controllerInventory;
+    const auto controllers = controllerInventory.scan();
+    result.controllerQuerySucceeded = controllers.authoritative;
     if (result.controllerQuerySucceeded) {
         std::vector<std::string> rows;
-        for (const auto& controller : controllers) {
+        for (const auto& controller : controllers.sources) {
             if (controller.connected) ++result.connectedControllerCount;
             rows.push_back(controller.runtimeKey + ':' +
                            std::to_string(static_cast<unsigned>(controller.api)) + ':' +
@@ -363,7 +364,8 @@ ProbeInventory observeInventory() {
         std::sort(rows.begin(), rows.end());
         std::string canonical;
         for (const auto& row : rows) canonical += row + '\n';
-        result.controllerFingerprintSha256 = sha256Bytes(canonical.data(), canonical.size());
+        result.controllerFingerprintSha256 =
+            sha256Bytes(canonical.data(), canonical.size());
     }
     return result;
 }

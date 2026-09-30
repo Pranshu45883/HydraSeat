@@ -998,3 +998,61 @@ target_link_libraries(setup_package_backend_tests PRIVATE
     hydra_setup_package
 )
 add_test(NAME SetupPackageBackendTests COMMAND setup_package_backend_tests)
+
+add_executable(hydra_hardware_detect
+    src/hardware_detect_cli.cpp
+    src/hardware_detector.cpp
+)
+target_include_directories(hydra_hardware_detect PRIVATE include)
+target_link_libraries(hydra_hardware_detect PRIVATE
+    hydra_host_authority
+)
+if(WIN32)
+    target_link_libraries(hydra_hardware_detect PRIVATE ${WIN32_LIBS})
+endif()
+
+add_executable(hydra_isolation_plan src/isolation_plan_cli.cpp)
+target_link_libraries(hydra_isolation_plan PRIVATE hydra_input_isolation)
+
+add_executable(hydra_hidhide_probe_cli_diag src/hidhide_probe_cli.cpp)
+target_link_libraries(hydra_hidhide_probe_cli_diag PRIVATE hydra_input_isolation)
+
+add_executable(hydra_input_metrics_cli_diag src/input_metrics_cli.cpp)
+target_link_libraries(hydra_input_metrics_cli_diag PRIVATE hydra_input_isolation)
+
+add_executable(hydra_display_diag src/display_diag_main.cpp)
+target_link_libraries(hydra_display_diag PRIVATE hydra_process_display)
+
+add_executable(hydra_directinput_probe src/directinput_probe.cpp)
+target_link_libraries(hydra_directinput_probe PRIVATE hydra_input_isolation)
+if(WIN32)
+    target_link_libraries(hydra_directinput_probe PRIVATE Dinput8.lib Dxguid.lib)
+endif()
+
+add_executable(hydra_gate_c_raw_input_probe_diag
+    src/gate_c_raw_input_probe.cpp
+)
+target_link_libraries(hydra_gate_c_raw_input_probe_diag PRIVATE
+    hydra_input_isolation
+)
+if(WIN32)
+    target_link_libraries(hydra_gate_c_raw_input_probe_diag PRIVATE User32.lib)
+endif()
+
+add_executable(hydra_controller_diag src/controller_diag_main.cpp)
+target_link_libraries(hydra_controller_diag PRIVATE hydra_host_authority)
+
+add_test(NAME HidHideProbeCliSelfTest
+    COMMAND hydra_hidhide_probe_cli_diag --self-test)
+add_test(NAME InputMetricsCliSelfTest
+    COMMAND hydra_input_metrics_cli_diag --self-test)
+add_test(NAME DirectInputProbeSeatASelfTest
+    COMMAND hydra_directinput_probe --controlled-self-test seat-a)
+add_test(NAME DirectInputProbeSeatBSelfTest
+    COMMAND hydra_directinput_probe --controlled-self-test seat-b)
+add_test(NAME GateCRawInputProbeSelfTest
+    COMMAND hydra_gate_c_raw_input_probe_diag --self-test)
+add_test(NAME ControllerDiagHelp
+    COMMAND hydra_controller_diag --help)
+add_test(NAME IsolationPlanList
+    COMMAND hydra_isolation_plan --list)

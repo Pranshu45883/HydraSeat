@@ -1,0 +1,55 @@
+#pragma once
+
+#include "hydra/host_protocol.hpp"
+#include "hydra/runtime_authority.hpp"
+
+#include <cstdint>
+#include <mutex>
+#include <optional>
+
+namespace hydra::runtime {
+
+// RuntimeHost is the process-local owner that will live inside hydra_host.exe.
+// It deliberately does not expose SessionController by reference: trusted
+// backend components must pass through these methods so authority revision and
+// cross-Seat serialization remain coherent.
+class RuntimeHost final {
+public:
+    RuntimeHost() noexcept = default;
+
+    RuntimeHost(const RuntimeHost&) = delete;
+    RuntimeHost& operator=(const RuntimeHost&) = delete;
+
+    hostipc::HostSnapshot snapshot() const noexcept;
+    std::optional<SeatRuntimeSnapshot> seatSnapshot(std::uint32_t seatId) const noexcept;
+
+    ActivationToken beginSeatActivation(std::uint32_t seatId) noexcept;
+    bool publishProcess(const ActivationToken& token,
+                        const ProcessIdentity& process) noexcept;
+    bool bindTargetWindow(const ActivationToken& token,
+                          const ProcessIdentity& owner,
+                          std::uintptr_t hwnd) noexcept;
+    bool bindController(const ActivationToken& token,
+                        const controller::SeatBinding& binding,
+                        const controller::InventorySnapshot& inventory) noexcept;
+    controller::PollResult pollController(
+        const ActivationToken& token,
+        const controller::InventorySnapshot& inventory) noexcept;
+    controller::IoStatus setControllerVibration(
+        const ActivationToken& token,
+        const controller::InventorySnapshot& inventory,
+        std::uint16_t lowFrequencyMotor,
+        std::uint16_t highFrequencyMotor) noexcept;
+    std::optional<controller::VirtualXInputMapping> virtualXInputMapping(
+        const ActivationToken& token) const noexcept;
+    bool endSeatActivation(const ActivationToken& token) noexcept;
+
+private:
+    void noteMutationLocked(bool changed) noexcept;
+
+    mutable std::mutex mutex_;
+    SessionController controller_;
+    std::uint64_t authorityRevision_{1};
+};
+
+} // namespace hydra::runtime

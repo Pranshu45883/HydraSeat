@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydraseat.invalid/schemas/v1_acceptance_campaign_v1.schema.json",
+  "title": "HydraSeat V1 Acceptance Campaign evidence schema v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "identity", "created_unix", "updated_unix", "stages"],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:@+-]+$"
+    },
+    "stageName": {
+      "type": "string",
+      "enum": [
+        "Preflight", "Phase3Physical", "DisplayReconnect", "DifferentGames",
+        "SameTitle", "SeatIndependence", "ReturnToWindows",
+        "InstallRepairUninstall", "RebootStartup", "UpdateRollback", "Offline",
+        "FaultRecovery", "PerformanceSoak"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "evidence_id", "stage", "origin", "created_unix",
+        "content_sha256", "evidence_artifact_name", "test_name", "rc_commit_sha",
+        "release_artifact_sha256", "release_revision", "architecture",
+        "profile_sha256", "install_state_sha256", "scenario_identity",
+        "automated_passed", "human_verdict", "note", "campaign_schema_version",
+        "campaign_id", "session_run_id", "release_artifact_name", "windows_build",
+        "topology_fingerprint_sha256", "evidence_class"
+      ],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "evidence_id": { "$ref": "#/$defs/identifier" },
+        "stage": { "$ref": "#/$defs/stageName" },
+        "origin": {
+          "type": "string",
+          "enum": ["Synthetic", "ControlledProcess", "Physical"]
+        },
+        "created_unix": { "type": "integer", "minimum": 1 },
+        "content_sha256": { "$ref": "#/$defs/sha256" },
+        "evidence_artifact_name": { "$ref": "#/$defs/identifier" },
+        "test_name": { "$ref": "#/$defs/identifier" },
+        "rc_commit_sha": { "$ref": "#/$defs/commit" },
+        "release_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "release_revision": { "type": "integer", "minimum": 1 },
+        "architecture": { "type": "string", "enum": ["x64", "x86", "arm64"] },
+        "profile_sha256": { "$ref": "#/$defs/sha256" },
+        "install_state_sha256": { "$ref": "#/$defs/sha256" },
+        "scenario_identity": { "$ref": "#/$defs/identifier" },
+        "automated_passed": { "type": "boolean" },
+        "human_verdict": {
+          "type": "string",
+          "enum": ["Pending", "Pass", "Fail"]
+        },
+        "note": { "type": "string", "maxLength": 8192 },
+        "campaign_schema_version": { "const": 2 },
+        "campaign_id": { "$ref": "#/$defs/identifier" },
+        "session_run_id": { "$ref": "#/$defs/identifier" },
+        "release_artifact_name": { "$ref": "#/$defs/identifier" },
+        "windows_build": { "$ref": "#/$defs/identifier" },
+        "topology_fingerprint_sha256": { "$ref": "#/$defs/sha256" },
+        "evidence_class": {
+          "type": "string",
+          "enum": ["Synthetic", "Controlled", "Physical", "Manual", "RealGame",
+                   "CleanMachineInstall", "SigningDeployment"]
+        }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage", "state", "attempt", "started_unix", "completed_unix",
+        "evidence", "diagnostic"
+      ],
+      "properties": {
+        "stage": { "$ref": "#/$defs/stageName" },
+        "state": {
+          "type": "string",
+          "enum": [
+            "Pending", "Running", "AwaitingManualReview", "Passed", "Failed",
+            "RecoveryRequired"
+          ]
+        },
+        "attempt": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "started_unix": { "type": "integer", "minimum": 0 },
+        "completed_unix": { "type": "integer", "minimum": 0 },
+        "evidence": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/evidence" }
+        },
+        "diagnostic": { "type": "string", "maxLength": 8192 }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": 2 },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "campaign_id", "rc_commit_sha", "release_artifact_sha256",
+        "release_artifact_name", "release_revision", "architecture",
+        "profile_sha256", "install_state_sha256", "windows_build",
+        "topology_fingerprint_sha256", "seat_ids", "scenario_identity", "session_run_id"
+      ],
+      "properties": {
+        "campaign_id": { "$ref": "#/$defs/identifier" },
+        "rc_commit_sha": { "$ref": "#/$defs/commit" },
+        "release_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "release_artifact_name": { "$ref": "#/$defs/identifier" },
+        "release_revision": { "type": "integer", "minimum": 1 },
+        "architecture": { "type": "string", "enum": ["x64", "x86", "arm64"] },
+        "profile_sha256": { "$ref": "#/$defs/sha256" },
+        "install_state_sha256": { "$ref": "#/$defs/sha256" },
+        "windows_build": { "$ref": "#/$defs/identifier" },
+        "topology_fingerprint_sha256": { "$ref": "#/$defs/sha256" },
+        "seat_ids": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "integer", "minimum": 1, "maximum": 2 },
+            { "type": "integer", "minimum": 1, "maximum": 2 }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "scenario_identity": { "$ref": "#/$defs/identifier" },
+        "session_run_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "created_unix": { "type": "integer", "minimum": 1 },
+    "updated_unix": { "type": "integer", "minimum": 1 },
+    "stages": {
+      "type": "array",
+      "minItems": 13,
+      "maxItems": 13,
+      "items": { "$ref": "#/$defs/stage" }
+    }
+  }
+}

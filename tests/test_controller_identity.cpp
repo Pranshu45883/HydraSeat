@@ -57,6 +57,13 @@ void testControllerIdentity() {
     assert(paired.binding->runtimeKey == "xinput-slot:0");
     assert(paired.binding->sourceGeneration == runtimePad.sourceGeneration);
 
+    auto nonAuthoritative = pairingInventory;
+    nonAuthoritative.authoritative = false;
+    assert(pairPhysicalControllerToXInput(
+               1, L"container-a", 0, nonAuthoritative).status ==
+           PairingStatus::InventoryNotAuthoritative);
+    assert(!bindingMatchesInventory(*paired.binding, nonAuthoritative));
+
     auto disconnected = pairingInventory;
     disconnected.sources[0].connected = false;
     assert(pairPhysicalControllerToXInput(

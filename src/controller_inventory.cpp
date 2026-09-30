@@ -242,6 +242,9 @@ PairingResult pairPhysicalControllerToXInput(
     const std::wstring& persistentControllerId,
     std::uint8_t runtimeSlot,
     const InventorySnapshot& inventory) noexcept {
+    if (!inventory.authoritative) {
+        return {PairingStatus::InventoryNotAuthoritative, std::nullopt};
+    }
     if (seatId != 1 && seatId != 2) {
         return {PairingStatus::InvalidSeat, std::nullopt};
     }
@@ -296,6 +299,8 @@ PairingResult pairPhysicalControllerToXInput(
 
 bool bindingMatchesInventory(const SeatBinding& binding,
                              const InventorySnapshot& inventory) noexcept {
+    if (!inventory.authoritative) return false;
+
     const SourceDescriptor* runtime = nullptr;
     std::size_t runtimeMatches = 0;
     for (const auto& source : inventory.sources) {

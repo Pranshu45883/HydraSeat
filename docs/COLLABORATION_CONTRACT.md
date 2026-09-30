@@ -157,19 +157,24 @@ Prefer several readable source files inside one responsibility-level component.
 
 The current contributor split exists to keep parallel work independent until an integration boundary is ready:
 
-- `ot4562-glitch` side: Seat/runtime authority, process ownership/lifecycle, controller identity/runtime, and compatibility work;
-- `Pranshu45883` side: Windows audio endpoint inventory, session observation, and routing feasibility research.
+- `ot4562-glitch` side: Seat/runtime authority, process ownership/lifecycle, controller identity/runtime, process-local controller compatibility, and related compatibility work;
+- `Pranshu45883` side: product UI/UX and Windows audio endpoint/session/routing work;
+- shared: typed UI/runtime IPC contracts, Seat/audio integration contracts, and physical/real-game acceptance.
 
 This is a coordination boundary, not a claim that a subsystem can never be reviewed or changed by the other contributor. Integration contracts are reviewed jointly.
 
 While the split is active:
 
+- `Pranshu45883/HydraSeat` is the single canonical repository; long-lived contributor forks are not part of the normal collaboration model;
+- contributor work uses short-lived same-repository branches such as `minseong/*` and `pranshu/*`, with protected `main` changed only through reviewed pull requests;
+- branches under `minseong/staging/*` preserve dependent implementation only; they are not merge-ready, are not production state, and must be rebuilt/rebased on current `main` before review;
+- UI code belongs to the UI/UX owner and must consume bounded runtime state/contracts rather than grow a second runtime authority;
 - audio implementation files stay separate from Seat/runtime authority code;
 - runtime/controller work must not silently implement a competing audio state machine;
 - audio observation may use exact process identity semantics, but the Windows audio backend should not become dependent on the runtime-authority implementation merely to share a value type;
 - the intended future direction is `SessionController -> SeatRuntime -> audio contract -> Windows audio backend`;
 - experimental or undocumented routing mechanisms remain diagnostics/research until target-scoped verification and rollback are proven;
-- upstream pull requests should be immediately reviewable/mergeable on the current `main`; dependent follow-up work stays on contributor branches/forks until its prerequisite is merged, then is rebuilt and verified on the new base.
+- pull requests should be immediately reviewable/mergeable on the current `main`; dependent follow-up work stays on same-repository staging branches until its prerequisite is merged, then is rebuilt and freshly verified on the new base.
 
 The purpose of this split is to reduce merge pressure while preserving one eventual Seat ownership model.
 

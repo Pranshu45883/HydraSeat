@@ -344,3 +344,17 @@ if(WIN32)
     add_dependencies(window_policy_tests hydra_window_test_app)
     add_dependencies(window_tracker_tests hydra_window_test_app)
 endif()
+
+add_library(hydra_seat_policy STATIC
+    src/seat_runtime_policy.cpp
+)
+target_include_directories(hydra_seat_policy PUBLIC include)
+target_link_libraries(hydra_seat_policy PUBLIC hydra_process_display)
+
+add_executable(hardware_identity_tests tests/test_hardware_identity.cpp)
+target_include_directories(hardware_identity_tests PRIVATE include)
+add_test(NAME HardwareIdentityTests COMMAND hardware_identity_tests)
+
+add_executable(seat_runtime_policy_tests tests/test_seat_runtime_policy.cpp)
+target_link_libraries(seat_runtime_policy_tests PRIVATE hydra_seat_policy)
+add_test(NAME SeatRuntimePolicyTests COMMAND seat_runtime_policy_tests)

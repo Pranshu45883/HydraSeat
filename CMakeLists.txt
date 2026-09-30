@@ -537,3 +537,22 @@ target_link_libraries(seat_game_lifecycle_tests PRIVATE
     hydra_seat_game_lifecycle
 )
 add_test(NAME SeatGameLifecycleTests COMMAND seat_game_lifecycle_tests)
+
+add_library(hydra_two_seat_launch STATIC
+    src/runtime_state.cpp
+    src/two_seat_launch.cpp
+)
+target_include_directories(hydra_two_seat_launch PUBLIC include)
+target_link_libraries(hydra_two_seat_launch PUBLIC
+    hydra_seat_game_lifecycle
+)
+
+add_executable(two_seat_launch_foundation_tests
+    tests/test_two_seat_launch_foundation.cpp
+)
+target_link_libraries(two_seat_launch_foundation_tests PRIVATE
+    hydra_two_seat_launch
+)
+add_test(NAME TwoSeatLaunchFoundationTests
+    COMMAND two_seat_launch_foundation_tests
+)

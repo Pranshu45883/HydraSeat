@@ -9,13 +9,29 @@
 #include "hydra/runtime_authority.hpp"
 #include "hydra/authority_bridge.hpp"
 #include "hydra/audio_router.hpp"
+#include "hydra/audio_session_observer.hpp"
+#include <functional>
+#include <memory>
 
 namespace hydra::ui {
+
+enum class RouteVerificationResult {
+    Success,
+    FailedRollbackSuccess,
+    FailedRollbackFailed,
+    CrossSeatIsolationFailure,
+    ProcessIdentityValidationFailure
+};
 
 class RoutingWorker : public QObject {
     Q_OBJECT
 public:
-    explicit RoutingWorker(std::shared_ptr<hydra::runtime::AuthorityBridge> bridge);
+    using EnumeratorFunc = std::function<hydra::windows::AudioSessionInventoryResult()>;
+    using RouterFactory = std::function<std::unique_ptr<hydra::runtime::AudioRouter>()>;
+
+    explicit RoutingWorker(std::shared_ptr<hydra::runtime::AuthorityBridge> bridge,
+                           EnumeratorFunc enumerator = nullptr,
+                           RouterFactory routerFactory = nullptr);
     ~RoutingWorker() override = default;
 
 public slots:
@@ -23,11 +39,13 @@ public slots:
     void doReset(uint32_t pid, uint64_t creationIdentity);
 
 signals:
-    void routingCompleted(uint32_t pid, bool success, const QString& errorMessage);
+    void routingCompleted(uint32_t pid, RouteVerificationResult result, const QString& errorMessage);
     void resetCompleted(uint32_t pid, bool success, const QString& errorMessage);
 
 private:
     std::shared_ptr<hydra::runtime::AuthorityBridge> m_bridge;
+    EnumeratorFunc m_enumerator;
+    RouterFactory m_routerFactory;
 };
 
 class RoutingController : public QObject {
@@ -43,7 +61,7 @@ signals:
     void triggerRoute(uint32_t pid, uint64_t creationIdentity, const QString& endpointId);
     void triggerReset(uint32_t pid, uint64_t creationIdentity);
 
-    void routingCompleted(uint32_t pid, bool success, const QString& errorMessage);
+    void routingCompleted(uint32_t pid, RouteVerificationResult result, const QString& errorMessage);
     void resetCompleted(uint32_t pid, bool success, const QString& errorMessage);
 
 private:

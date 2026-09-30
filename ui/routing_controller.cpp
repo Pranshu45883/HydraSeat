@@ -6,19 +6,21 @@
 
 namespace hydra::ui {
 
-RoutingWorker::RoutingWorker(std::shared_ptr<hydra::runtime::AuthorityBridge> bridge)
-    : m_bridge(std::move(bridge)) {}
+RoutingWorker::RoutingWorker(std::shared_ptr<hydra::runtime::AuthorityBridge> bridge, EnumeratorFunc enumerator, RouterFactory routerFactory)
+    : m_bridge(std::move(bridge)),
+      m_enumerator(enumerator ? std::move(enumerator) : hydra::windows::AudioSessionObserver::enumerateSessions),
+      m_routerFactory(routerFactory ? std::move(routerFactory) : []() -> std::unique_ptr<hydra::runtime::AudioRouter> { return std::make_unique<hydra::windows::WindowsAudioRouter>(); }) {}
 
-void RoutingWorker::doRoute(uint32_t pid, uint64_t creationIdentity, const QString& endpointId) {
+void RoutingWorker::doRoute(uint32_t pid, uint64_t creationIdentity, const QString& endpointIdStr) {
     if (creationIdentity == 0) {
-        emit routingCompleted(pid, false, "Production routing requires a valid creation identity.");
+        emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Production routing requires a valid creation identity.");
         return;
     }
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     bool comInitialized = SUCCEEDED(hr);
     if (!comInitialized) {
-        emit routingCompleted(pid, false, "Failed to initialize COM on routing thread.");
+        emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Failed to initialize COM on routing thread.");
         return;
     }
 
@@ -29,86 +31,131 @@ void RoutingWorker::doRoute(uint32_t pid, uint64_t creationIdentity, const QStri
 
     auto sessionsResult = hydra::windows::AudioSessionObserver::enumerateSessions();
     if (!sessionsResult.isSuccess()) {
-        emit routingCompleted(pid, false, "Failed to enumerate audio sessions to validate process.");
+        emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Failed to enumerate audio sessions to validate process.");
         return;
     }
 
-    bool found = false;
+    bool targetFound = false;
+    std::wstring previousEndpointId;
+    std::optional<std::wstring> previousEndpointStableId;
+    
     for (const auto& session : sessionsResult.sessions) {
         if (session.processId == pid) {
-            if (!session.processIdentity) {
-                emit routingCompleted(pid, false, "Observed process lacks a creation identity.");
+            if (!session.processIdentity || session.processIdentity->creationIdentity != creationIdentity) {
+                emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Process identity mismatch (PID reused).");
                 return;
             }
-            if (session.processIdentity->creationIdentity != creationIdentity) {
-                emit routingCompleted(pid, false, "Process identity mismatch (PID reused).");
-                return;
-            }
-            found = true;
+            targetFound = true;
+            previousEndpointId = session.endpointId;
+            previousEndpointStableId = session.endpointStableId;
             break;
         }
     }
 
-    if (!found) {
-        emit routingCompleted(pid, false, "Process does not own an active audio session.");
+    if (!targetFound) {
+        emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Process does not own an active audio session.");
         return;
     }
 
     hydra::runtime::ProcessIdentity processId{pid, creationIdentity};
     auto seatIdOpt = m_bridge->findSeatForProcess(processId);
     if (!seatIdOpt) {
-        emit routingCompleted(pid, false, "Process is not bound to any active Seat.");
+        emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Process is not bound to any active Seat.");
         return;
     }
-    
-    // Capture the exact previous endpoint identity for rollback
-    std::optional<std::wstring> previousEndpointId;
+    uint32_t targetSeat = *seatIdOpt;
+
+    // Capture other-seat isolation snapshot
+    struct OtherSeatState {
+        uint32_t otherPid;
+        uint64_t otherCid;
+        std::optional<std::wstring> endpointStableId;
+    };
+    std::vector<OtherSeatState> otherSeatStates;
     for (const auto& session : sessionsResult.sessions) {
-        if (session.processId == pid) {
-            previousEndpointId = session.endpointStableId;
-            break;
+        if (session.processId == pid || !session.processIdentity) continue;
+        auto otherSeatOpt = m_bridge->findSeatForProcess(*session.processIdentity);
+        if (otherSeatOpt && *otherSeatOpt != targetSeat) {
+            otherSeatStates.push_back({session.processId, session.processIdentity->creationIdentity, session.endpointStableId});
         }
     }
 
-    hydra::runtime::AudioEndpointIdentity targetEndpoint{endpointId.toStdWString(), std::nullopt};
-    hydra::windows::WindowsAudioRouter router;
-    
-    auto status = m_bridge->routeAudio(*seatIdOpt, processId, targetEndpoint, router);
+    hydra::runtime::AudioEndpointIdentity targetEndpoint{endpointIdStr.toStdWString(), std::nullopt};
+    auto router = m_routerFactory();
+    auto status = m_bridge->routeAudio(targetSeat, processId, targetEndpoint, *router);
     if (status != hydra::runtime::AudioRouteStatus::Success) {
-        emit routingCompleted(pid, false, "Runtime rejected audio routing authorization.");
+        emit routingCompleted(pid, RouteVerificationResult::ProcessIdentityValidationFailure, "Runtime rejected audio routing authorization.");
         return;
     }
 
     // Verify endpoint actually moved
-    auto verificationSessions = hydra::windows::AudioSessionObserver::enumerateSessions();
-    if (!verificationSessions.isSuccess()) {
-        emit routingCompleted(pid, false, "Failed to verify audio routing success.");
-        return;
-    }
-    
-    bool moved = false;
-    for (const auto& session : verificationSessions.sessions) {
-        if (session.processId == pid) {
-            if (session.endpointStableId && *session.endpointStableId == targetEndpoint.stableId) {
-                moved = true;
+    auto verifySessions = m_enumerator();
+    bool routeSucceeded = false;
+    if (verifySessions.isSuccess()) {
+        for (const auto& session : verifySessions.sessions) {
+            if (session.processId == pid && session.processIdentity && session.processIdentity->creationIdentity == creationIdentity) {
+                if (session.endpointId == targetEndpoint.endpointId) {
+                    routeSucceeded = true;
+                }
+                break;
             }
-            break;
         }
     }
-    
-    if (!moved) {
-        // Rollback to exactly the previous endpoint
-        if (previousEndpointId) {
-            hydra::runtime::AudioEndpointIdentity fallbackEndpoint{*previousEndpointId, std::nullopt};
-            m_bridge->routeAudio(*seatIdOpt, processId, fallbackEndpoint, router);
-        } else {
-            m_bridge->resetAudio(*seatIdOpt, processId, router);
+
+    bool isolationFailed = false;
+    if (routeSucceeded && verifySessions.isSuccess()) {
+        for (const auto& state : otherSeatStates) {
+            bool foundOther = false;
+            for (const auto& session : verifySessions.sessions) {
+                if (session.processId == state.otherPid && session.processIdentity && session.processIdentity->creationIdentity == state.otherCid) {
+                    foundOther = true;
+                    if (session.endpointStableId != state.endpointStableId) {
+                        isolationFailed = true;
+                    }
+                    break;
+                }
+            }
+            if (isolationFailed) break;
         }
-        emit routingCompleted(pid, false, "Backend rejected route. State rolled back.");
+    }
+
+    if (!routeSucceeded || isolationFailed || !verifySessions.isSuccess()) {
+        // Rollback
+        if (!previousEndpointId.empty()) {
+            hydra::runtime::AudioEndpointIdentity fallbackEndpoint{previousEndpointId, previousEndpointStableId};
+            m_bridge->routeAudio(targetSeat, processId, fallbackEndpoint, *router);
+        } else {
+            m_bridge->resetAudio(targetSeat, processId, *router);
+        }
+        
+        // Verify Rollback
+        auto rollbackSessions = m_enumerator();
+        bool rollbackSucceeded = false;
+        if (rollbackSessions.isSuccess()) {
+            for (const auto& session : rollbackSessions.sessions) {
+                if (session.processId == pid && session.processIdentity && session.processIdentity->creationIdentity == creationIdentity) {
+                    if (!previousEndpointId.empty()) {
+                        if (session.endpointId == previousEndpointId) {
+                            rollbackSucceeded = true;
+                        }
+                    } else {
+                        // Empty previousEndpointId means it was default. After reset, we just assume it succeeded if it exists.
+                        rollbackSucceeded = true; 
+                    }
+                    break;
+                }
+            }
+        }
+        
+        if (isolationFailed) {
+            emit routingCompleted(pid, rollbackSucceeded ? RouteVerificationResult::CrossSeatIsolationFailure : RouteVerificationResult::FailedRollbackFailed, "Cross-Seat isolation failure.");
+        } else {
+            emit routingCompleted(pid, rollbackSucceeded ? RouteVerificationResult::FailedRollbackSuccess : RouteVerificationResult::FailedRollbackFailed, "Route verification failed.");
+        }
         return;
     }
 
-    emit routingCompleted(pid, true, "");
+    emit routingCompleted(pid, RouteVerificationResult::Success, "");
 }
 
 void RoutingWorker::doReset(uint32_t pid, uint64_t creationIdentity) {

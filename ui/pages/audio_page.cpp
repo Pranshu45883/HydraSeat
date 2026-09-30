@@ -49,7 +49,7 @@ QPixmap AudioPage::resolveProcessIcon(uint32_t pid) {
     px.fill(Qt::transparent);
     QPainter p(&px);
     p.setRenderHint(QPainter::Antialiasing);
-    p.setBrush(QColor(0x0A, 0x84, 0xFF, 180));
+    p.setBrush(QColor(0xE1, 0x06, 0x00, 180));
     p.setPen(Qt::NoPen);
     p.drawEllipse(0, 0, 20, 20);
     return px;
@@ -424,7 +424,7 @@ void AudioPage::buildSessionCard(
     card.stateLabel = new QLabel(stateText(session.state), frame);
     card.stateLabel->setStyleSheet(
         isActive
-            ? QStringLiteral("font-size: 12px; font-weight: bold; color: #32D74B; background-color: #1A3A1A; padding: 3px 8px; border-radius: 4px; border: none;")
+            ? QStringLiteral("font-size: 12px; font-weight: bold; color: #F5F5F5; background-color: #B20500; padding: 3px 8px; border-radius: 4px; border: none;")
             : QStringLiteral("font-size: 12px; font-weight: bold; color: #777777; background-color: #202020; padding: 3px 8px; border-radius: 4px; border: none;"));
     topRow->addWidget(card.stateLabel);
     cardLayout->addLayout(topRow);
@@ -465,7 +465,7 @@ void AudioPage::buildSessionCard(
     btnRow->addStretch();
 
     card.feedbackLabel = new QLabel(QStringLiteral(""), frame);
-    card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B; border: none;"));
+    card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5; border: none;"));
     card.feedbackLabel->setVisible(false);
     btnRow->addWidget(card.feedbackLabel);
 
@@ -508,7 +508,7 @@ void AudioPage::buildSessionCard(
         card.routeBtn->setEnabled(false);
         card.resetBtn->setEnabled(false);
         card.feedbackLabel->setText(QStringLiteral("Routing..."));
-        card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #FF9F0A;"));
+        card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5;"));
         card.feedbackLabel->setVisible(true);
     }
 
@@ -544,7 +544,7 @@ bool AudioPage::tryUpdateExistingCard(
             card.stateLabel->setText(stateText(session.state));
             card.stateLabel->setStyleSheet(
                 isActive
-                    ? QStringLiteral("font-size: 12px; font-weight: bold; color: #32D74B; background-color: #1A3A1A; padding: 3px 8px; border-radius: 4px; border: none;")
+                    ? QStringLiteral("font-size: 12px; font-weight: bold; color: #F5F5F5; background-color: #B20500; padding: 3px 8px; border-radius: 4px; border: none;")
                     : QStringLiteral("font-size: 12px; font-weight: bold; color: #777777; background-color: #202020; padding: 3px 8px; border-radius: 4px; border: none;"));
         }
 
@@ -747,7 +747,7 @@ void AudioPage::renderOutputs() {
         switch (ep.state) {
             case hydra::windows::AudioEndpointState::Active:
                 stateStr = QStringLiteral("● Active");
-                stateColor = QStringLiteral("#32D74B");
+                stateColor = QStringLiteral("#F5F5F5");
                 break;
             case hydra::windows::AudioEndpointState::Disabled:
                 stateStr = QStringLiteral("○ Disabled");
@@ -755,7 +755,7 @@ void AudioPage::renderOutputs() {
                 break;
             case hydra::windows::AudioEndpointState::Unplugged:
                 stateStr = QStringLiteral("○ Unplugged");
-                stateColor = QStringLiteral("#FF9F0A");
+                stateColor = QStringLiteral("#777777");
                 break;
             case hydra::windows::AudioEndpointState::NotPresent:
                 stateStr = QStringLiteral("○ Not Present");
@@ -812,7 +812,7 @@ void AudioPage::onRouteRequested(uint32_t pid, uint64_t creationIdentity, const 
             card.resetBtn->setEnabled(false);
             card.endpointCombo->setEnabled(false);
             card.feedbackLabel->setText(QStringLiteral("Routing..."));
-            card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #FF9F0A;"));
+            card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5;"));
             card.feedbackLabel->setVisible(true);
             break;
         }
@@ -831,7 +831,7 @@ void AudioPage::onResetRequested(uint32_t pid, uint64_t creationIdentity) {
             card.resetBtn->setEnabled(false);
             card.endpointCombo->setEnabled(false);
             card.feedbackLabel->setText(QStringLiteral("Resetting..."));
-            card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #FF9F0A;"));
+            card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5;"));
             card.feedbackLabel->setVisible(true);
             break;
         }
@@ -840,7 +840,7 @@ void AudioPage::onResetRequested(uint32_t pid, uint64_t creationIdentity) {
     m_routingController->requestReset(pid, creationIdentity);
 }
 
-void AudioPage::onRoutingCompleted(uint32_t pid, bool success, const QString& errorMessage) {
+void AudioPage::onRoutingCompleted(uint32_t pid, hydra::ui::RouteVerificationResult result, const QString& errorMessage) {
     m_routingInProgress[pid] = false;
 
     for (auto& card : m_sessionCards) {
@@ -848,13 +848,20 @@ void AudioPage::onRoutingCompleted(uint32_t pid, bool success, const QString& er
             card.routeBtn->setEnabled(true);
             card.resetBtn->setEnabled(true);
             card.endpointCombo->setEnabled(true);
-            if (success) {
+            if (result == hydra::ui::RouteVerificationResult::Success) {
                 QString epId = card.endpointCombo->currentData().toString();
                 QString epName = resolveEndpointFriendlyName(epId.toStdWString(), m_lastPayload.audioEndpoints);
                 card.feedbackLabel->setText(QStringLiteral("✓ Routed to ") + epName);
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B; border: none;"));
+                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5; border: none;"));
             } else {
-                card.feedbackLabel->setText(QStringLiteral("✕ Routing failed\n") + errorMessage);
+                QString prefix = QStringLiteral("✕ ");
+                if (result == hydra::ui::RouteVerificationResult::FailedRollbackSuccess) prefix += QStringLiteral("Route failed (Rollback OK)\\n");
+                else if (result == hydra::ui::RouteVerificationResult::FailedRollbackFailed) prefix += QStringLiteral("Route failed (Rollback FAILED)\\n");
+                else if (result == hydra::ui::RouteVerificationResult::CrossSeatIsolationFailure) prefix += QStringLiteral("Isolation failure\\n");
+                else if (result == hydra::ui::RouteVerificationResult::ProcessIdentityValidationFailure) prefix += QStringLiteral("Identity validation failed\\n");
+                else prefix += QStringLiteral("Routing failed\\n");
+                
+                card.feedbackLabel->setText(prefix + errorMessage);
                 card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #E10600; border: none;"));
             }
             card.feedbackLabel->setVisible(true);
@@ -877,7 +884,7 @@ void AudioPage::onResetCompleted(uint32_t pid, bool success, const QString& erro
             card.endpointCombo->setEnabled(true);
             if (success) {
                 card.feedbackLabel->setText(QStringLiteral("✓ Routing reset"));
-                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #32D74B; border: none;"));
+                card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #F5F5F5; border: none;"));
             } else {
                 card.feedbackLabel->setText(QStringLiteral("✕ Reset failed\n") + errorMessage);
                 card.feedbackLabel->setStyleSheet(QStringLiteral("font-size: 12px; color: #E10600; border: none;"));

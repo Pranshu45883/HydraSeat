@@ -136,7 +136,7 @@ endif()
 
 # Test Suite Executable Target
 enable_testing()
-add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
+add_executable(hydra_tests tests/test_hydra.cpp tests/test_controller_identity.cpp tests/test_routing_worker.cpp ${HYDRA_SOURCES} ${HYDRA_HEADERS})
 if(WIN32)
     target_link_libraries(hydra_tests PRIVATE ${WIN32_LIBS})
 endif()

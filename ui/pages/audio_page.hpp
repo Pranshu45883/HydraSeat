@@ -55,7 +55,7 @@ public slots:
 private slots:
     void onRouteRequested(uint32_t pid, uint64_t creationIdentity, const QString& endpointId);
     void onResetRequested(uint32_t pid, uint64_t creationIdentity);
-    void onRoutingCompleted(uint32_t pid, bool success, const QString& errorMessage);
+    void onRoutingCompleted(uint32_t pid, hydra::ui::RouteVerificationResult result, const QString& errorMessage);
     void onResetCompleted(uint32_t pid, bool success, const QString& errorMessage);
     void onSearchOrFilterChanged();
 

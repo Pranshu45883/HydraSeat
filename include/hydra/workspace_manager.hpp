@@ -11,6 +11,26 @@ namespace hydra {
 
 using SeatId = std::uint32_t;
 
+// Canonical backend Seat model. This is deliberately separate from the legacy
+// WorkspaceConfig used by the old UI surface so backend migration can proceed
+// without coupling to UI/UX changes.
+struct SeatConfig {
+    SeatId seatId{0};
+    std::wstring name;
+    std::vector<std::wstring> displayIds;
+    std::optional<std::wstring> primaryDisplayId;
+    std::vector<std::wstring> keyboardIds;
+    std::vector<std::wstring> mouseIds;
+    std::vector<std::wstring> controllerIds;
+    std::optional<std::wstring> audioOutputEndpointId;
+    std::optional<std::wstring> audioInputEndpointId;
+    // Runtime-only association. Persistence must never treat a HWND as stable.
+    std::uint64_t targetHwnd{0};
+    bool active{true};
+
+    bool operator==(const SeatConfig&) const = default;
+};
+
 struct WorkspaceConfig {
     uint32_t workspaceId{1};
     std::wstring name;

@@ -16,7 +16,9 @@
 
 void testControllerIdentity();
 void testAudioRouter();
+#if HYDRA_HAS_QT
 void testRoutingWorkerVerification();
+#endif
 
 void testHardwareDetector() {
     hydra::HardwareDetector detector;
@@ -471,7 +473,9 @@ int main() {
     testAudioSessionObserverRegression();
     testAudioRouter();
     testControllerIdentity();
+#if HYDRA_HAS_QT
     testRoutingWorkerVerification();
+#endif
     std::cout << "All HydraSeat Engine Tests Passed!" << std::endl;
     return 0;
 }

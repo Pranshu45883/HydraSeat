@@ -481,3 +481,18 @@ target_link_libraries(audio_routing_contract_tests PRIVATE
     hydra_audio_routing_contract
 )
 add_test(NAME AudioRoutingContractTests COMMAND audio_routing_contract_tests)
+
+# Backend-only per-Seat game lifecycle. This layer owns the two-Seat state
+# machine but delegates concrete launch/mutation work to ISeatGameInstance.
+add_library(hydra_seat_game_lifecycle STATIC
+    src/seat_game_lifecycle.cpp
+)
+target_include_directories(hydra_seat_game_lifecycle PUBLIC include)
+
+add_executable(seat_game_lifecycle_tests
+    tests/test_seat_game_lifecycle.cpp
+)
+target_link_libraries(seat_game_lifecycle_tests PRIVATE
+    hydra_seat_game_lifecycle
+)
+add_test(NAME SeatGameLifecycleTests COMMAND seat_game_lifecycle_tests)

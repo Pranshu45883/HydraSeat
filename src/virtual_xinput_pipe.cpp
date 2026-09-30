@@ -1,5 +1,9 @@
 #include "hydra/virtual_xinput_pipe.hpp"
 
+#if !defined(HYDRA_VIRTUAL_XINPUT_CLIENT_ONLY)
+#include "hydra/virtual_xinput_service.hpp"
+#endif
+
 #include <vector>
 
 #if defined(_WIN32)
@@ -8,10 +12,12 @@
 
 namespace hydra::controller {
 
+#if !defined(HYDRA_VIRTUAL_XINPUT_CLIENT_ONLY)
 NamedPipeVirtualXInputServer::NamedPipeVirtualXInputServer(
     std::wstring endpoint,
     VirtualXInputService& service) noexcept
     : endpoint_(std::move(endpoint)), service_(service) {}
+#endif
 
 #if defined(_WIN32)
 namespace {
@@ -44,6 +50,7 @@ bool waitOverlapped(HANDLE handle,
     return GetOverlappedResult(handle, &overlapped, &transferred, FALSE) != FALSE;
 }
 
+#if !defined(HYDRA_VIRTUAL_XINPUT_CLIENT_ONLY)
 bool connectWithTimeout(HANDLE pipe, std::uint32_t timeoutMs) noexcept {
     ScopedHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     if (!event.valid()) return false;
@@ -59,6 +66,7 @@ bool connectWithTimeout(HANDLE pipe, std::uint32_t timeoutMs) noexcept {
     DWORD transferred = 0;
     return waitOverlapped(pipe, overlapped, timeoutMs, transferred);
 }
+#endif
 
 bool readExact(HANDLE handle,
                std::uint8_t* buffer,
@@ -113,6 +121,7 @@ bool writeExact(HANDLE handle,
 } // namespace
 #endif
 
+#if !defined(HYDRA_VIRTUAL_XINPUT_CLIENT_ONLY)
 PipeServerResult NamedPipeVirtualXInputServer::serveOne(
     std::uint32_t timeoutMs) noexcept {
 #if defined(_WIN32)
@@ -156,6 +165,7 @@ PipeServerResult NamedPipeVirtualXInputServer::serveOne(
     return {};
 #endif
 }
+#endif
 
 std::optional<ipc::VirtualXInputResponse> sendVirtualXInputRequest(
     const std::wstring& endpoint,

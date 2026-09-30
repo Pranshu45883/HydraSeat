@@ -898,6 +898,7 @@ target_link_libraries(hydra_session_metrics PUBLIC
 
 add_library(hydra_compatibility_result STATIC
     src/compatibility_result.cpp
+    src/compatibility_aggregation.cpp
 )
 target_include_directories(hydra_compatibility_result PUBLIC include)
 target_link_libraries(hydra_compatibility_result PUBLIC
@@ -1056,3 +1057,142 @@ add_test(NAME ControllerDiagHelp
     COMMAND hydra_controller_diag --help)
 add_test(NAME IsolationPlanList
     COMMAND hydra_isolation_plan --list)
+
+# Activate the preserved provider-plan and compatibility/community pipeline.
+# These are data/plan authorities only; no UI state is allowed to become runtime
+# authority through these targets.
+add_library(hydra_provider_launch_plan STATIC
+    src/provider_launch_plan.cpp
+)
+target_include_directories(hydra_provider_launch_plan PUBLIC include)
+target_link_libraries(hydra_provider_launch_plan PUBLIC
+    hydra_profile_provider_foundation
+    hydra_two_seat_launch
+)
+
+add_library(hydra_plan_preflight STATIC
+    src/plan_preflight.cpp
+)
+target_include_directories(hydra_plan_preflight PUBLIC include)
+target_link_libraries(hydra_plan_preflight PUBLIC
+    hydra_provider_launch_plan
+)
+
+add_library(hydra_profile_migration STATIC
+    src/profile_migration.cpp
+)
+target_include_directories(hydra_profile_migration PUBLIC include)
+target_link_libraries(hydra_profile_migration PUBLIC
+    hydra_profile_provider_foundation
+)
+
+add_library(hydra_profile_cli STATIC
+    src/profile_cli.cpp
+)
+target_include_directories(hydra_profile_cli PUBLIC include)
+target_link_libraries(hydra_profile_cli PUBLIC
+    hydra_profile_provider_foundation
+    hydra_provider_launch_plan
+)
+
+add_executable(hydraseat_profilectl src/profilectl_main.cpp)
+target_link_libraries(hydraseat_profilectl PRIVATE hydra_profile_cli)
+
+add_library(hydra_community_submission STATIC
+    src/community_submission.cpp
+    src/compatibility_share_model.cpp
+    src/compatibility_local_store.cpp
+)
+target_include_directories(hydra_community_submission PUBLIC include)
+target_link_libraries(hydra_community_submission PUBLIC
+    hydra_compatibility_result
+)
+
+add_library(hydra_community_package STATIC
+    src/community_package.cpp
+    src/community_setup.cpp
+    src/compatibility_catalog.cpp
+)
+target_include_directories(hydra_community_package PUBLIC include)
+target_link_libraries(hydra_community_package PUBLIC
+    hydra_artifact_trust
+    hydra_compatibility_result
+    hydra_setup_package
+    hydra_provider_launch_plan
+)
+
+add_library(hydra_catalog_cache STATIC
+    src/catalog_cache.cpp
+)
+target_include_directories(hydra_catalog_cache PUBLIC include)
+target_link_libraries(hydra_catalog_cache PUBLIC
+    hydra_artifact_trust
+)
+
+add_library(hydra_game_runtime_requirement_resolver STATIC
+    src/game_runtime_requirement_resolver.cpp
+)
+target_include_directories(hydra_game_runtime_requirement_resolver PUBLIC include)
+target_link_libraries(hydra_game_runtime_requirement_resolver PUBLIC
+    hydra_compatibility_result
+    hydra_profile_provider_foundation
+    hydra_provider_launch_plan
+    hydra_community_submission
+)
+if(WIN32)
+    target_link_libraries(hydra_game_runtime_requirement_resolver PRIVATE Bcrypt.lib)
+endif()
+
+add_executable(hydraseat_community_validate src/community_validate_main.cpp)
+target_link_libraries(hydraseat_community_validate PRIVATE
+    hydra_compatibility_result
+    hydra_setup_package
+)
+
+foreach(test_name IN ITEMS
+    provider_launch_plan
+    plan_preflight
+    profile_migration
+    profile_cli
+    compatibility_aggregation
+    community_package
+    community_setup
+    compatibility_catalog
+    catalog_cache
+    community_submission
+    compatibility_share_model
+    compatibility_local_store
+    game_runtime_requirement_resolver
+)
+    add_executable(${test_name}_pipeline_tests tests/test_${test_name}.cpp)
+endforeach()
+
+target_link_libraries(provider_launch_plan_pipeline_tests PRIVATE hydra_provider_launch_plan)
+target_link_libraries(plan_preflight_pipeline_tests PRIVATE hydra_plan_preflight)
+target_link_libraries(profile_migration_pipeline_tests PRIVATE hydra_profile_migration)
+target_link_libraries(profile_cli_pipeline_tests PRIVATE hydra_profile_cli)
+target_link_libraries(compatibility_aggregation_pipeline_tests PRIVATE hydra_compatibility_result)
+target_link_libraries(community_package_pipeline_tests PRIVATE hydra_community_package)
+target_link_libraries(community_setup_pipeline_tests PRIVATE hydra_community_package)
+target_link_libraries(compatibility_catalog_pipeline_tests PRIVATE hydra_community_package)
+target_link_libraries(catalog_cache_pipeline_tests PRIVATE hydra_catalog_cache)
+target_link_libraries(community_submission_pipeline_tests PRIVATE hydra_community_submission)
+target_link_libraries(compatibility_share_model_pipeline_tests PRIVATE hydra_community_submission)
+target_link_libraries(compatibility_local_store_pipeline_tests PRIVATE hydra_community_submission)
+target_link_libraries(game_runtime_requirement_resolver_pipeline_tests PRIVATE
+    hydra_game_runtime_requirement_resolver)
+
+add_test(NAME ProviderLaunchPlanPipelineTests COMMAND provider_launch_plan_pipeline_tests)
+add_test(NAME PlanPreflightPipelineTests COMMAND plan_preflight_pipeline_tests)
+add_test(NAME ProfileMigrationPipelineTests COMMAND profile_migration_pipeline_tests)
+add_test(NAME ProfileCliPipelineTests COMMAND profile_cli_pipeline_tests)
+add_test(NAME CompatibilityAggregationPipelineTests COMMAND compatibility_aggregation_pipeline_tests)
+add_test(NAME CommunityPackagePipelineTests COMMAND community_package_pipeline_tests)
+add_test(NAME CommunitySetupPipelineTests COMMAND community_setup_pipeline_tests)
+add_test(NAME CompatibilityCatalogPipelineTests COMMAND compatibility_catalog_pipeline_tests)
+add_test(NAME CatalogCachePipelineTests COMMAND catalog_cache_pipeline_tests)
+add_test(NAME CommunitySubmissionPipelineTests COMMAND community_submission_pipeline_tests)
+add_test(NAME CompatibilityShareModelPipelineTests COMMAND compatibility_share_model_pipeline_tests)
+add_test(NAME CompatibilityLocalStorePipelineTests COMMAND compatibility_local_store_pipeline_tests)
+add_test(NAME GameRuntimeRequirementResolverPipelineTests
+    COMMAND game_runtime_requirement_resolver_pipeline_tests)

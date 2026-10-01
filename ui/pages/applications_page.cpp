@@ -76,7 +76,7 @@ ApplicationsPage::ApplicationsPage(
 
     auto* targetRow = new QHBoxLayout();
     auto* seatLabel = new QLabel("Seat", launchFrame);
-    seatLabel->setFixedWidth(70);
+    seatLabel->setFixedWidth(90);
     seatLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; border: none;");
     targetRow->addWidget(seatLabel);
 
@@ -105,7 +105,7 @@ ApplicationsPage::ApplicationsPage(
 
     auto* argumentsRow = new QHBoxLayout();
     auto* argumentsLabel = new QLabel("Arguments", launchFrame);
-    argumentsLabel->setFixedWidth(70);
+    argumentsLabel->setFixedWidth(90);
     argumentsLabel->setStyleSheet(
         "font-size: 13px; color: #B5B5B5; border: none;");
     argumentsRow->addWidget(argumentsLabel);

@@ -14,6 +14,8 @@ hostipc::SeatSnapshot toHostSnapshot(const SeatRuntimeSnapshot& snapshot) noexce
         snapshot.process.has_value(),
         snapshot.targetHwnd != 0,
         snapshot.controllerBinding.has_value(),
+        snapshot.process ? snapshot.process->pid : 0u,
+        snapshot.process ? snapshot.process->creationIdentity : 0u,
     };
 }
 

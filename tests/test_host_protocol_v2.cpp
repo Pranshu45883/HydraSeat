@@ -27,11 +27,12 @@ int main() {
     HostSnapshot snapshot;
     snapshot.authorityRevision = 7;
     snapshot.seats[0] =
-        SeatSnapshot{1, 3, true, true, true, true, true, false};
+        SeatSnapshot{
+            1, 3, true, true, true, true, true, false, 4242, 0x1122334455667788ull};
     snapshot.seats[1] =
-        SeatSnapshot{2, 0, false, false, false, false, false, false};
+        SeatSnapshot{2, 0, false, false, false, false, false, false, 0, 0};
     const auto snapshotBytes = encodeSnapshot(snapshot);
-    assert(snapshotBytes.size() == 56);
+    assert(snapshotBytes.size() == 88);
     assert(decodeSnapshot(snapshotBytes) == snapshot);
 
     Frame frame{MessageType::Snapshot, 42, snapshotBytes};
@@ -72,7 +73,7 @@ int main() {
 
     auto invalidSnapshot = snapshot;
     invalidSnapshot.seats[1] =
-        SeatSnapshot{2, 0, false, false, false, false, true, false};
+        SeatSnapshot{2, 0, false, false, false, false, true, false, 0, 0};
     assert(encodeSnapshot(invalidSnapshot).empty());
 
     auto processWithoutGameLease = snapshot;

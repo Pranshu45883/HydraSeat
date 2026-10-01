@@ -49,6 +49,7 @@ if(Qt6_FOUND)
         ui/routing_controller.cpp
         ui/pages/dashboard_page.cpp
         ui/pages/seats_page.cpp
+    ui/pages/settings_page.cpp
         ui/pages/applications_page.cpp
         ui/pages/audio_page.cpp
         ui/pages/hardware_page.cpp

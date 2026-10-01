@@ -386,16 +386,6 @@ void ApplicationsPage::updateState(const EngineStatePayload& payload) {
             ? QString::number(session.processIdentity->creationIdentity)
             : "N/A";
 
-        auto* pidLabel = new QLabel(
-            QString("PID %1    CID %2")
-                .arg(session.processId)
-                .arg(creationIdStr),
-            frame);
-        pidLabel->setStyleSheet(
-            "font-size: 12px; color: #777777; "
-            "font-family: 'Consolas', monospace; border: none;");
-        fl->addWidget(pidLabel);
-
         auto* bottomLayout = new QHBoxLayout();
 
         const QString stateText =

@@ -105,8 +105,8 @@ void HardwarePage::addControllerSection(const hydra::controller::InventorySnapsh
         nameLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
         fl->addWidget(nameLabel);
 
-        auto* identityLabel = new QLabel(QString::fromStdWString(phys.persistentId), frame);
-        identityLabel->setStyleSheet("font-size: 12px; color: #777777; font-family: 'Consolas', monospace; border: none;");
+        auto* identityLabel = new QLabel("", frame);
+        identityLabel->setVisible(false);
         fl->addWidget(identityLabel);
 
         auto* detailsLabel = new QLabel("● Connected", frame);

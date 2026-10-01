@@ -1,9 +1,9 @@
 #pragma once
-
 #include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QWidget>
+#include <QScrollArea>
 #include <cstdint>
 #include <memory>
 
@@ -23,22 +23,27 @@ public slots:
     void updateState(const EngineStatePayload& payload);
 
 private slots:
-    void onPairRequested(std::uint32_t seatId);
-    void onActivateRequested(std::uint32_t seatId);
+    void onLaunchRequested(std::uint32_t seatId);
+    void onStopRequested(std::uint32_t seatId);
+    void onConfigureRequested(std::uint32_t seatId);
 
 private:
     struct SeatWidgets {
         QLabel* stateBadge{nullptr};
-        QPushButton* actionBtn{nullptr};
-        QLabel* appVal{nullptr};
-        QLabel* winVal{nullptr};
-        QLabel* audioVal{nullptr};
-
-        QLabel* ctrlStatus{nullptr};
-        QComboBox* physCombo{nullptr};
-        QComboBox* srcCombo{nullptr};
-        QPushButton* pairBtn{nullptr};
         QLabel* feedbackLabel{nullptr};
+
+        QComboBox* appCombo{nullptr};
+        QComboBox* displayCombo{nullptr};
+        QComboBox* keyboardCombo{nullptr};
+        QComboBox* mouseCombo{nullptr};
+        QComboBox* ctrlPhysCombo{nullptr};
+        QComboBox* ctrlSrcCombo{nullptr};
+        QComboBox* audioCombo{nullptr};
+
+        QPushButton* configureBtn{nullptr};
+        QPushButton* launchBtn{nullptr};
+        QPushButton* stopBtn{nullptr};
+        QPushButton* reconfigureBtn{nullptr};
     };
 
     std::shared_ptr<HostControlClient> m_hostControl;
@@ -46,11 +51,11 @@ private:
     SeatWidgets m_seat1;
     SeatWidgets m_seat2;
 
-    void populateCombos(SeatWidgets& widgets);
-    void updateBindingState(
+    QWidget* buildSeat(std::uint32_t seatId, SeatWidgets& widgets);
+    void updateSeatData(
         std::uint32_t seatId,
-        const hydra::hostipc::SeatSnapshot* snapshot,
         SeatWidgets& widgets);
+    void populateCombos(SeatWidgets& widgets);
     const hydra::hostipc::SeatSnapshot* seatSnapshot(
         std::uint32_t seatId) const noexcept;
 };

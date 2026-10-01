@@ -139,15 +139,15 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
     headerLayout->addWidget(card.stateLabel);
     fl->addLayout(headerLayout);
 
-    card.pidLabel = new QLabel(QString("PID: %1").arg(session.processId), card.frame);
-    card.pidLabel->setStyleSheet("font-size: 12px; color: #777777; font-family: 'Consolas', monospace; border: none;");
+    card.pidLabel = new QLabel("", card.frame);
+    card.pidLabel->setVisible(false);
     fl->addWidget(card.pidLabel);
 
-    card.currentOutputLabel = new QLabel(QString("Current Output: %1").arg(resolveEndpointFriendlyName(session.endpointId)), card.frame);
+    card.currentOutputLabel = new QLabel(QString("Current output: %1").arg(resolveEndpointFriendlyName(session.endpointId)), card.frame);
     card.currentOutputLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; border: none; margin-bottom: 8px;");
     fl->addWidget(card.currentOutputLabel);
 
-    auto* routeToLbl = new QLabel("Route to:", card.frame);
+    auto* routeToLbl = new QLabel("Output:", card.frame);
     routeToLbl->setStyleSheet("font-size: 12px; color: #777777; border: none;");
     fl->addWidget(routeToLbl);
 
@@ -179,7 +179,7 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
     );
     btnLayout->addWidget(card.resetBtn);
 
-    card.routeBtn = new QPushButton("Route Audio", card.frame);
+    card.routeBtn = new QPushButton("Apply", card.frame);
     card.routeBtn->setStyleSheet(
         "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 6px; height: 32px; padding: 0 16px; font-weight: bold; }"
         "QPushButton:hover { background-color: #FF1A1A; }"
@@ -208,7 +208,7 @@ bool AudioPage::tryUpdateExistingCard(const hydra::windows::AudioSessionObservat
             card.stateLabel->setStyleSheet(QString("font-size: 12px; font-weight: bold; color: %1; border: none;").arg(stateColor(session.state)));
             if (card.currentEndpointId != session.endpointId) {
                 card.currentEndpointId = session.endpointId;
-                card.currentOutputLabel->setText(QString("Current Output: %1").arg(resolveEndpointFriendlyName(session.endpointId)));
+                card.currentOutputLabel->setText(QString("Current output: %1").arg(resolveEndpointFriendlyName(session.endpointId)));
             }
             return true;
         }

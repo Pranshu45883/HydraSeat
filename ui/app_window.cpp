@@ -8,6 +8,7 @@
 #include "ui/pages/audio_page.hpp"
 #include "ui/pages/hardware_page.hpp"
 #include "ui/pages/diagnostics_page.hpp"
+#include "ui/pages/settings_page.hpp"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -98,9 +99,8 @@ void AppWindow::setupUi() {
     m_workspaceStack->addWidget(hardwarePage);
     m_workspaceStack->addWidget(diagnosticsPage);
 
-    // Settings (placeholder for now)
-    auto* settingsPage = new QWidget(m_workspaceStack);
-    m_workspaceStack->addWidget(settingsPage);
+    auto* settingsPageNode = new SettingsPage(m_workspaceStack);
+    m_workspaceStack->addWidget(settingsPageNode);
 
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, dashboardPage, &DashboardPage::updateState);
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, seatsPage, &SeatsPage::updateState);

@@ -155,28 +155,64 @@ Prefer several readable source files inside one responsibility-level component.
 
 ## 12. Current collaboration split
 
-The current contributor split exists to keep parallel work independent until an integration boundary is ready:
+The current contributor split is intentionally asymmetric because the canonical backend/runtime authority is already converging in `hydra_host.exe`. Parallel work should now happen above that boundary instead of creating competing owners.
 
-- `ot4562-glitch` side: Seat/runtime authority, process ownership/lifecycle, controller identity/runtime, process-local controller compatibility, and related compatibility work;
-- `Pranshu45883` side: product UI/UX and Windows audio endpoint/session/routing work;
-- shared: typed UI/runtime IPC contracts, Seat/audio integration contracts, and physical/real-game acceptance.
+### `ot4562-glitch` — backend/runtime owner
 
-This is a coordination boundary, not a claim that a subsystem can never be reviewed or changed by the other contributor. Integration contracts are reviewed jointly.
+Primary ownership:
+
+- `SessionController`, `SeatRuntime`, `RuntimeHost`, game/process/window ownership and lifecycle;
+- host IPC protocol/transport semantics, role checks, lease/generation rules and fail-closed validation;
+- process launch/stop authority, strict Job ownership and launcher-handoff contracts;
+- controller identity/inventory, pairing semantics, virtual/process-local XInput and input-isolation backends;
+- Windows audio endpoint/session backend and route/reset mutation authority;
+- display/window placement/recovery, watchdog/reset/crash recovery and machine-state rollback;
+- installer/update/privilege/support/release/signing/acceptance tooling;
+- provider/profile/compatibility/community pipeline and evidence classification;
+- backend tests, Windows platform tests, production diagnostics and repository/build hygiene.
+
+Files under `include/hydra/**`, `src/**`, `tests/**`, `tools/**`, `schemas/**`, release config, and backend portions of `CMakeLists.txt` are therefore backend-owned unless a change is explicitly coordinated.
+
+### `Pranshu45883` — product UI/UX owner
+
+Primary ownership:
+
+- Qt product UI under `ui/**`;
+- information architecture, navigation, page composition and visual hierarchy;
+- Seat setup/reconfiguration flow, game/target selection flow and user-facing device assignment flow;
+- labels, device-friendly names, empty/loading/error states and blocking-reason explanations;
+- Play/Stop/Reconfigure controls as UI intent sent through existing host IPC;
+- audio/controller/display UI presentation and interaction, without owning their Windows/runtime mutation;
+- reconnect UX, disabled/busy-state explanations and recovery guidance;
+- accessibility, keyboard navigation, DPI/layout behavior and user-facing polish.
+
+Pranshu may extend UI-side adapters such as `HostControlClient` and `RoutingController` only by consuming the bounded host contract. UI code MUST NOT receive `SessionController`/`RuntimeHost` pointers, construct a second authority, directly launch/kill game processes, mutate machine-wide Windows state, or infer success from local UI state.
+
+### Shared review / acceptance
+
+The following are shared review surfaces, but ownership remains single-sided:
+
+- UI-facing IPC capability requests: Pranshu defines the UX need; backend owner defines/implements the authority-safe protocol semantics;
+- audio/controller/display behavior: Pranshu owns presentation/interaction; backend owner owns observation/mutation/rollback;
+- physical two-player and real-game acceptance: both contributors review the result and UX, while evidence labels remain literal;
+- release usability and clean-machine acceptance;
+- any change that crosses `ui/** <-> host IPC <-> RuntimeHost`.
+
+This is a coordination boundary, not a prohibition on code review. The non-owner may review any subsystem; implementation ownership changes only by explicit agreement.
 
 While the split is active:
 
 - `Pranshu45883/HydraSeat` is the single canonical repository; long-lived contributor forks are not part of the normal collaboration model;
-- contributor work uses short-lived same-repository branches such as `minseong/*` and `pranshu/*`, with protected `main` changed only through reviewed pull requests;
-- branches under `minseong/staging/*` preserve dependent implementation only; they are not merge-ready, are not production state, and must be rebuilt/rebased on current `main` before review;
-- UI code belongs to the UI/UX owner and must consume bounded runtime state/contracts rather than grow a second runtime authority;
-- audio implementation files stay separate from Seat/runtime authority code;
-- runtime/controller work must not silently implement a competing audio state machine;
-- audio observation may use exact process identity semantics, but the Windows audio backend should not become dependent on the runtime-authority implementation merely to share a value type;
-- the intended future direction is `SessionController -> SeatRuntime -> audio contract -> Windows audio backend`;
-- experimental or undocumented routing mechanisms remain diagnostics/research until target-scoped verification and rollback are proven;
-- pull requests should be immediately reviewable/mergeable on the current `main`; dependent follow-up work stays on same-repository staging branches until its prerequisite is merged, then is rebuilt and freshly verified on the new base.
+- contributor work uses short-lived same-repository branches such as `minseong/*` and `pranshu/*`, with `main` changed through pull requests;
+- Pranshu UI PRs SHOULD normally touch `ui/**`, UI resources, UI-specific CMake/CI glue, and user-facing documentation only;
+- backend/runtime files in a Pranshu UI PR require explicit coordination and should be a separate PR when practical;
+- backend work MUST preserve stable, bounded UI-facing contracts and must not silently redesign product flow;
+- UI work MUST treat host snapshots as read-only evidence and host Control commands as the only mutation path;
+- a game-active Seat may hold a separate UI configuration lease; UI reconfiguration MUST NOT stop the game unless the user explicitly requests Stop;
+- experimental or undocumented platform mechanisms remain diagnostics/research until target-scoped verification and rollback are proven;
+- pull requests should be immediately reviewable/mergeable on current `main`; dependent work is rebased/rebuilt after its prerequisite merges.
 
-The purpose of this split is to reduce merge pressure while preserving one eventual Seat ownership model.
+The purpose of this split is to let backend correctness and product usability advance in parallel without reintroducing duplicate runtime authority.
 
 ## 13. Pull request contract
 

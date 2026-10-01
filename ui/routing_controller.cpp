@@ -9,23 +9,23 @@ QString audioStatusMessage(hydra::hostipc::AudioMutationStatus status) {
     case Status::Success:
         return {};
     case Status::InvalidProcess:
-        return "The host rejected the process identity or Seat lease.";
+        return "This application is no longer available.";
     case Status::ProcessNotFound:
-        return "The target process no longer exists.";
+        return "This application is no longer available.";
     case Status::AudioSessionNotFound:
         return "No audio session exists for this process yet.";
     case Status::EndpointNotFound:
-        return "The selected audio endpoint no longer exists.";
+        return "The selected audio device is unavailable.";
     case Status::EndpointUnavailable:
-        return "The selected audio endpoint is currently unavailable.";
+        return "The selected audio device is unavailable.";
     case Status::IdentityMismatch:
-        return "The process identity changed; refresh and try again.";
+        return "The configuration changed before the operation completed.";
     case Status::RoutingFailed:
-        return "Windows rejected the requested audio route.";
+        return "Audio routing failed. Verify the current output before trying again.";
     case Status::OsApiError:
-        return "Windows audio policy returned an operating-system error.";
+        return "Something went wrong. Check Diagnostics for more information.";
     }
-    return "Unknown host audio-routing failure.";
+    return "Something went wrong. Check Diagnostics for more information.";
 }
 
 } // namespace

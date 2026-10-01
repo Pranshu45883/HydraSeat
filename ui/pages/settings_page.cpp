@@ -38,7 +38,7 @@ SettingsPage::SettingsPage(QWidget* parent) : QWidget(parent) {
             fl->addWidget(label);
             
             auto* btn = new QPushButton("Toggle", frame);
-            btn->setFixedSize(60, 24);
+            btn->setFixedSize(70, 24);
             btn->setStyleSheet("QPushButton { background-color: #292929; color: #F5F5F5; border: 1px solid #333333; border-radius: 4px; } QPushButton:disabled { color: #777777; }");
             fl->addWidget(btn);
 

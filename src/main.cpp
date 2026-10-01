@@ -10,7 +10,7 @@
 
 #ifdef HYDRA_HAS_QT
 #include <QApplication>
-#include "ui/main_window.hpp"
+#include "ui/app_window.hpp"
 #endif
 
 #include <iostream>
@@ -21,10 +21,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     (void)pCmdLine;
 
 #ifdef HYDRA_HAS_QT
-    int argc = 0;
-    char** argv = nullptr;
-    QApplication app(argc, argv);
-    hydra::ui::MainWindow window;
+    QApplication app(__argc, __argv);
+    hydra::ui::AppWindow window;
     window.show();
     return app.exec();
 #else

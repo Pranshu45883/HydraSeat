@@ -17,6 +17,13 @@ jobs:
     - name: Set up MSVC & CMake
       uses: ilammy/msvc-dev-cmd@v1
 
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.3'
+        arch: 'win64_msvc2022_64'
+        cache: true
+
     - name: Configure CMake
       run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 

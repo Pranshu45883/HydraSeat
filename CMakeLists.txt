@@ -10,7 +10,7 @@ include_directories(include .)
 
 # Enable UTF-8 encoding for MSVC string literals
 if(MSVC)
-    add_compile_options(/utf-8)
+    add_compile_options(/utf-8 /FI"hydra/qt_msvc_compat.hpp")
 endif()
 
 # Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
@@ -43,12 +43,28 @@ if(Qt6_FOUND)
     set(CMAKE_AUTOUIC ON)
     set(CMAKE_AUTORCC ON)
     set(UI_SOURCES
-        ui/workspace_widget.cpp
-        ui/main_window.cpp
+        ui/app_window.cpp
+        ui/engine_poller.cpp
+        ui/host_control_client.cpp
+        ui/routing_controller.cpp
+        ui/pages/dashboard_page.cpp
+        ui/pages/seats_page.cpp
+        ui/pages/applications_page.cpp
+        ui/pages/audio_page.cpp
+        ui/pages/hardware_page.cpp
+        ui/pages/diagnostics_page.cpp
     )
     set(UI_HEADERS
-        ui/workspace_widget.hpp
-        ui/main_window.hpp
+        ui/app_window.hpp
+        ui/engine_poller.hpp
+        ui/host_control_client.hpp
+        ui/routing_controller.hpp
+        ui/pages/dashboard_page.hpp
+        ui/pages/seats_page.hpp
+        ui/pages/applications_page.hpp
+        ui/pages/audio_page.hpp
+        ui/pages/hardware_page.hpp
+        ui/pages/diagnostics_page.hpp
     )
 endif()
 
@@ -490,6 +506,13 @@ if(WIN32)
         Kernel32.lib
         hydra_windows_audio_router
     )
+endif()
+
+if(Qt6_FOUND)
+    # The GUI is an IPC client of the canonical host. It does not construct
+    # SessionController/RuntimeHost authority in-process.
+    target_link_libraries(HydraSeat PRIVATE hydra_host_transport)
+    target_link_libraries(hydra_tests PRIVATE hydra_host_transport)
 endif()
 
 add_executable(host_transport_session_tests

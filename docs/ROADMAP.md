@@ -47,9 +47,14 @@ These check marks mean the software path is integrated and has automated evidenc
 - [x] game-active Seats can enter UI configuration without game deactivation.
 - [x] controller pairing uses current persistent physical identity plus XInput slot.
 - [x] audio actions use exact process identity through the host.
-- [ ] run final physical-device usability pass for device naming and reconnect feedback.
-- [ ] refine user-facing failure explanations from real-game/manual observations.
-- [ ] validate settings flow on a clean installed build.
+- [x] Applications UI sends custom-executable Launch/Stop intent through HostControlClient only.
+- [x] obsolete Qt MainWindow/WorkspaceWidget code that directly owned InputRouter/WorkspaceManager/GameLauncher is removed.
+- [ ] Pranshu: implement the Settings page; the current navigation target is only a placeholder.
+- [ ] Pranshu: run the physical-device usability pass for friendly names, reconnect feedback, busy/disabled states, and recovery guidance.
+- [ ] Pranshu: refine user-facing failure explanations from real-game/manual observations.
+- [ ] Pranshu: complete display/keyboard/mouse Seat-assignment UX only after the backend exposes the corresponding bounded host command; do not bypass host IPC.
+- [ ] Pranshu: finish keyboard navigation, accessibility, DPI/scaling, and responsive-layout polish.
+- [ ] Shared: validate the complete UI/settings flow on a clean installed build.
 
 ## 4. Windows audio acceptance
 

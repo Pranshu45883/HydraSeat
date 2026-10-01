@@ -8,14 +8,26 @@
 #include <string>
 #include <thread>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 int main() {
 #if defined(_WIN32)
     using namespace hydra::hostipc;
     using namespace hydra::runtime;
 
+    // Production default: the undocumented Windows AudioPolicyConfig path is
+    // unavailable until explicitly enabled for controlled physical validation.
+    assert(SetEnvironmentVariableW(
+        L"HYDRA_EXPERIMENTAL_AUDIO_POLICY", nullptr) != FALSE ||
+        GetLastError() == ERROR_ENVVAR_NOT_FOUND);
+
     RuntimeHost host;
     const auto activation = host.beginSeatActivation(1);
     assert(activation.valid());
+    const ProcessIdentity process{4321, 987654321};
+    assert(host.publishProcess(activation, process));
 
     HostPipeServer server(host);
     bool serverResult = false;
@@ -35,6 +47,24 @@ int main() {
     assert(snapshot->seats[0].gameLeaseActive);
     assert(snapshot->seats[0].generation == activation.generation);
     assert(!snapshot->seats[1].active);
+
+    snapshot = client.acquireUiLease(1, 5000, &clientError);
+    assert(snapshot.has_value());
+    assert(snapshot->seats[0].uiLeaseActive);
+    assert(snapshot->seats[0].gameLeaseActive);
+
+    clientError.clear();
+    const auto audioStatus = client.routeAudio(
+        1, process.pid, process.creationIdentity,
+        "{0.0.0.00000000}.{00000000-0000-0000-0000-000000000000}",
+        5000, &clientError);
+    assert(!audioStatus.has_value());
+    assert(!clientError.empty());
+
+    snapshot = client.releaseUiLease(1, 5000, &clientError);
+    assert(snapshot.has_value());
+    assert(!snapshot->seats[0].uiLeaseActive);
+    assert(snapshot->seats[0].gameLeaseActive);
 
     snapshot = client.acquireUiLease(2, 5000, &clientError);
     assert(snapshot.has_value());

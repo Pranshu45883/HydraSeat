@@ -135,8 +135,8 @@ if(Qt6_FOUND)
 endif()
 
 # Reset Tool Target
-add_executable(reset_input src/reset_input.cpp)
 if(WIN32)
+    add_executable(reset_input src/reset_input.cpp)
     target_link_libraries(reset_input PRIVATE User32.lib)
 
     add_executable(xinput_probe_game
@@ -151,16 +151,25 @@ if(WIN32)
         src/controller_identity.cpp
     )
     target_link_libraries(xinput_probe_game PRIVATE ${WIN32_LIBS})
+    if(MINGW)
+        target_link_options(xinput_probe_game PRIVATE -municode)
+    endif()
 
     add_executable(xinput_adapter_exports
         tests/test_xinput_adapter_exports.cpp
     )
+    if(MINGW)
+        target_link_options(xinput_adapter_exports PRIVATE -municode)
+    endif()
 
     add_executable(xinput_abi_probe_game
         tools/xinput_abi_probe_game.cpp
         ${XINPUT_ABI_PROBE_SUPPORT_SOURCES}
         ${XINPUT_ABI_PROBE_SUPPORT_HEADERS}
     )
+    if(MINGW)
+        target_link_options(xinput_abi_probe_game PRIVATE -municode)
+    endif()
 
     add_library(hydra_xinput_adapter SHARED
         src/xinput_adapter_dll.cpp
@@ -247,6 +256,9 @@ if(WIN32)
     add_executable(hydra_process_owner_child
         tests/process_owner_child.cpp
     )
+    if(MINGW)
+        target_link_options(hydra_process_owner_child PRIVATE -municode)
+    endif()
 
     add_executable(game_launcher_process_ownership
         tests/test_game_launcher_process_ownership.cpp
@@ -258,6 +270,9 @@ if(WIN32)
         src/controller_virtual_xinput.cpp
     )
     target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib Setupapi.lib Hid.lib)
+    if(MINGW)
+        target_link_options(game_launcher_process_ownership PRIVATE -municode)
+    endif()
     add_dependencies(game_launcher_process_ownership hydra_process_owner_child)
     add_test(
         NAME GameLauncherProcessOwnership
@@ -274,6 +289,9 @@ if(WIN32)
         src/controller_virtual_xinput.cpp
     )
     target_link_libraries(game_launcher_xinput_integration PRIVATE Xinput.lib Setupapi.lib Hid.lib)
+    if(MINGW)
+        target_link_options(game_launcher_xinput_integration PRIVATE -municode)
+    endif()
     add_dependencies(game_launcher_xinput_integration hydra_process_owner_child)
     add_test(
         NAME GameLauncherXInputIntegration

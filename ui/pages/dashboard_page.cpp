@@ -14,7 +14,7 @@ DashboardPage::DashboardPage(QWidget* parent)
     auto* container = new QWidget();
     container->setStyleSheet("background-color: transparent;");
     auto* layout = new QVBoxLayout(container);
-    
+
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->addWidget(scrollArea);
@@ -25,7 +25,7 @@ DashboardPage::DashboardPage(QWidget* parent)
     auto* title = new QLabel("Dashboard", this);
     title->setStyleSheet("font-size: 28px; font-weight: bold; color: #F5F5F5; font-family: 'Segoe UI', sans-serif;");
     layout->addWidget(title);
-    
+
     auto* subtitle = new QLabel("System overview and current HydraSeat runtime state", this);
     subtitle->setStyleSheet("font-size: 14px; color: #B5B5B5; font-family: 'Segoe UI', sans-serif; margin-bottom: 8px;");
     layout->addWidget(subtitle);
@@ -59,19 +59,19 @@ static QFrame* createMetricCard(const QString& title, const QString& subtitle, Q
     auto* l = new QVBoxLayout(frame);
     l->setContentsMargins(0,0,0,0);
     l->setSpacing(4);
-    
+
     auto* titleLbl = new QLabel(title);
     titleLbl->setStyleSheet("font-size: 12px; font-weight: bold; color: #777777; border: none; text-transform: uppercase;");
     l->addWidget(titleLbl);
-    
+
     valLabel = new QLabel("00");
     valLabel->setStyleSheet("font-size: 32px; font-weight: bold; color: #F5F5F5; border: none;");
     l->addWidget(valLabel);
-    
+
     auto* subLbl = new QLabel(subtitle);
     subLbl->setStyleSheet("font-size: 11px; color: #B5B5B5; border: none;");
     l->addWidget(subLbl);
-    
+
     return frame;
 }
 
@@ -79,7 +79,7 @@ void DashboardPage::setupMetrics(QGridLayout* layout) {
     layout->addWidget(createMetricCard("SEATS", "Configured seats", m_valSeats), 0, 0);
     layout->addWidget(createMetricCard("ACTIVE", "Active seats", m_valActive), 0, 1);
     layout->addWidget(createMetricCard("DISPLAYS", "Detected displays", m_valDisplays), 0, 2);
-    
+
     layout->addWidget(createMetricCard("INPUTS", "Keyboards, Mice & Controllers", m_valInputs), 1, 0);
     layout->addWidget(createMetricCard("AUDIO ENDPOINTS", "Available endpoints", m_valAudioEndpoints), 1, 1);
     layout->addWidget(createMetricCard("AUDIO SESSIONS", "Active audio sessions", m_valAudioSessions), 1, 2);
@@ -91,7 +91,7 @@ static QFrame* createSeatCard(const QString& title, QLabel*& stateLbl, QLabel*& 
     auto* l = new QVBoxLayout(frame);
     l->setContentsMargins(0,0,0,0);
     l->setSpacing(12);
-    
+
     auto* header = new QHBoxLayout();
     auto* tLbl = new QLabel(title);
     tLbl->setStyleSheet("font-size: 18px; font-weight: bold; color: #F5F5F5; border: none;");
@@ -101,7 +101,7 @@ static QFrame* createSeatCard(const QString& title, QLabel*& stateLbl, QLabel*& 
     header->addStretch();
     header->addWidget(stateLbl);
     l->addLayout(header);
-    
+
     auto addField = [&](const QString& labelText, QLabel*& val) {
         auto* fl = new QVBoxLayout();
         fl->setSpacing(2);
@@ -113,11 +113,11 @@ static QFrame* createSeatCard(const QString& title, QLabel*& stateLbl, QLabel*& 
         fl->addWidget(val);
         l->addLayout(fl);
     };
-    
+
     addField("Application", appLbl);
     addField("Audio", audioLbl);
     addField("Controller", ctrlLbl);
-    
+
     l->addStretch();
     return frame;
 }

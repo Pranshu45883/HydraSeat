@@ -12,7 +12,7 @@ HardwarePage::HardwarePage(QWidget* parent)
     auto* title = new QLabel("Hardware Inventory", this);
     title->setStyleSheet("font-size: 28px; font-weight: bold; color: #F5F5F5; font-family: 'Segoe UI', sans-serif;");
     layout->addWidget(title);
-    
+
     auto* subtitle = new QLabel("Detected multi-seat peripherals and controller devices", this);
     subtitle->setStyleSheet("font-size: 14px; color: #B5B5B5; font-family: 'Segoe UI', sans-serif; margin-bottom: 8px;");
     layout->addWidget(subtitle);
@@ -56,7 +56,7 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
         frame->setStyleSheet("background-color: #151515; border-radius: 6px; padding: 12px 16px; border: 1px solid #292929;");
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);
-        
+
         auto* nameLabel = new QLabel(QString::fromStdWString(dev.name), frame);
         nameLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
         fl->addWidget(nameLabel);
@@ -69,7 +69,7 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
         col++;
         if (col >= 2) { col = 0; row++; }
     }
-    
+
     gridLayout->setColumnStretch(2, 1);
     sl->addLayout(gridLayout);
     m_listLayout->insertWidget(m_listLayout->count() - 1, sectionWidget);
@@ -77,7 +77,7 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
 
 void HardwarePage::addControllerSection(const hydra::controller::InventorySnapshot& inventory) {
     if (inventory.physicalControllers.empty() && inventory.sources.empty()) return;
-    
+
     auto* sectionWidget = new QWidget();
     auto* sl = new QVBoxLayout(sectionWidget);
     sl->setContentsMargins(0,0,0,0);
@@ -100,7 +100,7 @@ void HardwarePage::addControllerSection(const hydra::controller::InventorySnapsh
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);
         fl->setSpacing(4);
-        
+
         auto* nameLabel = new QLabel(QString::fromStdWString(phys.displayName), frame);
         nameLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
         fl->addWidget(nameLabel);
@@ -117,7 +117,7 @@ void HardwarePage::addControllerSection(const hydra::controller::InventorySnapsh
         col++;
         if (col >= 2) { col = 0; row++; }
     }
-    
+
     gridLayout->setColumnStretch(2, 1);
     sl->addLayout(gridLayout);
     m_listLayout->insertWidget(m_listLayout->count() - 1, sectionWidget);

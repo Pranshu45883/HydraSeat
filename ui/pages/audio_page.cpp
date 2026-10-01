@@ -30,19 +30,19 @@ AudioPage::AudioPage(RoutingController* router, QWidget* parent)
     toolbarLayout->addWidget(m_filterCombo);
     toolbarLayout->addStretch();
     layout->addLayout(toolbarLayout);
-    
+
     auto* splitLayout = new QHBoxLayout();
     splitLayout->setSpacing(24);
-    
+
     // Left side: Sessions
     auto* leftWidget = new QWidget();
     auto* leftLayout = new QVBoxLayout(leftWidget);
     leftLayout->setContentsMargins(0,0,0,0);
-    
+
     m_sessionsCountLabel = new QLabel("AUDIO SESSIONS   0 total / 0 active");
     m_sessionsCountLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; margin-bottom: 8px;");
     leftLayout->addWidget(m_sessionsCountLabel);
-    
+
     auto* sessScroll = new QScrollArea();
     sessScroll->setWidgetResizable(true);
     sessScroll->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
@@ -55,16 +55,16 @@ AudioPage::AudioPage(RoutingController* router, QWidget* parent)
     sessScroll->setWidget(sessContainer);
     leftLayout->addWidget(sessScroll);
     splitLayout->addWidget(leftWidget, 2);
-    
+
     // Right side: Outputs
     auto* rightWidget = new QWidget();
     auto* rightLayout = new QVBoxLayout(rightWidget);
     rightLayout->setContentsMargins(0,0,0,0);
-    
+
     m_outputsCountLabel = new QLabel("AUDIO OUTPUTS   0 total / 0 active");
     m_outputsCountLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; margin-bottom: 8px;");
     rightLayout->addWidget(m_outputsCountLabel);
-    
+
     auto* outScroll = new QScrollArea();
     outScroll->setWidgetResizable(true);
     outScroll->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
@@ -77,7 +77,7 @@ AudioPage::AudioPage(RoutingController* router, QWidget* parent)
     outScroll->setWidget(outContainer);
     rightLayout->addWidget(outScroll);
     splitLayout->addWidget(rightWidget, 1);
-    
+
     layout->addLayout(splitLayout);
 
     if (m_router) {
@@ -146,7 +146,7 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
     card.currentOutputLabel = new QLabel(QString("Current Output: %1").arg(resolveEndpointFriendlyName(session.endpointId)), card.frame);
     card.currentOutputLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; border: none; margin-bottom: 8px;");
     fl->addWidget(card.currentOutputLabel);
-    
+
     auto* routeToLbl = new QLabel("Route to:", card.frame);
     routeToLbl->setStyleSheet("font-size: 12px; color: #777777; border: none;");
     fl->addWidget(routeToLbl);
@@ -159,10 +159,10 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
         if (!ep.isAvailable()) continue;
         card.routeCombo->addItem(QString::fromStdWString(ep.friendlyName), QString::fromStdWString(ep.endpointId));
     }
-    
+
     int cIdx = card.routeCombo->findData(QString::fromStdWString(session.endpointId));
     if (cIdx >= 0) card.routeCombo->setCurrentIndex(cIdx);
-    
+
     fl->addWidget(card.routeCombo);
 
     auto* btnLayout = new QHBoxLayout();
@@ -226,7 +226,7 @@ void AudioPage::updateState(const EngineStatePayload& payload) {
 
     int totalOut = payload.audioEndpoints.size();
     int actOut = 0;
-    
+
     // Process outputs
     while (QLayoutItem* item = m_outputsLayout->takeAt(0)) {
         if (item->widget()) item->widget()->deleteLater();
@@ -234,25 +234,25 @@ void AudioPage::updateState(const EngineStatePayload& payload) {
     }
     for (const auto& ep : payload.audioEndpoints) {
         if (ep.isAvailable()) actOut++;
-        
+
         auto* frame = new QFrame();
         frame->setMaximumWidth(400);
         frame->setStyleSheet("background-color: #151515; border-radius: 6px; padding: 12px; border: 1px solid #292929;");
         auto* fl = new QVBoxLayout(frame);
         fl->setContentsMargins(0,0,0,0);
-        
+
         auto* nameLabel = new QLabel(QString::fromStdWString(ep.friendlyName), frame);
         nameLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
         fl->addWidget(nameLabel);
-        
+
         auto* stLabel = new QLabel(ep.isAvailable() ? "● Active" : "○ Not Present", frame);
         stLabel->setStyleSheet(QString("font-size: 12px; font-weight: bold; color: %1; border: none;").arg(ep.isAvailable() ? "#E10600" : "#777777"));
         fl->addWidget(stLabel);
-        
+
         m_outputsLayout->addWidget(frame);
     }
     m_outputsLayout->addStretch();
-    
+
     m_outputsCountLabel->setText(QString("AUDIO OUTPUTS   %1 total / %2 active").arg(totalOut).arg(actOut));
 
     // Update Sessions
@@ -262,7 +262,7 @@ void AudioPage::updateState(const EngineStatePayload& payload) {
     for (int i = m_sessionCards.size() - 1; i >= 0; --i) {
         bool found = false;
         for (const auto& session : payload.audioSessions) {
-            if (m_sessionCards[i].pid == session.processId && 
+            if (m_sessionCards[i].pid == session.processId &&
                 m_sessionCards[i].creationIdentity == (session.processIdentity ? session.processIdentity->creationIdentity : 0) &&
                 sessionMatchesFilter(session, filterText, filterType)) {
                 found = true;

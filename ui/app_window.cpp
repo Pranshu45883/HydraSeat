@@ -76,11 +76,11 @@ void AppWindow::setupUi() {
     sidebarLayout->addWidget(m_sidebar);
 
     mainLayout->addWidget(sidebarContainer);
-    
+
     // Main Workspace Stack
     m_workspaceStack = new QStackedWidget(innerWidget);
     m_workspaceStack->setStyleSheet("background-color: #0A0A0A; border: none;");
-    
+
     // Instantiate Pages
     auto* dashboardPage = new DashboardPage(m_workspaceStack);
     auto* seatsPage = new SeatsPage(m_hostControl, m_workspaceStack);
@@ -97,7 +97,7 @@ void AppWindow::setupUi() {
     m_workspaceStack->addWidget(audioPage);
     m_workspaceStack->addWidget(hardwarePage);
     m_workspaceStack->addWidget(diagnosticsPage);
-    
+
     // Settings (placeholder for now)
     auto* settingsPage = new QWidget(m_workspaceStack);
     m_workspaceStack->addWidget(settingsPage);
@@ -163,13 +163,13 @@ void AppWindow::setupSidebar() {
 
     addHeader("OVERVIEW");
     addNav("Dashboard", 0);
-    
+
     addHeader("MANAGEMENT");
     addNav("Seats", 1);
     addNav("Applications", 2);
     addNav("Audio", 3);
     addNav("Hardware", 4);
-    
+
     addHeader("SYSTEM");
     addNav("Diagnostics", 5);
     addNav("Settings", 6);
@@ -185,10 +185,10 @@ void AppWindow::setupStatusbar() {
 
     auto* brandLabel = new QLabel("HydraSeat Engine", statusContainer);
     brandLabel->setStyleSheet("font-size: 12px; color: #B5B5B5; border: none;");
-    
+
     m_connectionLabel = new QLabel("Canonical host connecting", statusContainer);
     m_connectionLabel->setStyleSheet("font-size: 12px; color: #777777; border: none; margin-left: 12px;");
-    
+
     m_statusLabel = new QLabel("● Running", statusContainer);
     m_statusLabel->setStyleSheet("font-size: 12px; color: #E10600; font-weight: bold; border: none;");
 
@@ -207,7 +207,7 @@ void AppWindow::onNavigationChanged(int index) {
     if (!m_sidebar || !m_workspaceStack) return;
     auto* item = m_sidebar->item(index);
     if (!item) return;
-    
+
     bool ok;
     int targetIndex = item->data(Qt::UserRole).toInt(&ok);
     if (ok && targetIndex >= 0 && targetIndex < m_workspaceStack->count()) {

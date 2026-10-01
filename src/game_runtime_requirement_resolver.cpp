@@ -1,9 +1,9 @@
 #include "hydra/game_runtime_requirement_resolver.hpp"
 
 #include "hydra/internal/strict_json.hpp"
+#include "hydra/compatibility_local_store.hpp"
 
 #ifdef _WIN32
-#include "hydra/compatibility_local_store.hpp"
 #include "hydra/custom_executable_provider.hpp"
 #include "hydra/steam_provider.hpp"
 #endif

@@ -1,0 +1,5 @@
+LIBRARY hydra_xinput_adapter
+EXPORTS
+    XInputGetState
+    XInputSetState
+    XInputGetCapabilities

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "surface": "native-win32-launcher",
+  "locales": ["en-US", "ko-KR", "zh-CN"],
+  "dpi": [96, 120, 144, 192],
+  "windowProfiles": ["standard-980x720", "narrow-640x640"],
+  "automatedEvidence": [
+    {
+      "id": "localization-contract",
+      "test": "UiLocalizationTests",
+      "proves": ["three-locale-catalog", "english-fallback", "critical-label-width-dpi-scaling", "single-owner-drawn-status-marker"]
+    },
+    {
+      "id": "layout-accessibility-contract",
+      "test": "UiAccessibilityTests",
+      "proves": ["three-locale-layout-matrix", "dpi-96-120-144-192", "standard-and-narrow-reflow", "game-list-first-focus-order", "long-blocking-reason-visible", "high-contrast-system-color-policy"]
+    },
+    {
+      "id": "disabled-readiness-contract",
+      "test": "LauncherUiModelTests",
+      "proves": ["missing-requirement-blocks-play", "validated-plan-required-for-activation"]
+    }
+  ],
+  "manualEvidence": [
+    {"id": "real-first-window", "state": "PASS", "required": "Unperformed manual evidence must never be promoted."},
+    {"id": "real-screenshots-standard-and-narrow", "state": "PENDING", "required": "pending"},
+    {"id": "real-keyboard-only-navigation", "state": "PENDING", "required": "pending"},
+    {"id": "real-high-contrast-visual", "state": "PENDING", "required": "pending"},
+    {"id": "real-korean-chinese-glyph-rendering", "state": "PENDING", "required": "pending"},
+    {"id": "real-mixed-dpi", "state": "PENDING", "required": "pending"}
+  ],
+  "defectLedger": [
+    {"id": "korean-selected-game-eyebrow-clipping", "automatedRegression": "COVERED", "visualRecheck": "PENDING"},
+    {"id": "both-seats-label-truncation", "automatedRegression": "COVERED", "visualRecheck": "PENDING"},
+    {"id": "duplicate-seat-status-marker", "automatedRegression": "COVERED", "visualRecheck": "PENDING"},
+    {"id": "blocking-warning-ellipsis", "automatedRegression": "COVERED", "visualRecheck": "PENDING"},
+    {"id": "windowless-startup", "automatedRegression": "EXTERNAL-STARTUP-CHUNK", "visualRecheck": "PENDING"}
+  ]
+}

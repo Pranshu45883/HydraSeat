@@ -1,9 +1,21 @@
 #include "hydra/game_launcher.hpp"
 
+#include "hydra/runtime_host.hpp"
+#include "hydra/virtual_xinput_pipe.hpp"
+#include "hydra/virtual_xinput_service.hpp"
+
+#include <array>
+#include <chrono>
 #include <iostream>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
+
+#include <algorithm>
+#include <cwchar>
 #endif
 
 namespace hydra {
@@ -88,9 +100,116 @@ void terminateCreatedProcess(HANDLE process) noexcept {
         (void)WaitForSingleObject(process, 5000);
     }
 }
+
+bool containsNul(const std::wstring& value) noexcept {
+    return value.find(L'\0') != std::wstring::npos;
+}
+
+bool keyMatches(std::wstring_view entry, std::wstring_view key) noexcept {
+    const auto equals = entry.find(L'=');
+    if (equals == std::wstring_view::npos || equals != key.size()) return false;
+    return _wcsnicmp(entry.data(), key.data(), key.size()) == 0;
+}
+
+std::optional<std::vector<wchar_t>> xinputEnvironmentBlock(
+    const controller::VirtualXInputMapping& mapping,
+    const std::wstring& pipeEndpoint) {
+    if (!mapping.valid() || mapping.source.sourceGeneration == 0 ||
+        pipeEndpoint.empty() || containsNul(pipeEndpoint)) {
+        return std::nullopt;
+    }
+
+    const std::array<std::pair<std::wstring, std::wstring>, 4> overrides{{
+        {L"HYDRA_XINPUT_PIPE", pipeEndpoint},
+        {L"HYDRA_XINPUT_SEAT_ID", std::to_wstring(mapping.seatId)},
+        {L"HYDRA_XINPUT_ACTIVATION_GENERATION", std::to_wstring(mapping.activationGeneration)},
+        {L"HYDRA_XINPUT_SOURCE_GENERATION", std::to_wstring(mapping.source.sourceGeneration)},
+    }};
+
+    LPWCH rawEnvironment = GetEnvironmentStringsW();
+    if (!rawEnvironment) return std::nullopt;
+
+    std::vector<std::wstring> entries;
+    for (const wchar_t* cursor = rawEnvironment; *cursor != L'\0';) {
+        std::wstring entry(cursor);
+        entries.push_back(entry);
+        cursor += entry.size() + 1u;
+    }
+    FreeEnvironmentStringsW(rawEnvironment);
+
+    for (const auto& [key, value] : overrides) {
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                     [&](const std::wstring& entry) {
+                                         return keyMatches(entry, key);
+                                     }),
+                      entries.end());
+        entries.push_back(key + L"=" + value);
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const std::wstring& left,
+                                                  const std::wstring& right) {
+        return _wcsicmp(left.c_str(), right.c_str()) < 0;
+    });
+
+    std::vector<wchar_t> block;
+    std::size_t characterCount = 1u;
+    for (const auto& entry : entries) characterCount += entry.size() + 1u;
+    block.reserve(characterCount);
+    for (const auto& entry : entries) {
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back(L'\0');
+    }
+    block.push_back(L'\0');
+    return block;
+}
+
+std::wstring hostXInputPipeEndpoint(
+    std::uint32_t seatId,
+    std::uint64_t generation) {
+    return L"\\\\.\\pipe\\HydraSeat.XInput.Host." +
+           std::to_wstring(GetCurrentProcessId()) + L"." +
+           std::to_wstring(seatId) + L"." + std::to_wstring(generation);
+}
 #endif
 
 } // namespace
+
+struct GameLauncher::ControllerPipeRuntime {
+#ifdef _WIN32
+    runtime::RuntimeHost* host{nullptr};
+    controller::NativeVirtualControllerBackend backend;
+    controller::VirtualXInputService service;
+    controller::NamedPipeVirtualXInputServer server;
+    std::jthread worker;
+
+    ControllerPipeRuntime(
+        controller::VirtualXInputMapping mapping,
+        controller::InventorySnapshot inventory,
+        std::wstring endpoint,
+        runtime::RuntimeHost* runtimeHost)
+        : host(runtimeHost),
+          service(std::move(mapping), std::move(inventory), backend),
+          server(std::move(endpoint), service),
+          worker([this](std::stop_token stop) {
+              auto nextRefresh = std::chrono::steady_clock::now();
+              while (!stop.stop_requested()) {
+                  (void)server.serveOne(100);
+                  if (host && std::chrono::steady_clock::now() >= nextRefresh) {
+                      service.updateInventory(host->controllerInventorySnapshot());
+                      nextRefresh =
+                          std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(250);
+                  }
+              }
+          }) {}
+#else
+    ControllerPipeRuntime(
+        controller::VirtualXInputMapping,
+        controller::InventorySnapshot,
+        std::wstring,
+        runtime::RuntimeHost*) {}
+#endif
+};
 
 GameLauncher::~GameLauncher() {
 #ifdef _WIN32
@@ -102,35 +221,166 @@ GameLauncher::~GameLauncher() {
         // Destruction cannot report cleanup failure. Closing a strict Job Object
         // still kills its assigned tree, but we deliberately do not mark the
         // runtime Idle because safe-state verification did not complete.
-        HANDLE job = toNativeHandle(seatProcesses_[*index]->jobHandle);
-        HANDLE process = toNativeHandle(seatProcesses_[*index]->processHandle);
-        if (job && job != INVALID_HANDLE_VALUE) {
-            CloseHandle(job);
-        }
-        if (process && process != INVALID_HANDLE_VALUE) {
-            CloseHandle(process);
-        }
+        auto& state = *seatProcesses_[*index];
+        state.controllerPipe.reset();
+        HANDLE job = toNativeHandle(state.jobHandle);
+        HANDLE process = toNativeHandle(state.processHandle);
+        if (job && job != INVALID_HANDLE_VALUE) CloseHandle(job);
+        if (process && process != INVALID_HANDLE_VALUE) CloseHandle(process);
         seatProcesses_[*index].reset();
     }
 #endif
 }
 
-std::optional<std::size_t> GameLauncher::seatIndex(std::uint32_t workspaceId) noexcept {
+std::optional<std::size_t> GameLauncher::seatIndex(
+    std::uint32_t workspaceId) noexcept {
     if (workspaceId == 1) return std::size_t{0};
     if (workspaceId == 2) return std::size_t{1};
     return std::nullopt;
 }
 
-bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
-                                          const WorkspaceConfig& workspace) {
+runtime::ActivationToken GameLauncher::beginSeatActivation(
+    std::uint32_t seatId) noexcept {
+    if (host_) return host_->beginSeatActivation(seatId);
+    if (controller_) return controller_->beginSeatActivation(seatId);
+    return {};
+}
+
+bool GameLauncher::publishProcess(
+    const runtime::ActivationToken& token,
+    const runtime::ProcessIdentity& process) noexcept {
+    if (host_) return host_->publishProcess(token, process);
+    return controller_ && controller_->publishProcess(token, process);
+}
+
+bool GameLauncher::bindController(
+    const runtime::ActivationToken& token,
+    const controller::SeatBinding& binding,
+    const controller::InventorySnapshot& inventory) noexcept {
+    if (host_) return host_->bindController(token, binding, inventory);
+    return controller_ && controller_->bindController(token, binding, inventory);
+}
+
+std::optional<controller::VirtualXInputMapping>
+GameLauncher::virtualXInputMapping(
+    const runtime::ActivationToken& token) const noexcept {
+    if (host_) return host_->virtualXInputMapping(token);
+    if (controller_) return controller_->virtualXInputMapping(token);
+    return std::nullopt;
+}
+
+bool GameLauncher::endSeatActivation(
+    const runtime::ActivationToken& token) noexcept {
+    if (host_) return host_->endSeatActivation(token);
+    return controller_ && controller_->endSeatActivation(token);
+}
+
+bool GameLauncher::hasWorkspaceGame(std::uint32_t workspaceId) const noexcept {
+    const auto index = seatIndex(workspaceId);
+    return index && seatProcesses_[*index].has_value();
+}
+
+bool GameLauncher::launchGameForWorkspace(
+    const GameProfile& game,
+    const WorkspaceConfig& workspace) {
+#ifdef _WIN32
+    // Production host launch automatically carries forward a controller binding
+    // already established by the connection-scoped UI configuration lease.
+    if (host_) {
+        const auto snapshot = host_->seatSnapshot(workspace.workspaceId);
+        if (snapshot && snapshot->controllerBinding) {
+            auto inventory = host_->controllerInventorySnapshot();
+            if (!inventory.authoritative ||
+                !controller::bindingMatchesInventory(
+                    *snapshot->controllerBinding, inventory)) {
+                return false;
+            }
+            const auto endpoint = hostXInputPipeEndpoint(
+                workspace.workspaceId, snapshot->generation);
+            return launchGameForWorkspaceImpl(
+                game,
+                workspace,
+                &*snapshot->controllerBinding,
+                &inventory,
+                &endpoint);
+        }
+    }
+#endif
+    return launchGameForWorkspaceImpl(
+        game, workspace, nullptr, nullptr, nullptr);
+}
+
+bool GameLauncher::launchGameForWorkspace(
+    const GameProfile& game,
+    const WorkspaceConfig& workspace,
+    const controller::SeatBinding& controllerBinding,
+    const controller::InventorySnapshot& inventory,
+    std::wstring xinputPipeEndpoint) {
+    return launchGameForWorkspaceImpl(
+        game, workspace, &controllerBinding, &inventory, &xinputPipeEndpoint);
+}
+
+bool GameLauncher::launchGameForWorkspaceImpl(
+    const GameProfile& game,
+    const WorkspaceConfig& workspace,
+    const controller::SeatBinding* controllerBinding,
+    const controller::InventorySnapshot* inventory,
+    const std::wstring* xinputPipeEndpoint) {
 #ifdef _WIN32
     const auto index = seatIndex(workspace.workspaceId);
-    if (!controller_ || !index || game.executablePath.empty() || seatProcesses_[*index]) {
+    if ((!controller_ && !host_) || !index || game.executablePath.empty() ||
+        containsNul(game.executablePath) ||
+        containsNul(game.launchArguments) ||
+        containsNul(game.workingDirectory) ||
+        seatProcesses_[*index]) {
         return false;
     }
 
-    const auto token = controller_->beginSeatActivation(workspace.workspaceId);
+    const bool wantsXInput =
+        controllerBinding != nullptr || inventory != nullptr ||
+        xinputPipeEndpoint != nullptr;
+    if (wantsXInput &&
+        (!controllerBinding || !inventory || !xinputPipeEndpoint ||
+         controllerBinding->seatId != workspace.workspaceId ||
+         controllerBinding->api != controller::ApiSurface::XInput ||
+         controllerBinding->sourceGeneration == 0 ||
+         xinputPipeEndpoint->empty() || containsNul(*xinputPipeEndpoint))) {
+        return false;
+    }
+
+    const auto token = beginSeatActivation(workspace.workspaceId);
     if (!token.valid()) return false;
+
+    bool activationOwned = true;
+    const auto endActivation = [&]() noexcept {
+        if (activationOwned) {
+            (void)endSeatActivation(token);
+            activationOwned = false;
+        }
+    };
+
+    std::optional<std::vector<wchar_t>> environment;
+    std::shared_ptr<ControllerPipeRuntime> controllerPipe;
+    DWORD creationFlags = CREATE_SUSPENDED;
+    if (wantsXInput) {
+        if (!bindController(token, *controllerBinding, *inventory)) {
+            endActivation();
+            return false;
+        }
+        const auto mapping = virtualXInputMapping(token);
+        if (!mapping) {
+            endActivation();
+            return false;
+        }
+        environment = xinputEnvironmentBlock(*mapping, *xinputPipeEndpoint);
+        if (!environment) {
+            endActivation();
+            return false;
+        }
+        controllerPipe = std::make_shared<ControllerPipeRuntime>(
+            *mapping, *inventory, *xinputPipeEndpoint, host_);
+        creationFlags |= CREATE_UNICODE_ENVIRONMENT;
+    }
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -145,14 +395,15 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
         nullptr,
         nullptr,
         FALSE,
-        CREATE_SUSPENDED,
-        nullptr,
+        creationFlags,
+        environment ? environment->data() : nullptr,
         workingDirectory,
         &startup,
         &processInfo);
 
     if (!created) {
-        controller_->endSeatActivation(token);
+        controllerPipe.reset();
+        endActivation();
         return false;
     }
 
@@ -161,7 +412,8 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
         terminateCreatedProcess(processInfo.hProcess);
         CloseHandle(processInfo.hThread);
         CloseHandle(processInfo.hProcess);
-        controller_->endSeatActivation(token);
+        controllerPipe.reset();
+        endActivation();
         return false;
     }
 
@@ -170,7 +422,8 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
         CloseHandle(job);
         CloseHandle(processInfo.hThread);
         CloseHandle(processInfo.hProcess);
-        controller_->endSeatActivation(token);
+        controllerPipe.reset();
+        endActivation();
         return false;
     }
 
@@ -178,14 +431,16 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
         fromNativeHandle(processInfo.hProcess),
         fromNativeHandle(job),
         token,
-        {}};
+        {},
+        std::move(controllerPipe)};
+    activationOwned = false;
 
     const auto rollback = [&]() {
         if (processInfo.hThread) {
             CloseHandle(processInfo.hThread);
             processInfo.hThread = nullptr;
         }
-        stopWorkspaceGame(workspace.workspaceId);
+        (void)stopWorkspaceGame(workspace.workspaceId);
     };
 
     const auto identity =
@@ -196,7 +451,7 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
     }
 
     seatProcesses_[*index]->identity = identity;
-    if (!controller_->publishProcess(token, identity)) {
+    if (!publishProcess(token, identity)) {
         rollback();
         return false;
     }
@@ -216,6 +471,9 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
 #else
     (void)game;
     (void)workspace;
+    (void)controllerBinding;
+    (void)inventory;
+    (void)xinputPipeEndpoint;
     return false;
 #endif
 }
@@ -223,7 +481,9 @@ bool GameLauncher::launchGameForWorkspace(const GameProfile& game,
 bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
 #ifdef _WIN32
     const auto index = seatIndex(workspaceId);
-    if (!controller_ || !index || !seatProcesses_[*index]) return false;
+    if ((!controller_ && !host_) || !index || !seatProcesses_[*index]) {
+        return false;
+    }
 
     auto& session = *seatProcesses_[*index];
     HANDLE process = toNativeHandle(session.processHandle);
@@ -242,9 +502,8 @@ bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
     if (!waitForJobEmpty(job, 5000)) return false;
     if (WaitForSingleObject(process, 5000) != WAIT_OBJECT_0) return false;
 
-    if (!controller_->endSeatActivation(session.token)) {
-        return false;
-    }
+    session.controllerPipe.reset();
+    if (!endSeatActivation(session.token)) return false;
 
     CloseHandle(process);
     CloseHandle(job);

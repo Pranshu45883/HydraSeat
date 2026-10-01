@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "clean-pass",
+      "exit_code": 0,
+      "timed_out": false,
+      "stdout": "Process group tests passed.\n",
+      "stderr": "",
+      "expected_status": "Pass",
+      "expected_signals": {
+        "timeout": false,
+        "orphan_or_teardown": false,
+        "pid_reuse_or_identity": false,
+        "handoff_or_descendant": false,
+        "hwnd_or_reacquisition": false
+      }
+    },
+    {
+      "name": "bounded-timeout",
+      "exit_code": null,
+      "timed_out": true,
+      "stdout": "",
+      "stderr": "",
+      "expected_status": "Timeout",
+      "expected_signals": {
+        "timeout": true,
+        "orphan_or_teardown": false,
+        "pid_reuse_or_identity": false,
+        "handoff_or_descendant": false,
+        "hwnd_or_reacquisition": false
+      }
+    },
+    {
+      "name": "orphan-cleanup-failure",
+      "exit_code": 1,
+      "timed_out": false,
+      "stdout": "",
+      "stderr": "FAIL: helper-containing owned tree cleans to verified orphan=0\n1 process group test(s) failed.\n",
+      "expected_status": "Fail",
+      "expected_signals": {
+        "timeout": false,
+        "orphan_or_teardown": true,
+        "pid_reuse_or_identity": false,
+        "handoff_or_descendant": false,
+        "hwnd_or_reacquisition": false
+      }
+    },
+    {
+      "name": "pid-handoff-identity-failure",
+      "exit_code": 1,
+      "timed_out": false,
+      "stdout": "",
+      "stderr": "FAIL: same PID with different creation identity after launcher handoff descendant\n",
+      "expected_status": "Fail",
+      "expected_signals": {
+        "timeout": false,
+        "orphan_or_teardown": false,
+        "pid_reuse_or_identity": true,
+        "handoff_or_descendant": true,
+        "hwnd_or_reacquisition": false
+      }
+    },
+    {
+      "name": "hwnd-reacquisition-failure",
+      "exit_code": 1,
+      "timed_out": false,
+      "stdout": "",
+      "stderr": "FAIL: stale HWND tracker generation survived reacquisition\n",
+      "expected_status": "Fail",
+      "expected_signals": {
+        "timeout": false,
+        "orphan_or_teardown": false,
+        "pid_reuse_or_identity": false,
+        "handoff_or_descendant": false,
+        "hwnd_or_reacquisition": true
+      }
+    }
+  ]
+}

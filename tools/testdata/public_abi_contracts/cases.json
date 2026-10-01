@@ -1,0 +1,397 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "valid-packed-c-abi",
+      "expect": "pass",
+      "expected_error_codes": [],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [
+          {
+            "name": "ExamplePacketV1",
+            "size_macro": "EXAMPLE_PACKET_V1_BYTES",
+            "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]
+          }
+        ],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-native-size-field",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_NATIVE_FIELD"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#include <stddef.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    size_t native_count;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int ok = 1;\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES"}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-pointer-field",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_NATIVE_FIELD"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t* pointer_value;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int ok = 1;\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES"}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-missing-struct-size",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_STRUCT_SIZE_FIELD"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t value;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-size-mismatch",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_SIZE_MISMATCH"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 12u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-missing-pack",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_PACKING"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-signed-reserved-field",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_RESERVED_FIELD"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    int32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-missing-layout-evidence",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_LAYOUT_EVIDENCE"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "int no_layout_assertion = 1;\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-unmanifested-public-struct",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_UNMANIFESTED_STRUCT"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\ntypedef struct ExampleExtraV1 {\n    uint32_t struct_size;\n    uint32_t value;\n} ExampleExtraV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-native-export-parameter",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_NATIVE_PARAM"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#include <stddef.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(size_t native_count);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-stale-native-exception",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_STALE_ALLOWLIST"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": ["example_call:size_t"],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-missing-reserved-validation",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_RESERVED_VALIDATION"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_API_VERSION 1u\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int no_reserved_check = 1;\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "reject-missing-api-version",
+      "expect": "fail",
+      "expected_error_codes": ["CABI_API_VERSION"],
+      "files": {
+        "include/example.h": "#include <stdint.h>\n#define EXAMPLE_PACKET_V1_BYTES 8u\n#define EXAMPLE_API\n#pragma pack(push, 1)\ntypedef struct ExamplePacketV1 {\n    uint32_t struct_size;\n    uint32_t reserved0;\n} ExamplePacketV1;\n#pragma pack(pop)\nEXAMPLE_API uint32_t example_call(uint32_t value);\n",
+        "tests/layout.cpp": "static_assert(sizeof(ExamplePacketV1) == EXAMPLE_PACKET_V1_BYTES);\n",
+        "src/example.c": "int validate(const ExamplePacketV1* packet) { return packet->reserved0 != 0; }\n"
+      },
+      "contract": {
+        "kind": "c_abi",
+        "name": "fixture-cabi",
+        "header": "include/example.h",
+        "struct_prefix": "Example",
+        "api_version_macro": "EXAMPLE_API_VERSION",
+        "export_marker": "EXAMPLE_API",
+        "structs": [{"name": "ExamplePacketV1", "size_macro": "EXAMPLE_PACKET_V1_BYTES", "reserved_evidence_patterns": ["packet->reserved0\\s*!=\\s*0"]}],
+        "layout_evidence_files": ["tests/layout.cpp"],
+        "reserved_evidence_file": "src/example.c",
+        "native_param_allowlist": [],
+        "extra_evidence": []
+      }
+    },
+    {
+      "name": "valid-wire-contract",
+      "expect": "pass",
+      "expected_error_codes": [],
+      "files": {
+        "include/wire.hpp": "#include <cstddef>\n#include <cstdint>\ninline constexpr std::uint32_t kWireMagic = 0x1234u;\ninline constexpr std::uint16_t kWireVersion = 1u;\ninline constexpr std::size_t kWireHeaderBytes = 12u;\ninline constexpr std::size_t kWireMaxPayload = 1024u;\nenum class MessageType : std::uint16_t { Hello = 1 };\nstruct Hello {\n    std::uint32_t id{0};\n    std::uint64_t generation{0};\n};\n"
+      },
+      "contract": {
+        "kind": "wire",
+        "name": "fixture-wire",
+        "struct_sources": [{"path": "include/wire.hpp", "names": ["Hello"], "scan_all": false}],
+        "enum_sources": [{"path": "include/wire.hpp", "names": ["MessageType"], "scan_all": false}],
+        "requirements": [
+          {"path": "include/wire.hpp", "pattern": "kWireMagic\\s*=", "description": "wire magic missing", "code": "WIRE_CONSTRAINT"},
+          {"path": "include/wire.hpp", "pattern": "kWireVersion\\s*=", "description": "wire version missing", "code": "WIRE_CONSTRAINT"},
+          {"path": "include/wire.hpp", "pattern": "kWireMaxPayload\\s*=", "description": "wire payload bound missing", "code": "WIRE_CONSTRAINT"}
+        ],
+        "evidence": []
+      }
+    },
+    {
+      "name": "reject-wire-native-field",
+      "expect": "fail",
+      "expected_error_codes": ["WIRE_NATIVE_FIELD"],
+      "files": {
+        "include/wire.hpp": "#include <cstddef>\n#include <cstdint>\ninline constexpr std::uint16_t kWireVersion = 1u;\nenum class MessageType : std::uint16_t { Hello = 1 };\nstruct Hello {\n    std::uint32_t id{0};\n    std::uintptr_t native_handle{0};\n};\n"
+      },
+      "contract": {
+        "kind": "wire",
+        "name": "fixture-wire",
+        "struct_sources": [{"path": "include/wire.hpp", "names": ["Hello"], "scan_all": false}],
+        "enum_sources": [{"path": "include/wire.hpp", "names": ["MessageType"], "scan_all": false}],
+        "requirements": [{"path": "include/wire.hpp", "pattern": "kWireVersion\\s*=", "description": "wire version missing", "code": "WIRE_CONSTRAINT"}],
+        "evidence": []
+      }
+    },
+    {
+      "name": "reject-wire-pointer-field",
+      "expect": "fail",
+      "expected_error_codes": ["WIRE_NATIVE_FIELD"],
+      "files": {
+        "include/wire.hpp": "#include <cstdint>\ninline constexpr std::uint16_t kWireVersion = 1u;\nenum class MessageType : std::uint16_t { Hello = 1 };\nstruct Hello {\n    std::uint32_t id{0};\n    void* pointer_value{nullptr};\n};\n"
+      },
+      "contract": {
+        "kind": "wire",
+        "name": "fixture-wire",
+        "struct_sources": [{"path": "include/wire.hpp", "names": ["Hello"], "scan_all": false}],
+        "enum_sources": [{"path": "include/wire.hpp", "names": ["MessageType"], "scan_all": false}],
+        "requirements": [{"path": "include/wire.hpp", "pattern": "kWireVersion\\s*=", "description": "wire version missing", "code": "WIRE_CONSTRAINT"}],
+        "evidence": []
+      }
+    },
+    {
+      "name": "reject-wire-implicit-enum-width",
+      "expect": "fail",
+      "expected_error_codes": ["WIRE_ENUM_WIDTH"],
+      "files": {
+        "include/wire.hpp": "#include <cstdint>\ninline constexpr std::uint16_t kWireVersion = 1u;\nenum class MessageType { Hello = 1 };\nstruct Hello {\n    std::uint32_t id{0};\n};\n"
+      },
+      "contract": {
+        "kind": "wire",
+        "name": "fixture-wire",
+        "struct_sources": [{"path": "include/wire.hpp", "names": ["Hello"], "scan_all": false}],
+        "enum_sources": [{"path": "include/wire.hpp", "names": ["MessageType"], "scan_all": false}],
+        "requirements": [{"path": "include/wire.hpp", "pattern": "kWireVersion\\s*=", "description": "wire version missing", "code": "WIRE_CONSTRAINT"}],
+        "evidence": []
+      }
+    },
+    {
+      "name": "reject-wire-missing-explicit-bound",
+      "expect": "fail",
+      "expected_error_codes": ["WIRE_CONSTRAINT"],
+      "files": {
+        "include/wire.hpp": "#include <cstdint>\ninline constexpr std::uint16_t kWireVersion = 1u;\nenum class MessageType : std::uint16_t { Hello = 1 };\nstruct Hello {\n    std::uint32_t id{0};\n};\n"
+      },
+      "contract": {
+        "kind": "wire",
+        "name": "fixture-wire",
+        "struct_sources": [{"path": "include/wire.hpp", "names": ["Hello"], "scan_all": false}],
+        "enum_sources": [{"path": "include/wire.hpp", "names": ["MessageType"], "scan_all": false}],
+        "requirements": [
+          {"path": "include/wire.hpp", "pattern": "kWireVersion\\s*=", "description": "wire version missing", "code": "WIRE_CONSTRAINT"},
+          {"path": "include/wire.hpp", "pattern": "kWireMaxPayload\\s*=", "description": "wire payload bound missing", "code": "WIRE_CONSTRAINT"}
+        ],
+        "evidence": []
+      }
+    }
+  ]
+}

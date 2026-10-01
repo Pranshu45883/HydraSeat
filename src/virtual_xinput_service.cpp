@@ -43,6 +43,10 @@ ipc::ProtocolStatus VirtualXInputService::protocolStatus(IoStatus status) noexce
     return ipc::ProtocolStatus::BackendFailure;
 }
 
+void VirtualXInputService::updateInventory(InventorySnapshot inventory) noexcept {
+    inventory_ = std::move(inventory);
+}
+
 ipc::ProtocolStatus VirtualXInputService::validateCurrentBinding() const noexcept {
     if (!mapping_.valid() || !inventory_.authoritative) {
         return ipc::ProtocolStatus::InvalidMapping;

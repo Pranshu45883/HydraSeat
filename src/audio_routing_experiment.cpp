@@ -95,6 +95,10 @@ IAudioPolicyConfigFactoryDownlevel : public IInspectable
     virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
 };
 
+constexpr GUID kIidAudioPolicyConfigFactoryDownlevel{
+    0x2a59116d, 0x6c4f, 0x45e0,
+    {0xa7, 0x4f, 0x70, 0x7e, 0x3f, 0xef, 0x92, 0x58}};
+
 MIDL_INTERFACE("ab3d4648-e242-459f-b02f-541c70306324")
 IAudioPolicyConfigFactory21H2 : public IInspectable
 {
@@ -123,6 +127,10 @@ IAudioPolicyConfigFactory21H2 : public IInspectable
         DWORD processId, EDataFlow flow, ERole role, HSTRING* deviceId) = 0;
     virtual HRESULT STDMETHODCALLTYPE ClearAllPersistedApplicationDefaultEndpoints() = 0;
 };
+
+constexpr GUID kIidAudioPolicyConfigFactory21H2{
+    0xab3d4648, 0xe242, 0x459f,
+    {0xb0, 0x2f, 0x54, 0x1c, 0x70, 0x30, 0x63, 0x24}};
 
 static AudioRoutingProbeResult makeResult(
     AudioRoutingProbeStatus status,
@@ -353,7 +361,7 @@ AudioRoutingProbeResult AudioRoutingExperiment::probePersistedRoute(
 
     ComPtr<IAudioPolicyConfigFactory21H2> factory21H2;
     if (SUCCEEDED(factoryBase->QueryInterface(
-            __uuidof(IAudioPolicyConfigFactory21H2),
+            kIidAudioPolicyConfigFactory21H2,
             reinterpret_cast<void**>(&factory21H2))) &&
         factory21H2) {
         return probeWithFactory(
@@ -364,7 +372,7 @@ AudioRoutingProbeResult AudioRoutingExperiment::probePersistedRoute(
 
     ComPtr<IAudioPolicyConfigFactoryDownlevel> factoryDownlevel;
     hr = factoryBase->QueryInterface(
-        __uuidof(IAudioPolicyConfigFactoryDownlevel),
+        kIidAudioPolicyConfigFactoryDownlevel,
         reinterpret_cast<void**>(&factoryDownlevel));
     if (FAILED(hr) || !factoryDownlevel) {
         return makeResult(

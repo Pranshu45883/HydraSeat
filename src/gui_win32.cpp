@@ -1,5 +1,7 @@
 #include "hydra/gui_win32.hpp"
 
+#include <algorithm>
+
 #ifdef _WIN32
 #include <iostream>
 #include <sstream>

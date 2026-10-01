@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "releaseScope": "HydraSeat v1 owned end-user release artifacts only; tests, probes, labs, third-party binaries, and drivers are excluded until separately reviewed.",
+  "artifacts": [
+    {
+      "id": "main-ui",
+      "kind": "cmake-executable",
+      "target": "HydraSeat",
+      "fileName": "HydraSeat.exe",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "host",
+      "kind": "cmake-executable",
+      "target": "hydra_host",
+      "fileName": "hydra_host.exe",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "seat-ui",
+      "kind": "cmake-executable",
+      "target": "hydra_seat_ui",
+      "fileName": "hydra_seat_ui.exe",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "watchdog",
+      "kind": "cmake-executable",
+      "target": "hydra_watchdog",
+      "fileName": "hydra_watchdog.exe",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "reset",
+      "kind": "cmake-executable",
+      "target": "hydra_reset",
+      "fileName": "hydra_reset.exe",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "profile-cli",
+      "kind": "cmake-executable",
+      "target": "hydraseat_profilectl",
+      "fileName": "hydraseat_profilectl.exe",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "community-validator",
+      "kind": "cmake-executable",
+      "target": "hydraseat_community_validate",
+      "fileName": "hydraseat_community_validate.exe",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "installer-script",
+      "kind": "powershell-script",
+      "sourcePath": "tools/install_hydraseat.ps1",
+      "fileName": "install_hydraseat.ps1",
+      "architectures": ["x64"]
+    }
+  ],
+  "excludedArtifactClasses": [
+    "test executables",
+    "diagnostic/lab/probe tools not in the end-user package",
+    "third-party binaries",
+    "drivers until a separately reviewed signed driver artifact is selected"
+  ]
+}

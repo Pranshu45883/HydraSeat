@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydraseat.invalid/schemas/input_metrics_trace_v1.schema.json",
+  "title": "HydraSeat Input Metrics Trace Sample v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "correlation_id",
+    "timestamp_us",
+    "stage",
+    "event_class_bits",
+    "expected_seat_id",
+    "receiving_seat_id",
+    "target_process_id",
+    "receiving_process_id",
+    "detail_code",
+    "queue_depth",
+    "queue_high_water",
+    "queue_dropped",
+    "host_cpu_time_us",
+    "host_working_set_bytes"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "correlation_id": { "type": "integer", "minimum": 0 },
+    "timestamp_us": { "type": "integer", "minimum": 1 },
+    "stage": {
+      "enum": [
+        "physical_observed",
+        "route_enqueued",
+        "route_dequeued",
+        "route_written",
+        "target_applied",
+        "target_queried",
+        "route_dropped",
+        "rollback_started",
+        "rollback_completed",
+        "host_resource_sample"
+      ]
+    },
+    "event_class_bits": { "type": "integer", "minimum": 0, "maximum": 15 },
+    "expected_seat_id": { "type": "integer", "minimum": 0 },
+    "receiving_seat_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "0 means receiver identity has not been verified by a target apply/query stage"
+    },
+    "target_process_id": { "type": "integer", "minimum": 0 },
+    "receiving_process_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "0 means receiver identity has not been verified by a target apply/query stage"
+    },
+    "detail_code": { "type": "integer", "minimum": 0 },
+    "queue_depth": { "type": "integer", "minimum": 0 },
+    "queue_high_water": { "type": "integer", "minimum": 0 },
+    "queue_dropped": { "type": "integer", "minimum": 0 },
+    "host_cpu_time_us": { "type": "integer", "minimum": 0 },
+    "host_working_set_bytes": { "type": "integer", "minimum": 0 }
+  }
+}

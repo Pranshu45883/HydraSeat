@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "correct-direct-source-registration",
+      "expect": "pass",
+      "files": {
+        "CMakeLists.txt": "set(APP_SOURCES src/main.cpp)\nlist(APPEND APP_SOURCES src/component.cpp)\nadd_executable(HydraSeat ${APP_SOURCES})\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "src/component.cpp": "void component() {}\n"
+      },
+      "components": [
+        {
+          "name": "direct-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["HydraSeat"],
+          "suggested_owner": "HydraSeat"
+        }
+      ]
+    },
+    {
+      "name": "correct-linked-library-reachability",
+      "expect": "pass",
+      "files": {
+        "CMakeLists.txt": "add_library(hydra_component STATIC src/component.cpp)\nadd_executable(HydraSeat src/main.cpp)\ntarget_link_libraries(HydraSeat PRIVATE hydra_component)\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "src/component.cpp": "void component() {}\n"
+      },
+      "components": [
+        {
+          "name": "linked-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["hydra_component"],
+          "suggested_owner": "hydra_component"
+        }
+      ]
+    },
+    {
+      "name": "missing-implementation-source",
+      "expect": "fail",
+      "expected_error_codes": ["MISSING_IMPLEMENTATION_SOURCE"],
+      "files": {
+        "CMakeLists.txt": "add_library(hydra_component STATIC src/component.cpp)\nadd_executable(HydraSeat src/main.cpp)\ntarget_link_libraries(HydraSeat PRIVATE hydra_component)\n",
+        "src/main.cpp": "int main() { return 0; }\n"
+      },
+      "components": [
+        {
+          "name": "missing-source",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["hydra_component"],
+          "suggested_owner": "hydra_component"
+        }
+      ]
+    },
+    {
+      "name": "test-only-source-satisfaction",
+      "expect": "fail",
+      "expected_error_codes": ["TEST_ONLY_SATISFACTION", "UNREACHABLE_IMPLEMENTATION"],
+      "files": {
+        "CMakeLists.txt": "add_executable(component_tests tests/test_component.cpp src/component.cpp)\nadd_executable(HydraSeat src/main.cpp)\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "src/component.cpp": "void component() {}\n",
+        "tests/test_component.cpp": "int main() { return 0; }\n"
+      },
+      "components": [
+        {
+          "name": "test-only-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["hydra_component"],
+          "suggested_owner": "hydra_component"
+        }
+      ]
+    },
+    {
+      "name": "wrong-production-target",
+      "expect": "fail",
+      "expected_error_codes": ["UNREACHABLE_IMPLEMENTATION"],
+      "files": {
+        "CMakeLists.txt": "add_library(hydra_component STATIC src/component.cpp)\nadd_library(hydra_other STATIC src/other.cpp)\nadd_executable(HydraSeat src/main.cpp)\ntarget_link_libraries(HydraSeat PRIVATE hydra_other)\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "src/component.cpp": "void component() {}\n",
+        "src/other.cpp": "void other() {}\n"
+      },
+      "components": [
+        {
+          "name": "wrong-target-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["hydra_component"],
+          "suggested_owner": "hydra_component"
+        }
+      ]
+    },
+    {
+      "name": "duplicate-misowned-source",
+      "expect": "fail",
+      "expected_error_codes": ["DUPLICATE_PRODUCTION_OWNER", "MISOWNED_SOURCE"],
+      "files": {
+        "CMakeLists.txt": "add_library(hydra_component STATIC src/component.cpp)\nadd_library(hydra_duplicate STATIC src/component.cpp)\nadd_executable(HydraSeat src/main.cpp)\ntarget_link_libraries(HydraSeat PRIVATE hydra_component)\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "src/component.cpp": "void component() {}\n"
+      },
+      "components": [
+        {
+          "name": "duplicate-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["hydra_component"],
+          "suggested_owner": "hydra_component"
+        }
+      ]
+    },
+    {
+      "name": "generated-project-reference-only",
+      "expect": "fail",
+      "expected_error_codes": ["SOURCE_UNREGISTERED", "UNREACHABLE_IMPLEMENTATION"],
+      "files": {
+        "CMakeLists.txt": "add_executable(HydraSeat src/main.cpp)\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "src/component.cpp": "void component() {}\n",
+        "build-qa/CMakeLists.txt": "add_library(hydra_component STATIC ../src/component.cpp)\n",
+        "build-qa/HydraSeat.vcxproj": "<ClCompile Include=\"..\\src\\component.cpp\" />\n"
+      },
+      "components": [
+        {
+          "name": "generated-only-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["hydra_component"],
+          "suggested_owner": "hydra_component"
+        }
+      ]
+    },
+    {
+      "name": "explicit-header-only-module",
+      "expect": "pass",
+      "files": {
+        "CMakeLists.txt": "add_executable(HydraSeat src/main.cpp)\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "include/hydra/header_only.hpp": "#pragma once\ninline int header_only() { return 1; }\n"
+      },
+      "components": [
+        {
+          "name": "header-only-component",
+          "required_by_targets": ["HydraSeat"],
+          "header_only_headers": ["include/hydra/header_only.hpp"]
+        }
+      ]
+    },
+    {
+      "name": "missing-required-target",
+      "expect": "fail",
+      "expected_error_codes": ["MISSING_TARGET"],
+      "files": {
+        "CMakeLists.txt": "add_library(hydra_component STATIC src/component.cpp)\n",
+        "src/component.cpp": "void component() {}\n"
+      },
+      "components": [
+        {
+          "name": "missing-target-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["hydra_component"],
+          "suggested_owner": "hydra_component"
+        }
+      ]
+    },
+    {
+      "name": "unknown-internal-dependency",
+      "expect": "fail",
+      "expected_error_codes": ["UNKNOWN_INTERNAL_DEPENDENCY"],
+      "files": {
+        "CMakeLists.txt": "add_executable(HydraSeat src/main.cpp src/component.cpp)\ntarget_link_libraries(HydraSeat PRIVATE hydra_missing_library)\n",
+        "src/main.cpp": "int main() { return 0; }\n",
+        "src/component.cpp": "void component() {}\n"
+      },
+      "components": [
+        {
+          "name": "unknown-dependency-component",
+          "implementation_sources": ["src/component.cpp"],
+          "required_by_targets": ["HydraSeat"],
+          "allowed_owner_targets": ["HydraSeat"],
+          "suggested_owner": "HydraSeat"
+        }
+      ]
+    },
+    {
+      "name": "compatibility-activation-omitted",
+      "expect": "fail",
+      "expected_error_codes": ["SOURCE_UNREGISTERED", "UNREACHABLE_IMPLEMENTATION"],
+      "files": {
+        "CMakeLists.txt": "add_library(hydra_production_launch_runtime STATIC src/production_launch_runtime.cpp)\n",
+        "src/production_launch_runtime.cpp": "void runtime() {}\n",
+        "src/production_compatibility_activation.cpp": "void compatibility() {}\n"
+      },
+      "components": [
+        {
+          "name": "production-compatibility-activation",
+          "implementation_sources": ["src/production_compatibility_activation.cpp"],
+          "required_by_targets": ["hydra_production_launch_runtime"],
+          "allowed_owner_targets": ["hydra_production_compatibility_activation", "hydra_production_launch_runtime"],
+          "suggested_owner": "hydra_production_compatibility_activation or hydra_production_launch_runtime"
+        }
+      ]
+    },
+    {
+      "name": "activation-bridge-omitted",
+      "expect": "fail",
+      "expected_error_codes": ["SOURCE_UNREGISTERED", "UNREACHABLE_IMPLEMENTATION"],
+      "files": {
+        "CMakeLists.txt": "add_executable(hydra_host src/host_main.cpp)\n",
+        "src/host_main.cpp": "int main() { return 0; }\n",
+        "src/production_activation_bridges.cpp": "void bridges() {}\n"
+      },
+      "components": [
+        {
+          "name": "production-activation-bridges",
+          "implementation_sources": ["src/production_activation_bridges.cpp"],
+          "required_by_targets": ["hydra_host"],
+          "allowed_owner_targets": ["hydra_production_activation_bridges", "hydra_host"],
+          "suggested_owner": "hydra_production_activation_bridges or hydra_host"
+        }
+      ]
+    }
+  ]
+}

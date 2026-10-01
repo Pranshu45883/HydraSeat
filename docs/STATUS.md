@@ -1,145 +1,148 @@
 # HydraSeat Current Status
 
-Snapshot date: **2026-09-21**
+Snapshot date: **2026-10-01**
 
-This file is a dated engineering snapshot. It distinguishes what is merged into upstream `main`, what has controlled validation on contributor branches, what is research-only, and what still lacks required evidence.
+This is a dated engineering snapshot of the canonical HydraSeat integration. It distinguishes implemented/automated evidence from physical or real-game acceptance evidence.
 
 ## Evidence labels
 
-- **Merged** — present in upstream `main`.
-- **Validated in contributor branch** — implemented and tested in a same-repository contributor branch, but not part of upstream `main` yet.
-- **Research / under review** — evidence or implementation is still being reviewed and must not be treated as production capability.
-- **Pending physical/real-game evidence** — architecture or controlled tests exist, but the user-facing claim has not been demonstrated at the required evidence level.
+- **Integrated** — present in the canonical backend integration intended for main.
+- **Automated validated** — covered by build/test/acceptance tooling.
+- **Pending physical/manual evidence** — implementation exists, but the corresponding real-hardware, real-game, clean-machine, or signing claim has not been demonstrated at that evidence level.
 
-## Upstream merged baseline
+## Canonical backend integration
 
-Current upstream baseline for this snapshot: `a690615` (`fix(audio): harden Windows audio experiment boundaries`).
+The canonical backend now converges the previous staged backend work into one authority model instead of reintroducing the old fork runtime.
 
-Merged behavior includes:
+Implemented integration includes:
 
-- two v1 Seat IDs with configuration limited to Seat 1 / Seat 2;
-- stable controller IDs persisted instead of controller enumeration indices;
-- UI controller selection using stable physical identity;
-- stable physical controller identity separated from runtime-only XInput slot identity;
-- controller inventory for physical identity and current runtime sources;
-- `SessionController` owning cross-Seat runtime ownership decisions;
-- `SeatRuntime` activation generations and stale-token rejection;
-- exact runtime process identity using PID + creation identity;
-- cross-Seat duplicate process/window/controller ownership rejection;
-- Seat-owned transient controller bindings and controller poll/vibration routing;
-- reconnect-generation tracking that invalidates stale controller bindings;
-- exact `GameLauncher` root-process ownership with suspended launch, retained handle, Seat-local stop/rollback, and ownership publication before resume;
-- isolated `ProcessIdentity` contract used across runtime/process ownership;
-- registered CTest execution in CI with Release assertions preserved for the focused engine tests;
-- merged Windows audio endpoint inventory, session observation, and bounded routing-feasibility experiment/hardening.
+- exactly two v1 Seats;
+- SessionController / SeatRuntime generation-scoped ownership;
+- exact process identity using PID + creation identity;
+- cross-Seat process/window/controller ownership rejection;
+- stable physical controller identity separated from runtime XInput identity;
+- reconnect generation checks and fail-closed stale binding behavior;
+- Seat-local controller pairing and virtual/process-local XInput foundations;
+- process/group/window/display ownership and recovery foundations;
+- crash journal, reset, watchdog, startup/recovery policy;
+- installer/update/privilege/support transaction foundations;
+- portable two-player setup model;
+- hardware/input/display/controller diagnostics;
+- provider/profile, compatibility, and community-pipeline foundations;
+- release acceptance and release-validation tooling;
+- signing/scope/schema fixed-input validation;
+- canonical host control authority and IPC protocol v2;
+- host-owned custom-executable launch/stop control with strict per-Seat Job ownership;
+- host-owned Windows audio routing integration;
+- signed installer bootstrap plus local compatibility evidence/runner and requirement-authority tooling activated in the build graph.
 
-These capabilities establish ownership contracts; they do **not** prove complete two-player game isolation.
+Legacy fork modules are not automatically treated as authority. In particular, duplicate controller runtime, launcher authority, or UI-owned runtime state is not reintroduced when the canonical ControllerInventory, SessionController, RuntimeHost, and host transport already own that responsibility.
 
-## Upstream review queue
+## Canonical host/control boundary
 
-### Windows audio work
+Production mutation authority is owned by hydra_host.exe.
 
-The Windows audio foundation is merged separately from runtime/controller work:
+The host/control contract is now:
 
-- render endpoint inventory — read-only discovery foundation;
-- audio session observation — process/session observation with creation-time identity;
-- routing feasibility — research into process-targeted Windows routing without changing the global default.
+- versioned host IPC **v2**;
+- Control role required for mutation;
+- read-only clients may obtain snapshots without mutation authority;
+- UiConfiguration and GameProcess leases are distinct and may coexist inside the same Seat generation;
+- ending a game lease removes its PID/HWND authority immediately without requiring the UI lease to end;
+- stale lease/token/generation evidence remains fail-closed;
+- compatibility begin/endSeatActivation APIs remain wrappers over the game-lease path;
+- UI leases are scoped to the named-pipe control connection that acquired them;
+- disconnecting or killing that control client releases its UI leases automatically;
+- UI code does not receive or own a SessionController pointer;
+- launch/stop are bounded host IPC v2 commands and require the Control role plus that connection's UiConfiguration lease for the target Seat;
+- the host-owned GameLauncher acquires the GameProcess lease, creates the process suspended inside a kill-on-close Seat Job, publishes exact PID + creation identity through RuntimeHost, then resumes it;
+- stopping waits for the exact owned Job/process to become safe before ending the GameProcess lease;
+- a configured controller binding is revalidated against the same persistent host ControllerInventory and its reconnect generation before the launch-time virtual XInput service is exposed.
 
-Current review requirements before treating this work as production-ready include:
+This removes the earlier risk that the program UI or a separate launcher layer could become a second runtime authority.
 
-- use only documented/real endpoint identity properties; do not fabricate property keys as compatibility fallbacks;
-- keep Windows audio code at the Windows/platform boundary rather than making it a second runtime authority;
-- preserve endpoint context when observing sessions;
-- distinguish complete/authoritative observation from partial scans;
-- keep undocumented routing experiments out of the normal product target and ordinary automatic tests;
-- never use broad rollback that clears unrelated persisted application audio policy;
-- prove that a target session actually moved to the intended endpoint before claiming routing support.
+## Windows audio
 
-The current routing experiment result is useful **negative/feasibility evidence**, not a production routing solution.
+Windows audio remains a platform boundary, but production mutation is now routed through the canonical host rather than a separate UI authority.
 
-## Validated in contributor branches, not merged
+The implemented path includes:
 
-The following work has controlled validation in same-repository `minseong/*` branches and is intentionally integrated only after prerequisites land in `main`:
+- render endpoint inventory;
+- audio session observation using exact process identity;
+- host-side process/Seat validation;
+- target-scoped route/reset commands through host IPC;
+- Control-role and UI-lease requirements for mutation;
+- exact process creation-identity checks before mutation;
+- status reporting for process/session/endpoint/identity/routing/OS failures.
 
-### Controller pairing and reconnect safety
+Automated validation is not equivalent to proof on two physical render devices. Independent two-Seat physical audio remains a manual acceptance item.
 
-- explicit pairing of stable physical controller identity to the current XInput runtime source;
-- source-generation validation across reconnects;
-- stale bindings fail closed.
+## Automated validation
 
-Current review branch: `minseong/controller-button-pairing` (PR #32). The reconnect-generation prerequisite is already merged.
+The canonical backend stack has automated coverage for the authority boundary and release tooling. The Windows host-control validation includes:
 
-### Seat-local virtual XInput
+- protocol tests;
+- runtime lease tests;
+- RuntimeHost tests;
+- transport-session tests;
+- named-pipe end-to-end tests, including Control/UI-lease acquire -> controlled child launch -> exact process publication -> stop -> GameProcess authority removal;
+- GameLauncher strict process-ownership and virtual-XInput integration tests;
+- hydra_host.exe build;
+- hydraseat_hostctl.exe build;
+- HydraSeatSetup.exe build;
+- installer bootstrap, local compatibility evidence/runner, and runtime-requirement authority tests.
 
-- logical Seat-local XInput slot contract;
-- Seat source exposed as logical slot 0;
-- unrelated logical slots reported disconnected;
-- stale activation/source generation rejected.
+The current integration also fixes issues found while auditing the old fork:
 
-### Two-process isolation harness
+- missing cstring include in the Gate C external harness;
+- a non-Windows include/guard portability defect in the game runtime requirement resolver;
+- preserved non-duplicated code that existed on disk but was absent from the CMake build graph;
+- stale old-fork production-launch/activation layers that depended on obsolete duplicate authority contracts were removed instead of reactivated;
+- the old input-observation implementation was rejected during audit because its RawInputEvent/WorkspaceManager contracts no longer match the canonical model;
+- every remaining src/*.cpp is now either registered in the build graph or intentionally removed;
+- missing signing/scope/schema fixed inputs in release tooling.
 
-Controlled Windows child processes demonstrated:
+Automated acceptance/release checks provide reproducible engineering evidence only. They do not upgrade simulated, synthetic, or software-only results into physical or commercial-game evidence.
 
-- independent Seat A / Seat B state visibility;
-- no cross-Seat logical-slot exposure;
-- vibration routed back to the correct Seat source;
-- stale generation rejection;
-- restarting one controlled child while the other remains active.
+## UI integration
 
-This is **controlled/synthetic process evidence**, not real-game evidence.
+The UI/UX convergence is required to preserve the host authority boundary:
 
-### Process-local XInput ABI adapter
+- polling is read-only through host snapshots;
+- all UI mutations use one persistent Control connection;
+- UI-lease ownership therefore follows the named-pipe connection lifetime;
+- controller pairing is submitted as a host command;
+- audio route/reset is submitted as a host command;
+- a game-active Seat may independently acquire/release a UI configuration lease;
+- the UI must never deactivate a game merely to enter configuration mode;
+- another control client's UI lease is displayed as busy rather than impersonated or released.
 
-A controlled adapter DLL/probe path has validated XInput ABI behavior through explicit loading and Seat-private configuration. Automatic game injection/interposition is deliberately separate and is not claimed as production-ready.
+## Still pending physical/manual evidence
 
-### Launch/process ownership
+The following remain unclaimed until the appropriate evidence is collected:
 
-A contributor branch validates a Seat launch path that:
-
-- starts the controlled child suspended;
-- passes Seat-private runtime configuration through a child environment block;
-- captures exact PID + creation identity;
-- publishes runtime ownership before resume;
-- retains the process handle for Seat-local stop/rollback;
-- rejects duplicate launch for the same Seat;
-- stops/restarts one Seat without terminating the other controlled Seat;
-- rolls back failed process creation.
-
-Process-tree/Job ownership is under review in `minseong/seat-process-tree-ownership` (PR #33). Arbitrary launcher handoff remains follow-up work.
-
-The dependent controller compatibility sequence is preserved under:
-
-- `minseong/staging/controller-virtual-xinput`;
-- `minseong/staging/xinput-process-isolation`;
-- `minseong/staging/xinput-process-adapter`.
-
-Seat process/XInput launch integration is intentionally deferred until both the process-tree PR and the adapter chain land; the old fork branch conflicts with the newer `GameLauncher` ownership model and is not migrated as authority.
-
-These staging branches are preservation/integration queues only. They are not merge-ready and must be rebuilt on the newest `main` after each prerequisite lands. The former fork `main` and any unlisted legacy fork branches are intentionally not migrated; they are retired prototypes and must not be treated as current implementation or architecture authority.
-
-## Not yet production-proven
-
-The following must remain unclaimed until stronger evidence exists:
-
-- real-game process-local XInput interposition across representative titles;
-- complete keyboard/mouse isolation with two physical device sets;
-- controller isolation across reconnects and relevant controller APIs on physical hardware;
-- independent physical audio routing for two Seats;
-- exact process-tree/launcher handoff for real launchers;
-- Seat-specific display/window behavior across real multi-display setups;
+- two independent physical keyboard/mouse assignments without bleed;
+- controller isolation across reconnect/replug on representative physical hardware and APIs;
+- independent audio on two physical render endpoints;
+- real multi-display placement/focus behavior;
+- exact launcher handoff across representative real launchers;
 - two different commercial games running simultaneously under independent Seats;
 - lawful same-title/two-instance scenarios where supported by the title;
-- crash/reboot/watchdog/emergency recovery restoring ordinary Windows state;
-- clean-machine install/uninstall and signed release artifacts.
+- crash/reboot/watchdog/emergency recovery on a real Windows installation;
+- clean-machine install/update/uninstall;
+- production signing trust and verification on released artifacts;
+- protected/anti-cheat scenarios refusing unsupported activation safely.
 
-## Collaboration state
+## Collaboration and repository state
 
-Current parallel work split:
+Pranshu45883/HydraSeat is the single canonical repository.
 
-- `ot4562-glitch`: Seat/runtime authority, process ownership/lifecycle, controller/runtime, compatibility;
-- `Pranshu45883`: program UI/UX and Windows audio endpoint/session/routing;
-- shared: UI/runtime and audio/runtime contracts plus physical/real-game acceptance.
+The integration policy is:
 
-`Pranshu45883/HydraSeat` is now the single canonical repository. Contributor work uses short-lived same-repository branches; the former long-lived contributor-fork workflow is retired. Dependent implementation may move ahead only on clearly named staging branches and must be rebuilt on current `main`, freshly verified, and immediately reviewable/mergeable before a normal PR is opened.
+- one canonical backend/runtime authority;
+- UI/UX is a client of that authority;
+- Windows/platform code remains behind platform boundaries;
+- experimental diagnostics do not become success authority;
+- legacy fork code is migrated only when it adds non-duplicated capability to the current design.
 
-See [COLLABORATION_CONTRACT.md](COLLABORATION_CONTRACT.md) for the invariant-level rules and [ROADMAP.md](ROADMAP.md) for integration order.
+See ARCHITECTURE.md, ROADMAP.md, and COLLABORATION_CONTRACT.md for the corresponding invariants and remaining acceptance work.

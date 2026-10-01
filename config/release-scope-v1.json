@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "productVersion": "v1",
+  "scopeDate": "2026-08-29",
+  "scopeSemantics": {
+    "release-target": "Inside the HydraSeat v1 release qualification matrix; not a support claim until required validation passes.",
+    "experimental": "May be exercised only with explicit warning/opt-in and is not part of the normal v1 support promise.",
+    "deferred": "Intentionally outside the v1 release target.",
+    "excluded": "Forbidden or explicitly unsupported by the v1 product contract."
+  },
+  "productBoundary": {
+    "maxActiveSeats": 2,
+    "gameOnly": true,
+    "singleInteractiveWindowsSession": true,
+    "minimalSeatLauncher": true,
+    "generalIndependentDesktopPerSeat": false,
+    "vmRdpStreamingRequired": false,
+    "mandatoryHydraSeatCloudAccount": false
+  },
+  "hostPlatform": {
+    "operatingSystem": "Windows",
+    "hostArchitecture": "x64",
+    "targetProcessArchitectures": ["x64", "x86"],
+    "windowsBuildFamilies": [
+      {
+        "id": "windows-11-24h2",
+        "majorVersion": 11,
+        "release": "24H2",
+        "baseBuild": 26100,
+        "disposition": "release-target",
+        "validation": "pending-release-matrix"
+      },
+      {
+        "id": "windows-11-25h2",
+        "majorVersion": 11,
+        "release": "25H2",
+        "baseBuild": 26200,
+        "disposition": "release-target",
+        "validation": "pending-release-matrix"
+      },
+      {
+        "id": "windows-11-26h1",
+        "majorVersion": 11,
+        "release": "26H1",
+        "baseBuild": 28000,
+        "disposition": "release-target",
+        "validation": "pending-release-matrix"
+      },
+      {
+        "id": "windows-10-22h2-esu",
+        "majorVersion": 10,
+        "release": "22H2",
+        "baseBuild": 19045,
+        "disposition": "experimental",
+        "validation": "not-a-ga-support-claim"
+      }
+    ],
+    "cpuBaseline": "x86-64 CPU accepted by the selected Windows 11 release-target build; HydraSeat makes no vendor/generation performance promise before P10-PERF-01.",
+    "gpuBaseline": "GPU/display stack capable of the selected games and assigned physical outputs; vendor-specific performance/support claims require P10-PERF-01 evidence."
+  },
+  "capabilities": [
+    {
+      "id": "display.physical",
+      "disposition": "release-target",
+      "validation": "physical-manual-required",
+      "notes": "Two-Seat v1 requires physical display groups; real placement, mixed-DPI, reconnect and rollback remain release evidence."
+    },
+    {
+      "id": "display.virtual",
+      "disposition": "deferred",
+      "validation": "not-required-for-v1",
+      "notes": "Virtual display/IDD support must not become a dependency of the physical-monitor v1 path."
+    },
+    {
+      "id": "input.keyboard-mouse",
+      "disposition": "release-target",
+      "validation": "physical-zero-bleed-required",
+      "notes": "Release requires two physical input sets and objective receiver-aware zero-bleed evidence for the declared path."
+    },
+    {
+      "id": "controller.xinput",
+      "disposition": "release-target",
+      "validation": "physical-manual-required",
+      "notes": "XInput is a distinct controller API and requires scenario-specific physical evidence."
+    },
+    {
+      "id": "controller.directinput",
+      "disposition": "release-target",
+      "validation": "physical-manual-required",
+      "notes": "DirectInput is a distinct controller API and requires scenario-specific physical evidence."
+    },
+    {
+      "id": "controller.raw-hid-sdl-vendor",
+      "disposition": "experimental",
+      "validation": "per-game-api-evidence-required",
+      "notes": "Raw HID, SDL and vendor controller APIs are not implied by XInput/DirectInput evidence."
+    },
+    {
+      "id": "audio.core-audio",
+      "disposition": "release-target",
+      "validation": "physical-manual-required",
+      "notes": "Only exact tested endpoint/session routing scenarios are in scope; unsupported movement fails closed or uses explicit user-assisted configuration."
+    },
+    {
+      "id": "provider.steam-readonly-discovery",
+      "disposition": "release-target",
+      "validation": "real-provider-game-required",
+      "notes": "Read-only local discovery and normal Steam launch URI path only; no credential or launcher-policy bypass."
+    },
+    {
+      "id": "provider.custom-exe",
+      "disposition": "release-target",
+      "validation": "real-game-required",
+      "notes": "Explicit local executable fallback with bounded arguments and no shell execution."
+    },
+    {
+      "id": "provider.epic-ea-gog",
+      "disposition": "deferred",
+      "validation": "not-required-for-v1",
+      "notes": "Provider-neutral interfaces remain extensible, but these live adapters are not required for the initial v1 release scope."
+    },
+    {
+      "id": "same-game.two-instance",
+      "disposition": "release-target",
+      "validation": "one-lawful-real-title-required",
+      "notes": "v1 requires at least one permitted real same-title demonstration; this is not a universal multi-instance promise."
+    },
+    {
+      "id": "protected-title.experiment",
+      "disposition": "experimental",
+      "validation": "explicit-warning-required",
+      "notes": "Protected titles may only be explicit experiments and never imply anti-cheat safety or bypass."
+    },
+    {
+      "id": "optional-device-driver",
+      "disposition": "experimental",
+      "validation": "signed-physical-recovery-required",
+      "notes": "No optional driver is part of the normal release target until signing, recovery and physical-safety evidence exist."
+    },
+    {
+      "id": "community.compatibility-sharing",
+      "disposition": "release-target",
+      "validation": "privacy-and-service-policy-required",
+      "notes": "Local-first evidence remains authoritative; sharing is explicit opt-in with exact redacted preview."
+    }
+  ],
+  "runtimePolicy": {
+    "coreOfflineOperationRequired": true,
+    "communitySharingDefaultEnabled": false,
+    "compatibilityDataRefreshSeparateFromProgramUpdate": true,
+    "programRuntimeDriverUpdateRequiresUserApproval": true,
+    "normalUiRuntimeRequiresElevation": false,
+    "privilegedOperations": ["install", "repair", "uninstall", "optional-component", "explicit-system-recovery"],
+    "privilegedGeneralCommandExecutionAllowed": false
+  },
+  "installerPolicy": {
+    "realWindowsInstallerRequired": true,
+    "repairRequired": true,
+    "uninstallRequired": true,
+    "firstRunSeatWizardOptional": true,
+    "setLaterRequired": true,
+    "returnToOrdinaryWindowsBeforeRiskyRemoval": true,
+    "removeOnlyHydraSeatOwnedState": true,
+    "cleanMachineAcceptanceRequired": true
+  },
+  "nonGoals": [
+    "n-seat-v1",
+    "general-independent-desktops",
+    "vm-rdp-streaming-required",
+    "universal-same-game-multi-instance",
+    "anti-cheat-drm-account-launcher-bypass",
+    "anti-cheat-safety-certification",
+    "mandatory-cloud-account-or-telemetry",
+    "compatibility-with-every-game"
+  ],
+  "externalResearch": [
+    {
+      "id": "microsoft-windows-client-supported-versions",
+      "classification": "official-platform-documentation",
+      "url": "https://learn.microsoft.com/en-us/windows/release-health/supported-versions-windows-client",
+      "consultedOn": "2026-08-29",
+      "use": "Release-target Windows build-family snapshot only; no source code copied or adapted."
+    }
+  ]
+}

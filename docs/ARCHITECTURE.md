@@ -1,6 +1,6 @@
 # HydraSeat Architecture
 
-Status: canonical high-level architecture for collaboration. The implementation is converging toward this structure incrementally; this document distinguishes the merged repository from the target production shape.
+Status: canonical high-level architecture as of **2026-10-01**. The host/client authority split is implemented in the canonical integration; physical and real-game acceptance remain separate evidence gates.
 
 ## 1. Product concepts
 
@@ -11,173 +11,139 @@ HydraSeat keeps four concepts separate:
 - **Game** — a user-facing/catalog identity;
 - **LaunchTarget** — the executable/launcher contract HydraSeat can actually start and own.
 
-A v1 Seat may own:
+A v1 Seat may own display placement, input assignments, controller binding, process/window identity, audio routing state, compatibility activation, and Seat-local rollback state. The v1 limit is exactly two active Seats.
 
-- display assignment and placement state;
-- keyboard/mouse assignment;
-- controller identity and transient runtime binding;
-- audio endpoint/session routing state;
-- active process tree;
-- target window;
-- compatibility activation;
-- Seat-local rollback and stop/restart state.
+## 2. Canonical authority model
 
-The v1 product limit is exactly two active Seats. Seat 1 lifecycle changes must not implicitly tear down Seat 2, and vice versa.
+Production mutation authority is centralized:
 
-## 2. Authority model
+    HydraSeat UI / control clients
+                |
+                | bounded host IPC v2
+                v
+          hydra_host.exe
+          RuntimeHost
+          SessionController
+           /            \
+          v              v
+     SeatRuntime 1   SeatRuntime 2
 
-The production destination is one runtime authority:
+hydra_host.exe is the sole production runtime authority. UI and diagnostic clients express intent through the host protocol; they do not construct a second runtime state machine.
 
-```text
-HydraSeat UI / control surface
-            |
-            | bounded, versioned IPC
-            v
-      hydra_host.exe
-      SessionController
-       /            \
-      v              v
- SeatRuntime 1   SeatRuntime 2
-      |              |
-      +-- process    +-- process
-      +-- window     +-- window
-      +-- input      +-- input
-      +-- controller +-- controller
-      +-- audio      +-- audio
-      +-- rollback   +-- rollback
-```
+SessionController owns cross-Seat decisions and exactly two v1 SeatRuntime objects. A SeatRuntime owns only the mutable runtime state for its Seat.
 
-`hydra_host.exe` is intended to be the sole runtime authority. The UI expresses intent; it does not become a second runtime state machine.
+Host IPC v2 exposes read-only snapshots and bounded control commands. Mutation requires the Control role.
 
-`SessionController` owns cross-Seat decisions and exactly two v1 `SeatRuntime` objects. A `SeatRuntime` owns only the mutable state for its Seat.
+## 3. Lease model
 
-The current merged repository has introduced the `SessionController` / `SeatRuntime` authority contracts but still builds the existing `HydraSeat` application rather than a complete host/client process split. That split remains an incremental migration target, not a claim about current `main`.
+Runtime ownership distinguishes two independent leases inside one Seat generation:
 
-## 3. Current merged runtime contracts
+- **UiConfiguration** — temporary authority for supported configuration mutations;
+- **GameProcess** — process/window authority for the running game.
 
-Current `main` contains:
+The leases may coexist. Releasing UiConfiguration must not stop the game. Ending GameProcess removes PID/HWND authority immediately even when a UI lease remains.
 
-- activation tokens with Seat ID and generation;
-- exact runtime `ProcessIdentity` as PID plus creation identity;
-- cross-Seat rejection of duplicate process/window/controller ownership;
-- stable controller identity separated from runtime-only XInput slot identity;
-- Seat-owned transient controller bindings;
-- persisted controller selection by stable physical identity rather than enumeration index;
-- a two-Seat configuration/UI model.
+Compatibility begin/end activation entry points are wrappers over the game-lease path; they are not a second authority model.
 
-Runtime authority is fail-closed: stale or mismatched ownership evidence must not be converted into success.
+A UI lease acquired through host IPC belongs to that named-pipe connection. Disconnect or client death automatically releases the connection-owned UI leases. A different client must not impersonate or release them.
 
-## 4. Persisted state vs runtime state
+## 4. Runtime identity and fail-closed rules
 
-Persisted configuration may contain stable/user-selected information such as:
+Runtime identity is exact, not name-based:
 
-- Seat ID;
-- display/device identifiers;
-- keyboard/mouse device paths;
-- stable controller identity;
-- Player/Game/LaunchTarget metadata when those schemas are introduced.
+- process identity is PID + creation identity;
+- target windows must belong to the owned process/process tree;
+- controller persistence uses stable physical identity, not enumeration order;
+- XInput slots are runtime-only identities;
+- active generations and runtime handles are never persisted as durable identity.
 
-Persisted configuration must not use process-lifetime values as durable identity. In particular, do not persist:
-
-- PID;
-- HWND;
-- Raw Input handles;
-- process/Job handles;
-- COM/interface pointers;
-- enumeration-order controller indices;
-- active runtime generations.
-
-Runtime-only state is reconstructed from current evidence for each activation.
+Stale generations, stale process identity, ambiguous controller evidence, cross-Seat ownership conflicts, or unsupported mutation paths fail closed.
 
 ## 5. Process and window ownership
 
-The ownership rule is stronger than "the process name looks right."
+The launch path follows:
 
-A production launch path should follow:
+    begin GameProcess lease
+      -> create/observe exact process ownership
+      -> publish exact ProcessIdentity
+      -> accept only owned windows/process tree
+      -> activate Seat-local compatibility resources
+      -> run
+      -> reverse Seat-local rollback on stop/failure
 
-```text
-begin Seat activation
-  -> create/observe exact process ownership
-  -> publish exact ProcessIdentity
-  -> accept only windows owned by that identity/process tree
-  -> activate Seat-local compatibility resources
-  -> run
-  -> reverse Seat-local rollback on stop/failure
-```
-
-Normal descendants should be owned from process-tree/Job evidence. Launcher handoff outside the owned tree requires an explicit bounded handoff contract. Failure to prove ownership means activation fails closed.
+Normal descendants are owned from process-tree/Job evidence. Out-of-tree launcher handoff requires an explicit bounded contract; process-name scanning is not ownership evidence.
 
 ## 6. Controller boundary
 
-Controller identity has two distinct layers:
+Controller identity has two layers:
 
-- **stable physical identity** for Seat assignment/persistence;
-- **runtime API identity** such as an XInput slot for the current session.
+- stable physical identity for Seat assignment and persistence;
+- runtime API identity such as the current XInput slot.
 
-Enumeration order or friendly name is not stable identity. Controller ownership is transient runtime state scoped to the active Seat generation.
+Controller inventory and pairing preserve reconnect/source generations. Controller pairing is a host mutation. UI clients submit the selected stable physical identity plus the current XInput runtime slot; RuntimeHost validates the current inventory before publishing the binding.
 
-Reconnect-generation validation, explicit pairing, virtual XInput, process-local XInput compatibility, and related work must preserve this separation as those capabilities move from validated branches into `main`.
+Seat-local virtual/process-local XInput compatibility must preserve the same ownership and generation rules.
 
 ## 7. Audio boundary
 
-Windows audio is a separate platform subsystem until a supported Seat-level integration contract is proven.
+Windows audio remains a Windows platform subsystem, but production route/reset mutation is host-owned.
 
-The intended order is:
+The direction is:
 
-1. read-only endpoint inventory;
-2. read-only session observation with exact process identity and endpoint context;
-3. isolated routing feasibility work;
-4. only after support and rollback are proven, integration through the Seat runtime boundary.
+    SessionController / RuntimeHost
+        -> host audio contract
+        -> Windows audio backend
 
-Audio code must not become a second runtime authority. Experimental or undocumented routing mechanisms must stay out of the production path until they can prove target-scoped mutation, verification, rollback, and no impact on unrelated application/global audio state.
+Read-only endpoint/session observation may be consumed by UI diagnostics. A route/reset request must be tied to an exact host-owned process identity and an authorized UI configuration lease.
 
-The eventual ownership direction is:
+Audio code must not become an independent runtime authority. Target-scoped verification, rollback, and physical two-endpoint evidence remain required before claiming broad production compatibility.
 
-```text
-SessionController -> SeatRuntime -> audio contract -> Windows audio backend
-```
+## 8. UI boundary
 
-not `Windows audio backend -> runtime authority`.
+The Qt UI is a client:
 
-## 8. Compatibility boundary
+- polling uses a read-only host connection;
+- mutations use one persistent Control connection;
+- UI configuration leases therefore follow that control connection lifetime;
+- Seats UI acquires/releases only UiConfiguration leases;
+- it never deactivates a GameProcess lease to enter configuration mode;
+- controller pairing and audio mutations are host commands;
+- another control clients UI lease is shown as busy instead of being treated as locally owned.
 
-Game/process-specific compatibility belongs at the runtime edge. Normal launch orchestration should remain understandable without reading hook/interposition code.
+The UI does not receive SessionController or RuntimeHost pointers.
 
-Required compatibility capabilities are explicit. Missing required isolation means unsupported; HydraSeat must not silently fall back to global input, controller, audio, or window behavior.
+## 9. Compatibility boundary
 
-HydraSeat does not bypass DRM, anti-cheat, protected processes, credentials, authentication, or deliberate single-instance/security restrictions.
+Game/process-specific compatibility belongs at the runtime edge. Missing required isolation means unsupported; HydraSeat must not silently fall back to global input, controller, audio, or window behavior.
 
-## 9. Windows mutation rule
+HydraSeat does not bypass DRM, anti-cheat, protected processes, credentials, authentication, or deliberate security restrictions.
 
-A risky mutation is a transaction:
+## 10. Windows mutation rule
 
-```text
-capture -> apply -> verify
-```
+Risky mutation is a transaction:
+
+    capture -> apply -> verify
 
 Failure is handled by:
 
-```text
-reverse rollback -> verify safe state
-```
+    reverse rollback -> verify safe state
 
-Broad cleanup such as killing by process name, clearing unrelated persisted application settings, resetting global devices, or sweeping unrelated state is not an acceptable rollback mechanism.
+Crash journal, reset, watchdog, startup/recovery, installer/update, privilege, and support tooling exist to preserve this rule. Broad cleanup of unrelated process/device/application state is not an acceptable rollback mechanism.
 
-## 10. Source/build boundaries
+## 11. Source/build boundaries
 
-The long-term responsibility-level component model is documented in [MAINTAINABLE_ARCHITECTURE.md](MAINTAINABLE_ARCHITECTURE.md). The current repository does not need a one-shot rewrite to match that graph.
+Key dependency rules are:
 
-Key dependency rules remain:
-
-- core/runtime contracts should not depend on UI;
-- OS-specific Windows code stays at the Windows boundary;
+- core/runtime contracts do not depend on UI;
+- Windows-specific code stays at the platform boundary;
 - UI does not become runtime authority;
-- diagnostics/experiments do not become production success authority;
-- a new library/interface exists only for a real process, ABI, platform, security, optional-capability, or independently changing responsibility boundary.
+- diagnostics and experiments do not become production success authority;
+- legacy fork modules are not reintroduced when canonical modules already own the responsibility;
+- a new interface/library exists only for a real process, ABI, platform, security, optional-capability, or independently changing responsibility boundary.
 
-## 11. Evidence discipline
+## 12. Evidence discipline
 
-Architecture is not proof of compatibility. Keep evidence labels literal:
+Architecture and automated tests are not physical compatibility proof. Evidence labels remain literal:
 
 - unit/pure;
 - controlled/synthetic;
@@ -186,6 +152,6 @@ Architecture is not proof of compatibility. Keep evidence labels literal:
 - commercial/real game;
 - community report.
 
-Passing a controlled process test is not equivalent to physical two-Seat or real-game acceptance.
+Passing host IPC, release acceptance, or controlled process tests does not by itself prove two physical Seats, two physical audio devices, or commercial-game compatibility.
 
-See [STATUS.md](STATUS.md) for the dated implementation snapshot and [COLLABORATION_CONTRACT.md](COLLABORATION_CONTRACT.md) for the engineering rules applied to changes.
+See STATUS.md for the dated implementation snapshot, ROADMAP.md for remaining acceptance work, and COLLABORATION_CONTRACT.md for collaboration invariants.

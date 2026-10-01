@@ -43,6 +43,16 @@ std::wstring widenAscii(std::string_view value) {
     return std::wstring(value.begin(), value.end());
 }
 
+#if defined(_WIN32)
+bool experimentalAudioPolicyEnabled() noexcept {
+    wchar_t value[8]{};
+    const DWORD length = GetEnvironmentVariableW(
+        L"HYDRA_EXPERIMENTAL_AUDIO_POLICY", value,
+        static_cast<DWORD>(std::size(value)));
+    return length == 1 && value[0] == L'1';
+}
+#endif
+
 } // namespace
 
 HostConnectionSession::HostConnectionSession(
@@ -931,7 +941,13 @@ public:
             return false;
         }
 
-        HostConnectionSession session(host, &audioRouter);
+        // The Windows AudioPolicyConfig factory is undocumented and has not yet
+        // passed HydraSeat's physical receiver-verification/rollback gate. Keep
+        // the implementation available for controlled experiments, but fail
+        // closed in normal production runs.
+        HostConnectionSession session(
+            host,
+            experimentalAudioPolicyEnabled() ? &audioRouter : nullptr);
         std::size_t handled = 0;
         for (; handled < kMaxFramesPerConnection; ++handled) {
             std::string readError;

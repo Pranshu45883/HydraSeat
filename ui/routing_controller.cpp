@@ -21,7 +21,7 @@ QString audioStatusMessage(hydra::hostipc::AudioMutationStatus status) {
     case Status::IdentityMismatch:
         return "The configuration changed before the operation completed.";
     case Status::RoutingFailed:
-        return "Audio routing failed. Your previous configuration was restored.";
+        return "Audio routing failed. Verify the current output before trying again.";
     case Status::OsApiError:
         return "Something went wrong. Check Diagnostics for more information.";
     }

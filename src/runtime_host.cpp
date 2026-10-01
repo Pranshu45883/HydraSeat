@@ -39,6 +39,11 @@ std::optional<SeatRuntimeSnapshot> RuntimeHost::seatSnapshot(
     return controller_.snapshot(seatId);
 }
 
+controller::InventorySnapshot RuntimeHost::controllerInventorySnapshot() noexcept {
+    std::lock_guard lock(mutex_);
+    return controllerInventory_.scan();
+}
+
 std::optional<std::uint32_t> RuntimeHost::seatForProcess(
     const ProcessIdentity& process) const noexcept {
     if (!process.valid()) return std::nullopt;
@@ -84,8 +89,7 @@ bool RuntimeHost::pairController(
     }
 
     std::lock_guard lock(mutex_);
-    controller::ControllerInventory inventory;
-    const auto snapshot = inventory.scan();
+    const auto snapshot = controllerInventory_.scan();
     if (!snapshot.authoritative) return false;
 
     std::wstring persistentId(

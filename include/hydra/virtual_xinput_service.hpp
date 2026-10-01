@@ -35,6 +35,7 @@ public:
 
     ipc::VirtualXInputResponse handle(
         const ipc::VirtualXInputRequest& request) noexcept;
+    void updateInventory(InventorySnapshot inventory) noexcept;
 
 private:
     ipc::ProtocolStatus validateCurrentBinding() const noexcept;

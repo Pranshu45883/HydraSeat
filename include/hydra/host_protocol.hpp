@@ -18,6 +18,9 @@ constexpr std::size_t kHostProtocolMaxPayloadBytes = 64u * 1024u;
 constexpr std::size_t kHostProtocolMaxDiagnosticBytes = 2048u;
 constexpr std::size_t kHostProtocolMaxControllerIdBytes = 512u;
 constexpr std::size_t kHostProtocolMaxAudioEndpointIdBytes = 2048u;
+constexpr std::size_t kHostProtocolMaxLaunchTitleBytes = 512u;
+constexpr std::size_t kHostProtocolMaxLaunchPathBytes = 32768u;
+constexpr std::size_t kHostProtocolMaxLaunchArgumentsBytes = 16384u;
 constexpr std::size_t kHostSeatCount = 2u;
 
 enum class MessageType : std::uint16_t {
@@ -38,6 +41,10 @@ enum class MessageType : std::uint16_t {
     RouteAudioResult = 15,
     ResetAudio = 16,
     ResetAudioResult = 17,
+    LaunchGame = 18,
+    LaunchGameResult = 19,
+    StopGame = 20,
+    StopGameResult = 21,
 };
 
 enum class ClientRole : std::uint8_t {
@@ -124,6 +131,16 @@ struct ControllerPairRequest {
     bool operator==(const ControllerPairRequest&) const = default;
 };
 
+struct LaunchGameRequest {
+    std::uint32_t seatId{0};
+    std::string titleUtf8;
+    std::string executablePathUtf8;
+    std::string launchArgumentsUtf8;
+    std::string workingDirectoryUtf8;
+
+    bool operator==(const LaunchGameRequest&) const = default;
+};
+
 struct ProcessRequest {
     std::uint32_t processId{0};
     std::uint64_t creationIdentity{0};
@@ -179,6 +196,11 @@ std::optional<SeatRequest> decodeSeatRequest(std::span<const std::byte> payload)
 std::vector<std::byte> encodeControllerPairRequest(
     const ControllerPairRequest& request);
 std::optional<ControllerPairRequest> decodeControllerPairRequest(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeLaunchGameRequest(
+    const LaunchGameRequest& request);
+std::optional<LaunchGameRequest> decodeLaunchGameRequest(
     std::span<const std::byte> payload);
 
 std::vector<std::byte> encodeProcessRequest(const ProcessRequest& request);

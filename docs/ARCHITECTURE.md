@@ -71,6 +71,8 @@ The launch path follows:
       -> run
       -> reverse Seat-local rollback on stop/failure
 
+For the implemented custom-executable path, hydra_host owns GameLauncher. A launch command requires the Control role and that connection's UiConfiguration lease. GameLauncher acquires the GameProcess lease through RuntimeHost, creates the target suspended inside a kill-on-close Seat Job, publishes exact PID + creation identity before resume, and ends the GameProcess lease only after the exact owned Job/process has been stopped and verified safe.
+
 Normal descendants are owned from process-tree/Job evidence. Out-of-tree launcher handoff requires an explicit bounded contract; process-name scanning is not ownership evidence.
 
 ## 6. Controller boundary
@@ -107,8 +109,9 @@ The Qt UI is a client:
 - UI configuration leases therefore follow that control connection lifetime;
 - Seats UI acquires/releases only UiConfiguration leases;
 - it never deactivates a GameProcess lease to enter configuration mode;
-- controller pairing and audio mutations are host commands;
-- another control clients UI lease is shown as busy instead of being treated as locally owned.
+- controller pairing, audio mutation, and launch/stop intent are host commands;
+- launch/stop require the connection-owned UiConfiguration lease and do not transfer GameProcess authority into the UI;
+- another control client's UI lease is shown as busy instead of being treated as locally owned.
 
 The UI does not receive SessionController or RuntimeHost pointers.
 
@@ -139,6 +142,8 @@ Key dependency rules are:
 - UI does not become runtime authority;
 - diagnostics and experiments do not become production success authority;
 - legacy fork modules are not reintroduced when canonical modules already own the responsibility;
+- stale source that still targets obsolete authority contracts is removed rather than kept as unbuilt pseudo-implementation;
+- non-duplicated preserved utilities must be registered in the build graph and tested instead of merely existing on disk;
 - a new interface/library exists only for a real process, ABI, platform, security, optional-capability, or independently changing responsibility boundary.
 
 ## 12. Evidence discipline

@@ -120,6 +120,37 @@ int main() {
         assert(duplicateError);
         assert(duplicateError->code == ErrorCode::InvalidState);
 
+        const LaunchGameRequest launchRequest{
+            1, "test", "C:/controlled-target.exe", "", ""};
+        const auto noLauncher = session.handle(Frame{
+            MessageType::LaunchGame,
+            801,
+            encodeLaunchGameRequest(launchRequest)});
+        assert(noLauncher.type == MessageType::Error);
+        const auto noLauncherError = decodeError(noLauncher.payload);
+        assert(noLauncherError);
+        assert(noLauncherError->code == ErrorCode::Unsupported);
+
+        auto wrongSeatLaunch = launchRequest;
+        wrongSeatLaunch.seatId = 2;
+        const auto withoutSeatLease = session.handle(Frame{
+            MessageType::LaunchGame,
+            802,
+            encodeLaunchGameRequest(wrongSeatLaunch)});
+        assert(withoutSeatLease.type == MessageType::Error);
+        const auto withoutSeatLeaseError = decodeError(withoutSeatLease.payload);
+        assert(withoutSeatLeaseError);
+        assert(withoutSeatLeaseError->code == ErrorCode::InvalidState);
+
+        const auto noStopLauncher = session.handle(Frame{
+            MessageType::StopGame,
+            803,
+            encodeSeatRequest(SeatRequest{1})});
+        assert(noStopLauncher.type == MessageType::Error);
+        const auto noStopLauncherError = decodeError(noStopLauncher.payload);
+        assert(noStopLauncherError);
+        assert(noStopLauncherError->code == ErrorCode::Unsupported);
+
         // The host can acquire the independent game lease inside the same epoch.
         const auto activation = host.beginSeatActivation(1);
         assert(activation.valid());

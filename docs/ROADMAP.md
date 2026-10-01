@@ -18,6 +18,9 @@ Snapshot alignment: **2026-10-01**. This roadmap separates implemented software 
 - [x] release acceptance and validation tooling.
 - [x] host/client authority split with host IPC v2.
 - [x] host-owned Windows audio mutation path.
+- [x] host-owned custom-executable launch/stop path with strict Seat Job ownership and exact process publication.
+- [x] signed installer bootstrap, local compatibility evidence/runner, and runtime-requirement authority targets activated and tested.
+- [x] stale duplicate production-launch/activation authority removed from the canonical source tree.
 
 These check marks mean the software path is integrated and has automated evidence where applicable. They do not mean physical two-player compatibility is proven.
 
@@ -31,6 +34,8 @@ These check marks mean the software path is integrated and has automated evidenc
 - [x] client disconnect automatically releases its UI leases.
 - [x] controller pairing is a host command.
 - [x] audio route/reset is a host command.
+- [x] launch/stop are bounded host commands requiring Control plus the connection-owned UI lease.
+- [x] direct controlled-child launch/stop is covered by named-pipe E2E evidence.
 - [x] UI does not receive SessionController/RuntimeHost pointers.
 - [x] UI configuration does not terminate an active game lease.
 
@@ -62,7 +67,8 @@ These check marks mean the software path is integrated and has automated evidenc
 - [ ] verify cursor/focus/clip behavior where required.
 - [ ] verify exact owned-window placement on a real multi-display setup.
 - [ ] verify Seat 1 display/input changes do not disturb Seat 2.
-- [ ] validate direct executable launch on representative targets.
+- [x] validate the direct-executable host control path on a controlled child process.
+- [ ] validate direct executable launch on representative real targets.
 - [ ] validate bounded custom-launcher handoff without process-name scanning.
 - [ ] preserve explicit fail-closed behavior when required compatibility is unavailable.
 

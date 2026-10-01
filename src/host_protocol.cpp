@@ -65,6 +65,10 @@ bool validMessageType(MessageType type) noexcept {
     case MessageType::RouteAudioResult:
     case MessageType::ResetAudio:
     case MessageType::ResetAudioResult:
+    case MessageType::LaunchGame:
+    case MessageType::LaunchGameResult:
+    case MessageType::StopGame:
+    case MessageType::StopGameResult:
         return true;
     }
     return false;
@@ -165,6 +169,86 @@ bool validAudioEndpointId(std::string_view value) noexcept {
     return true;
 }
 
+bool validUtf8(
+    std::string_view value,
+    std::size_t maximum,
+    bool allowEmpty) noexcept {
+    if ((!allowEmpty && value.empty()) || value.size() > maximum) return false;
+
+    std::size_t index = 0;
+    while (index < value.size()) {
+        const auto lead = static_cast<unsigned char>(value[index]);
+        if (lead == 0) return false;
+
+        std::uint32_t codePoint = 0;
+        std::size_t continuationCount = 0;
+        if (lead <= 0x7fu) {
+            codePoint = lead;
+        } else if (lead >= 0xc2u && lead <= 0xdfu) {
+            codePoint = lead & 0x1fu;
+            continuationCount = 1;
+        } else if (lead >= 0xe0u && lead <= 0xefu) {
+            codePoint = lead & 0x0fu;
+            continuationCount = 2;
+        } else if (lead >= 0xf0u && lead <= 0xf4u) {
+            codePoint = lead & 0x07u;
+            continuationCount = 3;
+        } else {
+            return false;
+        }
+
+        if (index + continuationCount >= value.size()) return false;
+        for (std::size_t offset = 1; offset <= continuationCount; ++offset) {
+            const auto continuation =
+                static_cast<unsigned char>(value[index + offset]);
+            if ((continuation & 0xc0u) != 0x80u) return false;
+            codePoint = (codePoint << 6u) | (continuation & 0x3fu);
+        }
+
+        if ((continuationCount == 1 && codePoint < 0x80u) ||
+            (continuationCount == 2 && codePoint < 0x800u) ||
+            (continuationCount == 3 && codePoint < 0x10000u) ||
+            (codePoint >= 0xd800u && codePoint <= 0xdfffu) ||
+            codePoint > 0x10ffffu) {
+            return false;
+        }
+
+        index += continuationCount + 1u;
+    }
+    return true;
+}
+
+void appendString(std::vector<std::byte>& out, std::string_view value) {
+    appendInteger(out, static_cast<std::uint32_t>(value.size()));
+    for (const char ch : value) {
+        out.push_back(static_cast<std::byte>(
+            static_cast<unsigned char>(ch)));
+    }
+}
+
+bool readString(
+    std::span<const std::byte> payload,
+    std::size_t& offset,
+    std::size_t maximum,
+    bool allowEmpty,
+    std::string& value) {
+    std::uint32_t length = 0;
+    if (!readInteger(payload, offset, length) ||
+        length > maximum ||
+        offset > payload.size() ||
+        payload.size() - offset < length) {
+        return false;
+    }
+    value.clear();
+    value.reserve(length);
+    for (std::size_t index = 0; index < length; ++index) {
+        value.push_back(static_cast<char>(
+            std::to_integer<unsigned char>(payload[offset + index])));
+    }
+    offset += length;
+    return validUtf8(value, maximum, allowEmpty);
+}
+
 bool validAudioMutationStatus(AudioMutationStatus status) noexcept {
     switch (status) {
     case AudioMutationStatus::Success:
@@ -202,6 +286,10 @@ std::string_view messageTypeName(MessageType type) noexcept {
     case MessageType::RouteAudioResult: return "RouteAudioResult";
     case MessageType::ResetAudio: return "ResetAudio";
     case MessageType::ResetAudioResult: return "ResetAudioResult";
+    case MessageType::LaunchGame: return "LaunchGame";
+    case MessageType::LaunchGameResult: return "LaunchGameResult";
+    case MessageType::StopGame: return "StopGame";
+    case MessageType::StopGameResult: return "StopGameResult";
     }
     return "Unknown";
 }
@@ -506,6 +594,90 @@ std::optional<ControllerPairRequest> decodeControllerPairRequest(
     return request;
 }
 
+std::vector<std::byte> encodeLaunchGameRequest(
+    const LaunchGameRequest& request) {
+    if (!validSeatId(request.seatId) ||
+        !validUtf8(
+            request.titleUtf8,
+            kHostProtocolMaxLaunchTitleBytes,
+            true) ||
+        !validUtf8(
+            request.executablePathUtf8,
+            kHostProtocolMaxLaunchPathBytes,
+            false) ||
+        !validUtf8(
+            request.launchArgumentsUtf8,
+            kHostProtocolMaxLaunchArgumentsBytes,
+            true) ||
+        !validUtf8(
+            request.workingDirectoryUtf8,
+            kHostProtocolMaxLaunchPathBytes,
+            true)) {
+        return {};
+    }
+
+    const std::size_t totalBytes =
+        8u + 4u * sizeof(std::uint32_t) +
+        request.titleUtf8.size() +
+        request.executablePathUtf8.size() +
+        request.launchArgumentsUtf8.size() +
+        request.workingDirectoryUtf8.size();
+    if (totalBytes > kHostProtocolMaxPayloadBytes) return {};
+
+    std::vector<std::byte> out;
+    appendInteger(out, request.seatId);
+    appendInteger(out, std::uint32_t{0});
+    appendString(out, request.titleUtf8);
+    appendString(out, request.executablePathUtf8);
+    appendString(out, request.launchArgumentsUtf8);
+    appendString(out, request.workingDirectoryUtf8);
+    return out;
+}
+
+std::optional<LaunchGameRequest> decodeLaunchGameRequest(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 24u ||
+        payload.size() > kHostProtocolMaxPayloadBytes) {
+        return std::nullopt;
+    }
+
+    std::size_t offset = 0;
+    LaunchGameRequest request;
+    std::uint32_t reserved = 0;
+    if (!readInteger(payload, offset, request.seatId) ||
+        !readInteger(payload, offset, reserved) ||
+        reserved != 0 ||
+        !validSeatId(request.seatId) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxLaunchTitleBytes,
+            true,
+            request.titleUtf8) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxLaunchPathBytes,
+            false,
+            request.executablePathUtf8) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxLaunchArgumentsBytes,
+            true,
+            request.launchArgumentsUtf8) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxLaunchPathBytes,
+            true,
+            request.workingDirectoryUtf8) ||
+        offset != payload.size()) {
+        return std::nullopt;
+    }
+    return request;
+}
+
 std::vector<std::byte> encodeProcessRequest(const ProcessRequest& request) {
     if (request.processId == 0 || request.creationIdentity == 0) {
         return {};
@@ -682,7 +854,9 @@ bool isMutatingRequest(MessageType type) noexcept {
            type == MessageType::ReleaseUiLease ||
            type == MessageType::PairController ||
            type == MessageType::RouteAudio ||
-           type == MessageType::ResetAudio;
+           type == MessageType::ResetAudio ||
+           type == MessageType::LaunchGame ||
+           type == MessageType::StopGame;
 }
 
 MessageType responseTypeFor(MessageType request) noexcept {
@@ -695,6 +869,8 @@ MessageType responseTypeFor(MessageType request) noexcept {
     case MessageType::PairController: return MessageType::PairControllerResult;
     case MessageType::RouteAudio: return MessageType::RouteAudioResult;
     case MessageType::ResetAudio: return MessageType::ResetAudioResult;
+    case MessageType::LaunchGame: return MessageType::LaunchGameResult;
+    case MessageType::StopGame: return MessageType::StopGameResult;
     default: return MessageType::Error;
     }
 }

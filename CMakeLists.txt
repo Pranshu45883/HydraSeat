@@ -64,7 +64,6 @@ set(HYDRA_SOURCES
     src/controller_io.cpp
     src/controller_pairing.cpp
     src/controller_virtual_xinput.cpp
-    src/game_launcher.cpp
     src/gui_win32.cpp
     ${UI_SOURCES}
 )
@@ -260,43 +259,6 @@ if(WIN32)
         target_link_options(hydra_process_owner_child PRIVATE -municode)
     endif()
 
-    add_executable(game_launcher_process_ownership
-        tests/test_game_launcher_process_ownership.cpp
-        src/game_launcher.cpp
-        src/runtime_authority.cpp
-        src/controller_identity.cpp
-        src/controller_inventory.cpp
-        src/controller_io.cpp
-        src/controller_virtual_xinput.cpp
-    )
-    target_link_libraries(game_launcher_process_ownership PRIVATE Xinput.lib Setupapi.lib Hid.lib)
-    if(MINGW)
-        target_link_options(game_launcher_process_ownership PRIVATE -municode)
-    endif()
-    add_dependencies(game_launcher_process_ownership hydra_process_owner_child)
-    add_test(
-        NAME GameLauncherProcessOwnership
-        COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>
-    )
-
-    add_executable(game_launcher_xinput_integration
-        tests/test_game_launcher_xinput_integration.cpp
-        src/game_launcher.cpp
-        src/runtime_authority.cpp
-        src/controller_identity.cpp
-        src/controller_inventory.cpp
-        src/controller_io.cpp
-        src/controller_virtual_xinput.cpp
-    )
-    target_link_libraries(game_launcher_xinput_integration PRIVATE Xinput.lib Setupapi.lib Hid.lib)
-    if(MINGW)
-        target_link_options(game_launcher_xinput_integration PRIVATE -municode)
-    endif()
-    add_dependencies(game_launcher_xinput_integration hydra_process_owner_child)
-    add_test(
-        NAME GameLauncherXInputIntegration
-        COMMAND game_launcher_xinput_integration $<TARGET_FILE:hydra_process_owner_child>
-    )
     add_test(
         NAME XInputProcessIsolation
         COMMAND xinput_process_isolation $<TARGET_FILE:xinput_probe_game>
@@ -458,6 +420,54 @@ add_executable(runtime_lease_authority_tests tests/test_runtime_leases.cpp)
 target_link_libraries(runtime_lease_authority_tests PRIVATE hydra_host_authority)
 add_test(NAME RuntimeLeaseAuthorityTests COMMAND runtime_lease_authority_tests)
 
+# Host-owned process launch boundary. GameLauncher delegates every runtime
+# mutation to RuntimeHost in production, while retaining a narrow
+# SessionController compatibility constructor for focused lower-level tests.
+add_library(hydra_game_launcher STATIC
+    src/game_launcher.cpp
+    src/virtual_xinput_protocol.cpp
+    src/virtual_xinput_service.cpp
+    src/virtual_xinput_pipe.cpp
+)
+target_include_directories(hydra_game_launcher PUBLIC include)
+target_link_libraries(hydra_game_launcher PUBLIC hydra_host_authority)
+if(WIN32)
+    target_link_libraries(hydra_game_launcher PUBLIC ${WIN32_LIBS})
+endif()
+
+# The legacy executable/test surfaces consume the same launcher library instead
+# of compiling a second authority implementation.
+target_link_libraries(HydraSeat PRIVATE hydra_game_launcher)
+target_link_libraries(hydra_tests PRIVATE hydra_game_launcher)
+
+if(WIN32)
+    add_executable(game_launcher_process_ownership
+        tests/test_game_launcher_process_ownership.cpp
+    )
+    target_link_libraries(game_launcher_process_ownership PRIVATE hydra_game_launcher)
+    if(MINGW)
+        target_link_options(game_launcher_process_ownership PRIVATE -municode)
+    endif()
+    add_dependencies(game_launcher_process_ownership hydra_process_owner_child)
+    add_test(
+        NAME GameLauncherProcessOwnership
+        COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>
+    )
+
+    add_executable(game_launcher_xinput_integration
+        tests/test_game_launcher_xinput_integration.cpp
+    )
+    target_link_libraries(game_launcher_xinput_integration PRIVATE hydra_game_launcher)
+    if(MINGW)
+        target_link_options(game_launcher_xinput_integration PRIVATE -municode)
+    endif()
+    add_dependencies(game_launcher_xinput_integration hydra_process_owner_child)
+    add_test(
+        NAME GameLauncherXInputIntegration
+        COMMAND game_launcher_xinput_integration $<TARGET_FILE:hydra_process_owner_child>
+    )
+endif()
+
 if(WIN32)
     add_library(hydra_windows_audio_router STATIC
         src/windows_audio_router.cpp
@@ -471,7 +481,10 @@ add_library(hydra_host_transport STATIC
     src/host_transport.cpp
 )
 target_include_directories(hydra_host_transport PUBLIC include)
-target_link_libraries(hydra_host_transport PUBLIC hydra_host_authority)
+target_link_libraries(hydra_host_transport
+    PUBLIC hydra_host_authority
+    PRIVATE hydra_game_launcher
+)
 if(WIN32)
     target_link_libraries(hydra_host_transport PUBLIC
         Kernel32.lib
@@ -487,7 +500,15 @@ add_test(NAME HostTransportSessionTests COMMAND host_transport_session_tests)
 
 add_executable(host_pipe_tests tests/test_host_pipe.cpp)
 target_link_libraries(host_pipe_tests PRIVATE hydra_host_transport)
-add_test(NAME HostPipeTests COMMAND host_pipe_tests)
+if(WIN32)
+    add_dependencies(host_pipe_tests hydra_process_owner_child)
+    add_test(
+        NAME HostPipeTests
+        COMMAND host_pipe_tests $<TARGET_FILE:hydra_process_owner_child>
+    )
+else()
+    add_test(NAME HostPipeTests COMMAND host_pipe_tests)
+endif()
 
 if(WIN32)
     add_executable(hydra_host src/host_main.cpp)
@@ -495,6 +516,9 @@ if(WIN32)
 
     add_executable(hydraseat_hostctl src/hostctl_main.cpp)
     target_link_libraries(hydraseat_hostctl PRIVATE hydra_host_transport)
+    if(MINGW)
+        target_link_options(hydraseat_hostctl PRIVATE -municode)
+    endif()
 endif()
 
 # Exact-owned audio routing transaction boundary. The default backend is
@@ -1002,6 +1026,30 @@ add_executable(update_transaction_backend_tests tests/test_update_transaction.cp
 target_link_libraries(update_transaction_backend_tests PRIVATE hydra_update_transaction)
 add_test(NAME UpdateTransactionBackendTests COMMAND update_transaction_backend_tests)
 
+# Signed-package bootstrap UX delegates mutation to the existing transactional
+# installer script instead of creating a second installer authority.
+add_library(hydra_installer_bootstrap STATIC
+    src/installer_bootstrap.cpp
+)
+target_include_directories(hydra_installer_bootstrap PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_installer_bootstrap PRIVATE
+        Wintrust.lib Crypt32.lib Shell32.lib Advapi32.lib)
+endif()
+
+add_executable(installer_bootstrap_tests tests/test_installer_bootstrap.cpp)
+target_link_libraries(installer_bootstrap_tests PRIVATE hydra_installer_bootstrap)
+add_test(NAME InstallerBootstrapTests COMMAND installer_bootstrap_tests)
+
+if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    add_executable(HydraSeatSetup WIN32 src/installer_bootstrap_main.cpp)
+    target_link_libraries(HydraSeatSetup PRIVATE
+        hydra_installer_bootstrap User32.lib)
+    if(MINGW)
+        target_link_options(HydraSeatSetup PRIVATE -municode)
+    endif()
+endif()
+
 add_library(hydra_two_player_setup_model STATIC
     src/two_player_setup_editor.cpp
 )
@@ -1076,6 +1124,11 @@ endif()
 
 add_executable(hydra_controller_diag src/controller_diag_main.cpp)
 target_link_libraries(hydra_controller_diag PRIVATE hydra_host_authority)
+
+if(WIN32)
+    add_executable(hydra_handle_diagnostic src/handle_diagnostic.cpp)
+    target_link_libraries(hydra_handle_diagnostic PRIVATE User32.lib)
+endif()
 
 add_test(NAME HidHideProbeCliSelfTest
     COMMAND hydra_hidhide_probe_cli_diag --self-test)
@@ -1176,6 +1229,54 @@ target_link_libraries(hydra_game_runtime_requirement_resolver PUBLIC
 if(WIN32)
     target_link_libraries(hydra_game_runtime_requirement_resolver PRIVATE Bcrypt.lib)
 endif()
+
+# Local evidence collection, persistence, and publication remain separate
+# authorities. Controlled/synthetic evidence is never promoted to Physical.
+add_library(hydra_local_compatibility_evidence STATIC
+    src/local_compatibility_evidence.cpp
+)
+target_include_directories(hydra_local_compatibility_evidence PUBLIC include)
+target_link_libraries(hydra_local_compatibility_evidence PUBLIC
+    hydra_community_submission
+)
+
+add_library(hydra_runtime_requirement_authority STATIC
+    src/runtime_requirement_authority.cpp
+)
+target_include_directories(hydra_runtime_requirement_authority PUBLIC include)
+target_link_libraries(hydra_runtime_requirement_authority PUBLIC
+    hydra_game_runtime_requirement_resolver
+)
+
+add_library(hydra_local_compatibility_runner STATIC
+    src/local_compatibility_runner.cpp
+)
+target_include_directories(hydra_local_compatibility_runner PUBLIC include)
+target_link_libraries(hydra_local_compatibility_runner PUBLIC
+    hydra_process_display
+    hydra_session_metrics
+)
+
+add_executable(local_compatibility_evidence_tests
+    tests/test_local_compatibility_evidence.cpp)
+target_link_libraries(local_compatibility_evidence_tests PRIVATE
+    hydra_local_compatibility_evidence)
+add_test(NAME LocalCompatibilityEvidenceTests
+    COMMAND local_compatibility_evidence_tests)
+
+add_executable(runtime_requirement_authority_tests
+    tests/test_runtime_requirement_authority.cpp)
+target_link_libraries(runtime_requirement_authority_tests PRIVATE
+    hydra_runtime_requirement_authority)
+add_test(NAME RuntimeRequirementAuthorityTests
+    COMMAND runtime_requirement_authority_tests)
+
+add_executable(local_compatibility_runner_tests
+    tests/test_local_compatibility_runner.cpp)
+target_link_libraries(local_compatibility_runner_tests PRIVATE
+    hydra_local_compatibility_runner)
+add_test(NAME LocalCompatibilityRunnerTests
+    COMMAND local_compatibility_runner_tests)
 
 add_executable(hydraseat_community_validate src/community_validate_main.cpp)
 target_link_libraries(hydraseat_community_validate PRIVATE

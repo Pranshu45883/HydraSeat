@@ -110,6 +110,33 @@ int main() {
     invalidPair.persistentControllerId = "has space";
     assert(encodeControllerPairRequest(invalidPair).empty());
 
+    const LaunchGameRequest launchRequest{
+        1,
+        "Controlled target",
+        "C:/Games/ControlledTarget.exe",
+        "--seat 1",
+        "C:/Games"};
+    const auto launchBytes = encodeLaunchGameRequest(launchRequest);
+    assert(!launchBytes.empty());
+    assert(decodeLaunchGameRequest(launchBytes) == launchRequest);
+
+    auto invalidLaunch = launchRequest;
+    invalidLaunch.seatId = 3;
+    assert(encodeLaunchGameRequest(invalidLaunch).empty());
+
+    invalidLaunch = launchRequest;
+    invalidLaunch.executablePathUtf8.clear();
+    assert(encodeLaunchGameRequest(invalidLaunch).empty());
+
+    invalidLaunch = launchRequest;
+    invalidLaunch.executablePathUtf8 = std::string("\xC0\xAF", 2);
+    assert(encodeLaunchGameRequest(invalidLaunch).empty());
+
+    invalidLaunch = launchRequest;
+    invalidLaunch.launchArgumentsUtf8 =
+        std::string(kHostProtocolMaxLaunchArgumentsBytes + 1, 'x');
+    assert(encodeLaunchGameRequest(invalidLaunch).empty());
+
     const ProcessRequest processRequest{4242, 0x1122334455667788ull};
     const auto processBytes = encodeProcessRequest(processRequest);
     assert(processBytes.size() == 12);
@@ -153,6 +180,8 @@ int main() {
     assert(isMutatingRequest(MessageType::PairController));
     assert(isMutatingRequest(MessageType::RouteAudio));
     assert(isMutatingRequest(MessageType::ResetAudio));
+    assert(isMutatingRequest(MessageType::LaunchGame));
+    assert(isMutatingRequest(MessageType::StopGame));
     assert(!isMutatingRequest(MessageType::GetSnapshot));
 
     assert(responseTypeFor(MessageType::Hello) == MessageType::HelloAck);
@@ -168,6 +197,10 @@ int main() {
            MessageType::RouteAudioResult);
     assert(responseTypeFor(MessageType::ResetAudio) ==
            MessageType::ResetAudioResult);
+    assert(responseTypeFor(MessageType::LaunchGame) ==
+           MessageType::LaunchGameResult);
+    assert(responseTypeFor(MessageType::StopGame) ==
+           MessageType::StopGameResult);
     assert(responseTypeFor(MessageType::Snapshot) == MessageType::Error);
 
     return 0;

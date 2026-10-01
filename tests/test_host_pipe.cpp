@@ -12,10 +12,14 @@
 #include <windows.h>
 #endif
 
-int main() {
+int main(int argc, char** argv) {
 #if defined(_WIN32)
     using namespace hydra::hostipc;
     using namespace hydra::runtime;
+
+    assert(argc >= 2);
+    assert(argv[1] != nullptr);
+    const std::string controlledChildPath = argv[1];
 
     // Production default: the undocumented Windows AudioPolicyConfig path is
     // unavailable until explicitly enabled for controlled physical validation.
@@ -71,6 +75,36 @@ int main() {
     assert(snapshot->seats[1].active);
     assert(snapshot->seats[1].uiLeaseActive);
     assert(!snapshot->seats[1].gameLeaseActive);
+
+    const std::string readyEventName =
+        "Local\\HydraSeatHostLaunchPipeTest_" +
+        std::to_string(GetCurrentProcessId());
+    HANDLE readyEvent = CreateEventA(
+        nullptr, TRUE, FALSE, readyEventName.c_str());
+    assert(readyEvent != nullptr);
+
+    LaunchGameRequest launchRequest;
+    launchRequest.seatId = 2;
+    launchRequest.titleUtf8 = "Host launch E2E";
+    launchRequest.executablePathUtf8 = controlledChildPath;
+    launchRequest.launchArgumentsUtf8 =
+        "--ready-event " + readyEventName + " --lifetime-ms 30000";
+
+    snapshot = client.launchGame(launchRequest, 5000, &clientError);
+    assert(snapshot.has_value());
+    assert(snapshot->seats[1].uiLeaseActive);
+    assert(snapshot->seats[1].gameLeaseActive);
+    assert(snapshot->seats[1].processOwned);
+    assert(snapshot->seats[1].processId != 0);
+    assert(snapshot->seats[1].processCreationIdentity != 0);
+    assert(WaitForSingleObject(readyEvent, 5000) == WAIT_OBJECT_0);
+
+    snapshot = client.stopGame(2, 10000, &clientError);
+    assert(snapshot.has_value());
+    assert(snapshot->seats[1].uiLeaseActive);
+    assert(!snapshot->seats[1].gameLeaseActive);
+    assert(!snapshot->seats[1].processOwned);
+    CloseHandle(readyEvent);
 
     assert(client.ping(0x12345678u, 5000, &clientError));
 

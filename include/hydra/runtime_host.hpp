@@ -24,6 +24,7 @@ public:
 
     hostipc::HostSnapshot snapshot() const noexcept;
     std::optional<SeatRuntimeSnapshot> seatSnapshot(std::uint32_t seatId) const noexcept;
+    controller::InventorySnapshot controllerInventorySnapshot() noexcept;
     std::optional<std::uint32_t> seatForProcess(
         const ProcessIdentity& process) const noexcept;
 
@@ -66,6 +67,7 @@ private:
 
     mutable std::mutex mutex_;
     SessionController controller_;
+    controller::ControllerInventory controllerInventory_;
     std::uint64_t authorityRevision_{1};
 };
 

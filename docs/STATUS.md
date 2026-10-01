@@ -32,7 +32,9 @@ Implemented integration includes:
 - release acceptance and release-validation tooling;
 - signing/scope/schema fixed-input validation;
 - canonical host control authority and IPC protocol v2;
-- host-owned Windows audio routing integration.
+- host-owned custom-executable launch/stop control with strict per-Seat Job ownership;
+- host-owned Windows audio routing integration;
+- signed installer bootstrap plus local compatibility evidence/runner and requirement-authority tooling activated in the build graph.
 
 Legacy fork modules are not automatically treated as authority. In particular, duplicate controller runtime, launcher authority, or UI-owned runtime state is not reintroduced when the canonical ControllerInventory, SessionController, RuntimeHost, and host transport already own that responsibility.
 
@@ -51,9 +53,13 @@ The host/control contract is now:
 - compatibility begin/endSeatActivation APIs remain wrappers over the game-lease path;
 - UI leases are scoped to the named-pipe control connection that acquired them;
 - disconnecting or killing that control client releases its UI leases automatically;
-- UI code does not receive or own a SessionController pointer.
+- UI code does not receive or own a SessionController pointer;
+- launch/stop are bounded host IPC v2 commands and require the Control role plus that connection's UiConfiguration lease for the target Seat;
+- the host-owned GameLauncher acquires the GameProcess lease, creates the process suspended inside a kill-on-close Seat Job, publishes exact PID + creation identity through RuntimeHost, then resumes it;
+- stopping waits for the exact owned Job/process to become safe before ending the GameProcess lease;
+- a configured controller binding is revalidated against the same persistent host ControllerInventory and its reconnect generation before the launch-time virtual XInput service is exposed.
 
-This removes the earlier risk that the program UI could become a second runtime authority.
+This removes the earlier risk that the program UI or a separate launcher layer could become a second runtime authority.
 
 ## Windows audio
 
@@ -79,15 +85,21 @@ The canonical backend stack has automated coverage for the authority boundary an
 - runtime lease tests;
 - RuntimeHost tests;
 - transport-session tests;
-- named-pipe end-to-end tests;
+- named-pipe end-to-end tests, including Control/UI-lease acquire -> controlled child launch -> exact process publication -> stop -> GameProcess authority removal;
+- GameLauncher strict process-ownership and virtual-XInput integration tests;
 - hydra_host.exe build;
-- hydraseat_hostctl.exe build.
+- hydraseat_hostctl.exe build;
+- HydraSeatSetup.exe build;
+- installer bootstrap, local compatibility evidence/runner, and runtime-requirement authority tests.
 
 The current integration also fixes issues found while auditing the old fork:
 
 - missing cstring include in the Gate C external harness;
 - a non-Windows include/guard portability defect in the game runtime requirement resolver;
-- preserved code that existed on disk but was absent from the CMake build graph;
+- preserved non-duplicated code that existed on disk but was absent from the CMake build graph;
+- stale old-fork production-launch/activation layers that depended on obsolete duplicate authority contracts were removed instead of reactivated;
+- the old input-observation implementation was rejected during audit because its RawInputEvent/WorkspaceManager contracts no longer match the canonical model;
+- every remaining src/*.cpp is now either registered in the build graph or intentionally removed;
 - missing signing/scope/schema fixed inputs in release tooling.
 
 Automated acceptance/release checks provide reproducible engineering evidence only. They do not upgrade simulated, synthetic, or software-only results into physical or commercial-game evidence.

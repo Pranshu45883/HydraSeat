@@ -1,7 +1,10 @@
 #include "hydra/host_transport.hpp"
 
+#include "hydra/game_launcher.hpp"
+
 #include <atomic>
 #include <chrono>
+#include <limits>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -44,6 +47,28 @@ std::wstring widenAscii(std::string_view value) {
 }
 
 #if defined(_WIN32)
+std::optional<std::wstring> utf8ToWide(std::string_view value) {
+    if (value.empty()) return std::wstring{};
+    if (value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+        return std::nullopt;
+    }
+    const int sourceLength = static_cast<int>(value.size());
+    const int required = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), sourceLength, nullptr, 0);
+    if (required <= 0) return std::nullopt;
+
+    std::wstring result(static_cast<std::size_t>(required), L'\0');
+    const int written = MultiByteToWideChar(
+        CP_UTF8,
+        MB_ERR_INVALID_CHARS,
+        value.data(),
+        sourceLength,
+        result.data(),
+        required);
+    if (written != required) return std::nullopt;
+    return result;
+}
+
 bool experimentalAudioPolicyEnabled() noexcept {
     wchar_t value[8]{};
     const DWORD length = GetEnvironmentVariableW(
@@ -57,8 +82,11 @@ bool experimentalAudioPolicyEnabled() noexcept {
 
 HostConnectionSession::HostConnectionSession(
     runtime::RuntimeHost& host,
-    runtime::AudioRouter* audioRouter) noexcept
-    : host_(host), audioRouter_(audioRouter) {}
+    runtime::AudioRouter* audioRouter,
+    GameLauncher* gameLauncher) noexcept
+    : host_(host),
+      audioRouter_(audioRouter),
+      gameLauncher_(gameLauncher) {}
 
 HostConnectionSession::~HostConnectionSession() {
     for (auto& lease : uiLeases_) {
@@ -318,6 +346,91 @@ Frame HostConnectionSession::handle(const Frame& request) {
         response.correlationId = request.correlationId;
         response.payload = encodeAudioMutationResult(
             AudioMutationResult{toProtocolAudioStatus(status)});
+        return response;
+    }
+
+    case MessageType::LaunchGame: {
+        const auto launch = decodeLaunchGameRequest(request.payload);
+        if (!launch) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "invalid game launch payload");
+        }
+        if (uiLease(launch->seatId) == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "game launch requires this connection's Seat UI lease");
+        }
+        if (gameLauncher_ == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::Unsupported,
+                "host game launcher is unavailable");
+        }
+#if defined(_WIN32)
+        const auto title = utf8ToWide(launch->titleUtf8);
+        const auto executable = utf8ToWide(launch->executablePathUtf8);
+        const auto arguments = utf8ToWide(launch->launchArgumentsUtf8);
+        const auto workingDirectory = utf8ToWide(launch->workingDirectoryUtf8);
+        if (!title || !executable || !arguments || !workingDirectory) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "launch request contains invalid UTF-8");
+        }
+
+        GameProfile profile;
+        profile.title = *title;
+        profile.platform = GamePlatform::CustomExecutable;
+        profile.executablePath = *executable;
+        profile.launchArguments = *arguments;
+        profile.workingDirectory = *workingDirectory;
+
+        WorkspaceConfig workspace{};
+        workspace.workspaceId = launch->seatId;
+        if (!gameLauncher_->launchGameForWorkspace(profile, workspace)) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "game launch failed or Seat game authority is unavailable");
+        }
+
+        Frame response;
+        response.type = MessageType::LaunchGameResult;
+        response.correlationId = request.correlationId;
+        response.payload = encodeSnapshot(host_.snapshot());
+        return response;
+#else
+        return error(
+            request.correlationId, ErrorCode::Unsupported,
+            "game launch is available only on Windows");
+#endif
+    }
+
+    case MessageType::StopGame: {
+        const auto stop = decodeSeatRequest(request.payload);
+        if (!stop) {
+            return error(
+                request.correlationId, ErrorCode::Malformed,
+                "invalid game stop payload");
+        }
+        if (uiLease(stop->seatId) == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "game stop requires this connection's Seat UI lease");
+        }
+        if (gameLauncher_ == nullptr) {
+            return error(
+                request.correlationId, ErrorCode::Unsupported,
+                "host game launcher is unavailable");
+        }
+        if (!gameLauncher_->stopWorkspaceGame(stop->seatId)) {
+            return error(
+                request.correlationId, ErrorCode::InvalidState,
+                "no owned Seat game could be stopped safely");
+        }
+
+        Frame response;
+        response.type = MessageType::StopGameResult;
+        response.correlationId = request.correlationId;
+        response.payload = encodeSnapshot(host_.snapshot());
         return response;
     }
 
@@ -876,6 +989,62 @@ std::optional<AudioMutationStatus> HostPipeClient::resetAudio(
     return result->status;
 }
 
+std::optional<HostSnapshot> HostPipeClient::launchGame(
+    const LaunchGameRequest& request,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeLaunchGameRequest(request);
+    if (payload.empty()) {
+        setError(error, "invalid game launch request");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::LaunchGame, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::LaunchGameResult) {
+        setError(error, "unexpected game launch response");
+        return std::nullopt;
+    }
+    const auto snapshot = decodeSnapshot(response->payload);
+    if (!snapshot) setError(error, "invalid game launch snapshot");
+    return snapshot;
+}
+
+std::optional<HostSnapshot> HostPipeClient::stopGame(
+    std::uint32_t seatId,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeSeatRequest(SeatRequest{seatId});
+    if (payload.empty()) {
+        setError(error, "invalid Seat id for game stop");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::StopGame, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::StopGameResult) {
+        setError(error, "unexpected game stop response");
+        return std::nullopt;
+    }
+    const auto snapshot = decodeSnapshot(response->payload);
+    if (!snapshot) setError(error, "invalid game stop snapshot");
+    return snapshot;
+}
+
 bool HostPipeClient::ping(
     std::uint64_t nonce,
     std::uint32_t timeoutMs,
@@ -904,9 +1073,11 @@ bool HostPipeClient::ping(
 
 class HostPipeServer::Impl final {
 public:
-    explicit Impl(runtime::RuntimeHost& hostValue) noexcept : host(hostValue) {}
+    explicit Impl(runtime::RuntimeHost& hostValue) noexcept
+        : host(hostValue), gameLauncher(hostValue) {}
 
     runtime::RuntimeHost& host;
+    GameLauncher gameLauncher;
 #if defined(_WIN32)
     windows::WindowsAudioRouter audioRouter;
 #endif
@@ -947,7 +1118,8 @@ public:
         // closed in normal production runs.
         HostConnectionSession session(
             host,
-            experimentalAudioPolicyEnabled() ? &audioRouter : nullptr);
+            experimentalAudioPolicyEnabled() ? &audioRouter : nullptr,
+            &gameLauncher);
         std::size_t handled = 0;
         for (; handled < kMaxFramesPerConnection; ++handled) {
             std::string readError;

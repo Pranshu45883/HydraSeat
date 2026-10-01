@@ -9,6 +9,10 @@
 #include <optional>
 #include <string>
 
+namespace hydra {
+class GameLauncher;
+}
+
 namespace hydra::hostipc {
 
 constexpr std::uint32_t kDefaultHostPipeTimeoutMs = 5000u;
@@ -20,7 +24,8 @@ class HostConnectionSession final {
 public:
     explicit HostConnectionSession(
         runtime::RuntimeHost& host,
-        runtime::AudioRouter* audioRouter = nullptr) noexcept;
+        runtime::AudioRouter* audioRouter = nullptr,
+        GameLauncher* gameLauncher = nullptr) noexcept;
     ~HostConnectionSession();
 
     Frame handle(const Frame& request);
@@ -35,6 +40,7 @@ private:
 
     runtime::RuntimeHost& host_;
     runtime::AudioRouter* audioRouter_{nullptr};
+    GameLauncher* gameLauncher_{nullptr};
     bool helloComplete_{false};
     ClientRole role_{ClientRole::ReadOnly};
     std::array<std::optional<runtime::ActivationToken>, kHostSeatCount> uiLeases_{};
@@ -84,6 +90,14 @@ public:
     std::optional<AudioMutationStatus> resetAudio(
         std::uint32_t processId,
         std::uint64_t creationIdentity,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<HostSnapshot> launchGame(
+        const LaunchGameRequest& request,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<HostSnapshot> stopGame(
+        std::uint32_t seatId,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
         std::string* error = nullptr);
     bool ping(std::uint64_t nonce,

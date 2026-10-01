@@ -131,6 +131,11 @@ bool validSeatSnapshot(const SeatSnapshot& seat,
         return false;
     }
     if (seat.windowOwned && !seat.processOwned) return false;
+    if (seat.processOwned) {
+        if (seat.processId == 0 || seat.processCreationIdentity == 0) return false;
+    } else if (seat.processId != 0 || seat.processCreationIdentity != 0) {
+        return false;
+    }
     return true;
 }
 
@@ -349,7 +354,7 @@ std::vector<std::byte> encodeSnapshot(const HostSnapshot& snapshot) {
     }
 
     std::vector<std::byte> out;
-    out.reserve(56);
+    out.reserve(88);
     appendInteger(out, snapshot.authorityRevision);
     for (const auto& seat : snapshot.seats) {
         appendInteger(out, seat.seatId);
@@ -357,13 +362,16 @@ std::vector<std::byte> encodeSnapshot(const HostSnapshot& snapshot) {
         appendInteger(out, seat.generation);
         appendInteger(out, seatFlags(seat));
         appendInteger(out, std::uint32_t{0});
+        appendInteger(out, seat.processId);
+        appendInteger(out, std::uint32_t{0});
+        appendInteger(out, seat.processCreationIdentity);
     }
     return out;
 }
 
 std::optional<HostSnapshot> decodeSnapshot(
     std::span<const std::byte> payload) {
-    if (payload.size() != 56) return std::nullopt;
+    if (payload.size() != 88) return std::nullopt;
     std::size_t offset = 0;
     HostSnapshot snapshot;
     if (!readInteger(payload, offset, snapshot.authorityRevision) ||
@@ -376,15 +384,19 @@ std::optional<HostSnapshot> decodeSnapshot(
         std::uint32_t reservedBefore = 0;
         std::uint32_t flags = 0;
         std::uint32_t reservedAfter = 0;
+        std::uint32_t reservedProcess = 0;
         if (!readInteger(payload, offset, seat.seatId) ||
             !readInteger(payload, offset, reservedBefore) ||
             !readInteger(payload, offset, seat.generation) ||
             !readInteger(payload, offset, flags) ||
-            !readInteger(payload, offset, reservedAfter)) {
+            !readInteger(payload, offset, reservedAfter) ||
+            !readInteger(payload, offset, seat.processId) ||
+            !readInteger(payload, offset, reservedProcess) ||
+            !readInteger(payload, offset, seat.processCreationIdentity)) {
             return std::nullopt;
         }
         if (reservedBefore != 0 || reservedAfter != 0 ||
-            (flags & ~kSeatFlagMask) != 0) {
+            reservedProcess != 0 || (flags & ~kSeatFlagMask) != 0) {
             return std::nullopt;
         }
 

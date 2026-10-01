@@ -28,11 +28,13 @@ int main() {
     snapshot.authorityRevision = 7;
     snapshot.seats[0] =
         SeatSnapshot{
-            1, 3, true, true, true, true, true, false, 4242, 0x1122334455667788ull};
+            1, 3, true, true, true, true, true, false,
+            4242, 0x1122334455667788ull, 0xABCDEFu};
     snapshot.seats[1] =
-        SeatSnapshot{2, 0, false, false, false, false, false, false, 0, 0};
+        SeatSnapshot{
+            2, 0, false, false, false, false, false, false, 0, 0, 0};
     const auto snapshotBytes = encodeSnapshot(snapshot);
-    assert(snapshotBytes.size() == 88);
+    assert(snapshotBytes.size() == 104);
     assert(decodeSnapshot(snapshotBytes) == snapshot);
 
     Frame frame{MessageType::Snapshot, 42, snapshotBytes};
@@ -73,8 +75,17 @@ int main() {
 
     auto invalidSnapshot = snapshot;
     invalidSnapshot.seats[1] =
-        SeatSnapshot{2, 0, false, false, false, false, true, false, 0, 0};
+        SeatSnapshot{
+            2, 0, false, false, false, false, true, false, 0, 0, 0};
     assert(encodeSnapshot(invalidSnapshot).empty());
+
+    auto windowWithoutHandle = snapshot;
+    windowWithoutHandle.seats[0].targetHwnd = 0;
+    assert(encodeSnapshot(windowWithoutHandle).empty());
+
+    auto handleWithoutWindow = snapshot;
+    handleWithoutWindow.seats[0].windowOwned = false;
+    assert(encodeSnapshot(handleWithoutWindow).empty());
 
     auto processWithoutGameLease = snapshot;
     processWithoutGameLease.seats[0].gameLeaseActive = false;

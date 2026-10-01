@@ -16,6 +16,7 @@ hostipc::SeatSnapshot toHostSnapshot(const SeatRuntimeSnapshot& snapshot) noexce
         snapshot.controllerBinding.has_value(),
         snapshot.process ? snapshot.process->pid : 0u,
         snapshot.process ? snapshot.process->creationIdentity : 0u,
+        static_cast<std::uint64_t>(snapshot.targetHwnd),
     };
 }
 

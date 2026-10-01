@@ -98,6 +98,7 @@ struct SeatSnapshot {
     bool controllerBound{false};
     std::uint32_t processId{0};
     std::uint64_t processCreationIdentity{0};
+    std::uint64_t targetHwnd{0};
 
     bool operator==(const SeatSnapshot&) const = default;
 };

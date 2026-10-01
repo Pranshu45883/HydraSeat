@@ -30,6 +30,9 @@ int printSnapshot() {
             << " process_owned=" << (seat.processOwned ? 1 : 0)
             << " window_owned=" << (seat.windowOwned ? 1 : 0)
             << " controller_bound=" << (seat.controllerBound ? 1 : 0)
+            << " process_id=" << seat.processId
+            << " process_creation_identity=" << seat.processCreationIdentity
+            << " target_hwnd=" << seat.targetHwnd
             << '\n';
     }
     return 0;

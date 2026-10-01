@@ -136,6 +136,11 @@ bool validSeatSnapshot(const SeatSnapshot& seat,
     } else if (seat.processId != 0 || seat.processCreationIdentity != 0) {
         return false;
     }
+    if (seat.windowOwned) {
+        if (seat.targetHwnd == 0) return false;
+    } else if (seat.targetHwnd != 0) {
+        return false;
+    }
     return true;
 }
 
@@ -354,7 +359,7 @@ std::vector<std::byte> encodeSnapshot(const HostSnapshot& snapshot) {
     }
 
     std::vector<std::byte> out;
-    out.reserve(88);
+    out.reserve(104);
     appendInteger(out, snapshot.authorityRevision);
     for (const auto& seat : snapshot.seats) {
         appendInteger(out, seat.seatId);
@@ -365,13 +370,14 @@ std::vector<std::byte> encodeSnapshot(const HostSnapshot& snapshot) {
         appendInteger(out, seat.processId);
         appendInteger(out, std::uint32_t{0});
         appendInteger(out, seat.processCreationIdentity);
+        appendInteger(out, seat.targetHwnd);
     }
     return out;
 }
 
 std::optional<HostSnapshot> decodeSnapshot(
     std::span<const std::byte> payload) {
-    if (payload.size() != 88) return std::nullopt;
+    if (payload.size() != 104) return std::nullopt;
     std::size_t offset = 0;
     HostSnapshot snapshot;
     if (!readInteger(payload, offset, snapshot.authorityRevision) ||
@@ -392,7 +398,8 @@ std::optional<HostSnapshot> decodeSnapshot(
             !readInteger(payload, offset, reservedAfter) ||
             !readInteger(payload, offset, seat.processId) ||
             !readInteger(payload, offset, reservedProcess) ||
-            !readInteger(payload, offset, seat.processCreationIdentity)) {
+            !readInteger(payload, offset, seat.processCreationIdentity) ||
+            !readInteger(payload, offset, seat.targetHwnd)) {
             return std::nullopt;
         }
         if (reservedBefore != 0 || reservedAfter != 0 ||

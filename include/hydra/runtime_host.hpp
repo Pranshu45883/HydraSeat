@@ -24,6 +24,8 @@ public:
 
     hostipc::HostSnapshot snapshot() const noexcept;
     std::optional<SeatRuntimeSnapshot> seatSnapshot(std::uint32_t seatId) const noexcept;
+    std::optional<std::uint32_t> seatForProcess(
+        const ProcessIdentity& process) const noexcept;
 
     ActivationToken acquireUiLease(std::uint32_t seatId) noexcept;
     bool releaseUiLease(const ActivationToken& token) noexcept;

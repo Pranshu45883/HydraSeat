@@ -98,12 +98,12 @@ int main() {
     invalidPair.persistentControllerId = "has space";
     assert(encodeControllerPairRequest(invalidPair).empty());
 
-    const ProcessRequest processRequest{1, 4242, 0x1122334455667788ull};
+    const ProcessRequest processRequest{4242, 0x1122334455667788ull};
     const auto processBytes = encodeProcessRequest(processRequest);
-    assert(processBytes.size() == 16);
+    assert(processBytes.size() == 12);
     assert(decodeProcessRequest(processBytes) == processRequest);
-    assert(encodeProcessRequest(ProcessRequest{1, 0, 1}).empty());
-    assert(encodeProcessRequest(ProcessRequest{3, 1, 1}).empty());
+    assert(encodeProcessRequest(ProcessRequest{0, 1}).empty());
+    assert(encodeProcessRequest(ProcessRequest{1, 0}).empty());
 
     const AudioRouteRequest audioRoute{
         processRequest,

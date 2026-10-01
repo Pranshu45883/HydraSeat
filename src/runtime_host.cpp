@@ -36,6 +36,24 @@ std::optional<SeatRuntimeSnapshot> RuntimeHost::seatSnapshot(
     return controller_.snapshot(seatId);
 }
 
+std::optional<std::uint32_t> RuntimeHost::seatForProcess(
+    const ProcessIdentity& process) const noexcept {
+    if (!process.valid()) return std::nullopt;
+
+    std::lock_guard lock(mutex_);
+    std::optional<std::uint32_t> owner;
+    for (const std::uint32_t seatId : {1u, 2u}) {
+        const auto snapshot = controller_.snapshot(seatId);
+        if (!snapshot || !snapshot->gameLeaseActive || !snapshot->process ||
+            *snapshot->process != process) {
+            continue;
+        }
+        if (owner) return std::nullopt;
+        owner = seatId;
+    }
+    return owner;
+}
+
 ActivationToken RuntimeHost::acquireUiLease(std::uint32_t seatId) noexcept {
     std::lock_guard lock(mutex_);
     const auto lease =

@@ -138,11 +138,30 @@ ApplicationsPage::ApplicationsPage(
 
     layout->addWidget(launchFrame);
 
+    auto* listHeaderLayout = new QHBoxLayout();
     auto* listTitle = new QLabel("OBSERVED APPLICATION SESSIONS", this);
     listTitle->setStyleSheet(
         "font-size: 12px; font-weight: bold; color: #777777; "
         "margin-top: 4px;");
-    layout->addWidget(listTitle);
+    listHeaderLayout->addWidget(listTitle);
+    listHeaderLayout->addStretch();
+    
+    m_searchBox = new QLineEdit(this);
+    m_searchBox->setPlaceholderText("Search applications...");
+    m_searchBox->setFixedWidth(200);
+    m_searchBox->setStyleSheet("padding: 4px; background-color: #101010; color: #F5F5F5; border: 1px solid #333333; border-radius: 4px;");
+    listHeaderLayout->addWidget(m_searchBox);
+
+    m_filterCombo = new QComboBox(this);
+    m_filterCombo->addItem("All");
+    m_filterCombo->addItem("Active");
+    m_filterCombo->addItem("Inactive");
+    m_filterCombo->addItem("Assigned");
+    m_filterCombo->addItem("Unassigned");
+    m_filterCombo->setStyleSheet("padding: 4px 8px; background-color: #101010; color: #F5F5F5; border: 1px solid #333333; border-radius: 4px;");
+    listHeaderLayout->addWidget(m_filterCombo);
+
+    layout->addLayout(listHeaderLayout);
 
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -184,6 +203,9 @@ ApplicationsPage::ApplicationsPage(
         &QLineEdit::textChanged,
         this,
         [this](const QString&) { refreshLaunchControls(); });
+
+    connect(m_searchBox, &QLineEdit::textChanged, this, [this](const QString&) { updateState(m_lastPayload); });
+    connect(m_filterCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) { updateState(m_lastPayload); });
 
     refreshLaunchControls();
 }
@@ -362,7 +384,25 @@ void ApplicationsPage::updateState(const EngineStatePayload& payload) {
         return;
     }
 
+    QString filterText = m_searchBox->text();
+    int filterMode = m_filterCombo->currentIndex();
+
     for (const auto& session : payload.audioSessions) {
+        QString appName = session.displayName ? QString::fromStdWString(*session.displayName) : "Unknown";
+        
+        if (!filterText.isEmpty() && !appName.contains(filterText, Qt::CaseInsensitive)) {
+            continue;
+        }
+
+        const QString seatName = getAssignedSeat(session.processIdentity, payload.hostSnapshot);
+        bool isActive = (session.state == hydra::windows::AudioSessionState::Active);
+        bool isAssigned = (seatName != "Unassigned");
+
+        if (filterMode == 1 && !isActive) continue; // Active
+        if (filterMode == 2 && isActive) continue; // Inactive
+        if (filterMode == 3 && !isAssigned) continue; // Assigned
+        if (filterMode == 4 && isAssigned) continue; // Unassigned
+
         auto* frame = new QFrame();
         frame->setMaximumWidth(800);
         frame->setStyleSheet(
@@ -372,30 +412,16 @@ void ApplicationsPage::updateState(const EngineStatePayload& payload) {
         fl->setContentsMargins(0, 0, 0, 0);
         fl->setSpacing(8);
 
-        auto* nameLabel = new QLabel(
-            session.displayName
-                ? QString::fromStdWString(*session.displayName)
-                : "Unknown",
-            frame);
+        auto* nameLabel = new QLabel(appName, frame);
         nameLabel->setStyleSheet(
             "font-size: 15px; font-weight: bold; color: #F5F5F5; "
             "border: none;");
         fl->addWidget(nameLabel);
 
-        const QString creationIdStr = session.processIdentity
-            ? QString::number(session.processIdentity->creationIdentity)
-            : "N/A";
-
         auto* bottomLayout = new QHBoxLayout();
 
-        const QString stateText =
-            session.state == hydra::windows::AudioSessionState::Active
-                ? "● Active"
-                : "○ Inactive";
-        const QString stateColor =
-            session.state == hydra::windows::AudioSessionState::Active
-                ? "#E10600"
-                : "#777777";
+        const QString stateText = isActive ? "● Active" : "○ Inactive";
+        const QString stateColor = isActive ? "#E10600" : "#777777";
         auto* stateLabel = new QLabel(stateText, frame);
         stateLabel->setStyleSheet(
             QString(
@@ -404,22 +430,16 @@ void ApplicationsPage::updateState(const EngineStatePayload& payload) {
         stateLabel->setFixedWidth(100);
         bottomLayout->addWidget(stateLabel);
 
-        const QString seatName =
-            getAssignedSeat(session.processIdentity, payload.hostSnapshot);
-        auto* seatLabel =
-            new QLabel(QString("Seat: %1").arg(seatName), frame);
-        seatLabel->setStyleSheet(
-            "font-size: 13px; color: #B5B5B5; border: none;");
+        auto* seatLabel = new QLabel(QString("Seat: %1").arg(seatName), frame);
+        seatLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; border: none;");
         seatLabel->setFixedWidth(120);
         bottomLayout->addWidget(seatLabel);
 
         const QString audioStr = session.endpointId.empty()
             ? "Unassigned"
             : QString::fromStdWString(session.endpointId);
-        auto* audioLabel =
-            new QLabel(QString("Audio: %1").arg(audioStr), frame);
-        audioLabel->setStyleSheet(
-            "font-size: 13px; color: #B5B5B5; border: none;");
+        auto* audioLabel = new QLabel(QString("Audio: %1").arg(audioStr), frame);
+        audioLabel->setStyleSheet("font-size: 13px; color: #B5B5B5; border: none;");
         bottomLayout->addWidget(audioLabel);
 
         bottomLayout->addStretch();

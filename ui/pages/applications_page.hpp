@@ -44,6 +44,8 @@ private:
     QPushButton* m_launchButton{nullptr};
     QPushButton* m_stopButton{nullptr};
     QLabel* m_launchFeedback{nullptr};
+    QLineEdit* m_searchBox{nullptr};
+    QComboBox* m_filterCombo{nullptr};
     QVBoxLayout* m_listLayout{nullptr};
 
     static QString getAssignedSeat(

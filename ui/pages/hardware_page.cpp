@@ -33,7 +33,12 @@ HardwarePage::HardwarePage(QWidget* parent)
 }
 
 void HardwarePage::addSection(const QString& title, const std::vector<hydra::DeviceInfo>& devices) {
-    if (devices.empty()) return;
+    if (devices.empty()) {
+        auto* emptyLbl = new QLabel(QString("NO %1 DETECTED\nConnect a device and it will appear here.").arg(title));
+        emptyLbl->setStyleSheet("font-size: 13px; color: #777777; font-family: 'Segoe UI', sans-serif;");
+        m_listLayout->insertWidget(m_listLayout->count() - 1, emptyLbl);
+        return;
+    }
 
     auto* sectionWidget = new QWidget();
     auto* sl = new QVBoxLayout(sectionWidget);
@@ -76,7 +81,12 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
 }
 
 void HardwarePage::addControllerSection(const hydra::controller::InventorySnapshot& inventory) {
-    if (inventory.physicalControllers.empty() && inventory.sources.empty()) return;
+    if (inventory.physicalControllers.empty() && inventory.sources.empty()) {
+        auto* emptyLbl = new QLabel("NO CONTROLLERS DETECTED\nConnect a controller and it will appear here.");
+        emptyLbl->setStyleSheet("font-size: 13px; color: #777777; font-family: 'Segoe UI', sans-serif;");
+        m_listLayout->insertWidget(m_listLayout->count() - 1, emptyLbl);
+        return;
+    }
 
     auto* sectionWidget = new QWidget();
     auto* sl = new QVBoxLayout(sectionWidget);

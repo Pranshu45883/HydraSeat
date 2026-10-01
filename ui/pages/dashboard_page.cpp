@@ -142,26 +142,23 @@ void DashboardPage::updateSeat(
         return;
     }
 
-    if (snapshot->gameLeaseActive && snapshot->uiLeaseActive) {
-        stateLbl->setText("● UI + GAME ACTIVE");
-        stateLbl->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none;");
-    } else if (snapshot->gameLeaseActive) {
-        stateLbl->setText("● GAME ACTIVE");
+    if (snapshot->gameLeaseActive) {
+        stateLbl->setText("● RUNNING");
         stateLbl->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none;");
     } else if (snapshot->uiLeaseActive) {
-        stateLbl->setText("● UI CONFIGURING");
+        stateLbl->setText("● CONFIGURING");
         stateLbl->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none;");
     } else {
-        stateLbl->setText("● AUTHORITY IDLE");
+        stateLbl->setText("○ AVAILABLE");
         stateLbl->setStyleSheet("font-size: 13px; font-weight: bold; color: #B5B5B5; border: none;");
     }
 
     appLbl->setText(
         snapshot->processOwned
-            ? QString("PID %1").arg(snapshot->processId)
-            : "Not assigned");
-    audioLbl->setText(snapshot->processOwned ? "See Audio page" : "Not assigned");
-    ctrlLbl->setText(snapshot->controllerBound ? "Bound" : "Not assigned");
+            ? "Game assigned"
+            : "No application assigned");
+    audioLbl->setText(snapshot->processOwned ? "Assigned" : "No audio assigned");
+    ctrlLbl->setText(snapshot->controllerBound ? "Assigned" : "No controller assigned");
 }
 
 void DashboardPage::updateState(const EngineStatePayload& payload) {

@@ -122,7 +122,6 @@ struct ControllerPairRequest {
 };
 
 struct ProcessRequest {
-    std::uint32_t seatId{0};
     std::uint32_t processId{0};
     std::uint64_t creationIdentity{0};
 

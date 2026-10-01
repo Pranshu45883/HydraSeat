@@ -488,13 +488,11 @@ std::optional<ControllerPairRequest> decodeControllerPairRequest(
 }
 
 std::vector<std::byte> encodeProcessRequest(const ProcessRequest& request) {
-    if (!validSeatId(request.seatId) || request.processId == 0 ||
-        request.creationIdentity == 0) {
+    if (request.processId == 0 || request.creationIdentity == 0) {
         return {};
     }
     std::vector<std::byte> out;
-    out.reserve(16);
-    appendInteger(out, request.seatId);
+    out.reserve(12);
     appendInteger(out, request.processId);
     appendInteger(out, request.creationIdentity);
     return out;
@@ -502,14 +500,12 @@ std::vector<std::byte> encodeProcessRequest(const ProcessRequest& request) {
 
 std::optional<ProcessRequest> decodeProcessRequest(
     std::span<const std::byte> payload) {
-    if (payload.size() != 16) return std::nullopt;
+    if (payload.size() != 12) return std::nullopt;
     std::size_t offset = 0;
     ProcessRequest request;
-    if (!readInteger(payload, offset, request.seatId) ||
-        !readInteger(payload, offset, request.processId) ||
+    if (!readInteger(payload, offset, request.processId) ||
         !readInteger(payload, offset, request.creationIdentity) ||
-        !validSeatId(request.seatId) || request.processId == 0 ||
-        request.creationIdentity == 0) {
+        request.processId == 0 || request.creationIdentity == 0) {
         return std::nullopt;
     }
     return request;
@@ -517,16 +513,14 @@ std::optional<ProcessRequest> decodeProcessRequest(
 
 std::vector<std::byte> encodeAudioRouteRequest(
     const AudioRouteRequest& request) {
-    if (!validSeatId(request.process.seatId) ||
-        request.process.processId == 0 ||
+    if (request.process.processId == 0 ||
         request.process.creationIdentity == 0 ||
         !validAudioEndpointId(request.endpointId)) {
         return {};
     }
 
     std::vector<std::byte> out;
-    out.reserve(20 + request.endpointId.size());
-    appendInteger(out, request.process.seatId);
+    out.reserve(16 + request.endpointId.size());
     appendInteger(out, request.process.processId);
     appendInteger(out, request.process.creationIdentity);
     appendInteger(out, static_cast<std::uint32_t>(request.endpointId.size()));
@@ -539,19 +533,17 @@ std::vector<std::byte> encodeAudioRouteRequest(
 
 std::optional<AudioRouteRequest> decodeAudioRouteRequest(
     std::span<const std::byte> payload) {
-    if (payload.size() < 21 ||
-        payload.size() > 20 + kHostProtocolMaxAudioEndpointIdBytes) {
+    if (payload.size() < 17 ||
+        payload.size() > 16 + kHostProtocolMaxAudioEndpointIdBytes) {
         return std::nullopt;
     }
 
     std::size_t offset = 0;
     AudioRouteRequest request;
     std::uint32_t length = 0;
-    if (!readInteger(payload, offset, request.process.seatId) ||
-        !readInteger(payload, offset, request.process.processId) ||
+    if (!readInteger(payload, offset, request.process.processId) ||
         !readInteger(payload, offset, request.process.creationIdentity) ||
         !readInteger(payload, offset, length) ||
-        !validSeatId(request.process.seatId) ||
         request.process.processId == 0 ||
         request.process.creationIdentity == 0 ||
         length == 0 || length > kHostProtocolMaxAudioEndpointIdBytes ||

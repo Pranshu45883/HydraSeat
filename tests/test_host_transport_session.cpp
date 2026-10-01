@@ -152,7 +152,7 @@ int main() {
             MessageType::RouteAudio,
             11,
             encodeAudioRouteRequest(AudioRouteRequest{
-                ProcessRequest{1, process.pid, process.creationIdentity},
+                ProcessRequest{process.pid, process.creationIdentity},
                 endpointId})});
         assert(routed.type == MessageType::RouteAudioResult);
         const auto routeResult = decodeAudioMutationResult(routed.payload);
@@ -169,19 +169,19 @@ int main() {
             MessageType::RouteAudio,
             12,
             encodeAudioRouteRequest(AudioRouteRequest{
-                ProcessRequest{1, process.pid, process.creationIdentity + 1},
+                ProcessRequest{process.pid, process.creationIdentity + 1},
                 endpointId})});
-        assert(staleRoute.type == MessageType::RouteAudioResult);
-        const auto staleResult = decodeAudioMutationResult(staleRoute.payload);
-        assert(staleResult);
-        assert(staleResult->status == AudioMutationStatus::InvalidProcess);
+        assert(staleRoute.type == MessageType::Error);
+        const auto staleError = decodeError(staleRoute.payload);
+        assert(staleError);
+        assert(staleError->code == ErrorCode::InvalidState);
         assert(audioRouter.assignCalls == 1);
 
         const auto reset = session.handle(Frame{
             MessageType::ResetAudio,
             13,
             encodeProcessRequest(ProcessRequest{
-                1, process.pid, process.creationIdentity})});
+                process.pid, process.creationIdentity})});
         assert(reset.type == MessageType::ResetAudioResult);
         const auto resetResult = decodeAudioMutationResult(reset.payload);
         assert(resetResult);
@@ -204,7 +204,7 @@ int main() {
             MessageType::RouteAudio,
             15,
             encodeAudioRouteRequest(AudioRouteRequest{
-                ProcessRequest{1, process.pid, process.creationIdentity},
+                ProcessRequest{process.pid, process.creationIdentity},
                 "{0.0.0.00000000}.{12345678-1234-1234-1234-1234567890AB}"})});
         assert(deniedAfterRelease.type == MessageType::Error);
         const auto deniedAudio = decodeError(deniedAfterRelease.payload);

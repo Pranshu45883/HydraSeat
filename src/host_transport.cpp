@@ -257,11 +257,15 @@ Frame HostConnectionSession::handle(const Frame& request) {
                 request.correlationId, ErrorCode::Malformed,
                 "invalid audio route payload");
         }
-        const auto* lease = uiLease(route->process.seatId);
+        const runtime::ProcessIdentity process{
+            route->process.processId,
+            route->process.creationIdentity};
+        const auto seatId = host_.seatForProcess(process);
+        const auto* lease = seatId ? uiLease(*seatId) : nullptr;
         if (lease == nullptr) {
             return error(
                 request.correlationId, ErrorCode::InvalidState,
-                "audio routing requires this connection's Seat UI lease");
+                "audio routing requires this connection's UI lease for the exact owning Seat");
         }
         if (audioRouter_ == nullptr) {
             return error(
@@ -269,9 +273,6 @@ Frame HostConnectionSession::handle(const Frame& request) {
                 "native audio routing backend is unavailable");
         }
 
-        const runtime::ProcessIdentity process{
-            route->process.processId,
-            route->process.creationIdentity};
         const runtime::AudioEndpointIdentity endpoint{
             widenAscii(route->endpointId),
             std::nullopt};
@@ -293,11 +294,15 @@ Frame HostConnectionSession::handle(const Frame& request) {
                 request.correlationId, ErrorCode::Malformed,
                 "invalid audio reset payload");
         }
-        const auto* lease = uiLease(reset->seatId);
+        const runtime::ProcessIdentity process{
+            reset->processId,
+            reset->creationIdentity};
+        const auto seatId = host_.seatForProcess(process);
+        const auto* lease = seatId ? uiLease(*seatId) : nullptr;
         if (lease == nullptr) {
             return error(
                 request.correlationId, ErrorCode::InvalidState,
-                "audio reset requires this connection's Seat UI lease");
+                "audio reset requires this connection's UI lease for the exact owning Seat");
         }
         if (audioRouter_ == nullptr) {
             return error(
@@ -305,9 +310,6 @@ Frame HostConnectionSession::handle(const Frame& request) {
                 "native audio routing backend is unavailable");
         }
 
-        const runtime::ProcessIdentity process{
-            reset->processId,
-            reset->creationIdentity};
         const auto status = host_.resetAudio(
             *lease, process, *audioRouter_);
 
@@ -807,7 +809,6 @@ std::optional<HostSnapshot> HostPipeClient::pairController(
 }
 
 std::optional<AudioMutationStatus> HostPipeClient::routeAudio(
-    std::uint32_t seatId,
     std::uint32_t processId,
     std::uint64_t creationIdentity,
     const std::string& endpointId,
@@ -815,7 +816,7 @@ std::optional<AudioMutationStatus> HostPipeClient::routeAudio(
     std::string* error) {
     if (!impl_) return std::nullopt;
     const auto payload = encodeAudioRouteRequest(AudioRouteRequest{
-        ProcessRequest{seatId, processId, creationIdentity},
+        ProcessRequest{processId, creationIdentity},
         endpointId});
     if (payload.empty()) {
         setError(error, "invalid audio route request");
@@ -843,14 +844,13 @@ std::optional<AudioMutationStatus> HostPipeClient::routeAudio(
 }
 
 std::optional<AudioMutationStatus> HostPipeClient::resetAudio(
-    std::uint32_t seatId,
     std::uint32_t processId,
     std::uint64_t creationIdentity,
     std::uint32_t timeoutMs,
     std::string* error) {
     if (!impl_) return std::nullopt;
     const auto payload =
-        encodeProcessRequest(ProcessRequest{seatId, processId, creationIdentity});
+        encodeProcessRequest(ProcessRequest{processId, creationIdentity});
     if (payload.empty()) {
         setError(error, "invalid audio reset request");
         return std::nullopt;

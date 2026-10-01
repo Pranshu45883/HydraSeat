@@ -76,14 +76,12 @@ public:
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
         std::string* error = nullptr);
     std::optional<AudioMutationStatus> routeAudio(
-        std::uint32_t seatId,
         std::uint32_t processId,
         std::uint64_t creationIdentity,
         const std::string& endpointId,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
         std::string* error = nullptr);
     std::optional<AudioMutationStatus> resetAudio(
-        std::uint32_t seatId,
         std::uint32_t processId,
         std::uint64_t creationIdentity,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,

@@ -48,8 +48,21 @@ public:
         std::uint32_t processId,
         std::uint64_t creationIdentity,
         std::string* error = nullptr);
+    std::optional<hostipc::HostSnapshot> launchGame(
+        std::uint32_t seatId,
+        const std::string& titleUtf8,
+        const std::string& executablePathUtf8,
+        const std::string& launchArgumentsUtf8,
+        const std::string& workingDirectoryUtf8,
+        std::string* error = nullptr);
+    std::optional<hostipc::HostSnapshot> stopGame(
+        std::uint32_t seatId,
+        std::string* error = nullptr);
 
 private:
+    bool ensureUiLeaseForSeat(
+        std::uint32_t seatId,
+        std::string* error);
     std::optional<std::uint32_t> seatForProcess(
         const hostipc::HostSnapshot& snapshot,
         std::uint32_t processId,

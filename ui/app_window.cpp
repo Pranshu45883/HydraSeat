@@ -84,7 +84,8 @@ void AppWindow::setupUi() {
     // Instantiate Pages
     auto* dashboardPage = new DashboardPage(m_workspaceStack);
     auto* seatsPage = new SeatsPage(m_hostControl, m_workspaceStack);
-    auto* applicationsPage = new ApplicationsPage(m_workspaceStack);
+    auto* applicationsPage =
+        new ApplicationsPage(m_hostControl, m_workspaceStack);
     auto* audioPage = new AudioPage(m_routingController.get(), m_workspaceStack);
     auto* hardwarePage = new HardwarePage(m_workspaceStack);
     auto* diagnosticsPage = new DiagnosticsPage(m_workspaceStack);

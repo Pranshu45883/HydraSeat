@@ -82,26 +82,34 @@ std::optional<hostipc::HostSnapshot> HostControlClient::releaseUiLease(
     return result;
 }
 
+bool HostControlClient::ensureUiLeaseForSeat(
+    std::uint32_t seatId,
+    std::string* error) {
+    if (seatId == 0 || seatId > ownedUiLeases_.size()) {
+        setError(error, "invalid Seat id");
+        return false;
+    }
+    if (!ensureConnected(error)) return false;
+    if (ownsUiLease(seatId)) return true;
+
+    const auto current = client_.getSnapshot(
+        hostipc::kDefaultHostPipeTimeoutMs, error);
+    if (!current || seatId > current->seats.size()) return false;
+
+    const auto& seat = current->seats[seatId - 1u];
+    if (seat.uiLeaseActive) {
+        setError(error, "Seat UI lease is owned by another control connection");
+        return false;
+    }
+    return acquireUiLease(seatId, error).has_value();
+}
+
 std::optional<hostipc::HostSnapshot> HostControlClient::pairController(
     std::uint32_t seatId,
     const std::string& persistentControllerId,
     std::uint8_t runtimeXInputSlot,
     std::string* error) {
-    if (!ensureConnected(error)) return std::nullopt;
-
-    if (!ownsUiLease(seatId)) {
-        const auto current = client_.getSnapshot(
-            hostipc::kDefaultHostPipeTimeoutMs, error);
-        if (!current || seatId == 0 || seatId > current->seats.size()) {
-            return std::nullopt;
-        }
-        const auto& seat = current->seats[seatId - 1u];
-        if (seat.uiLeaseActive) {
-            setError(error, "Seat UI lease is owned by another control connection");
-            return std::nullopt;
-        }
-        if (!acquireUiLease(seatId, error)) return std::nullopt;
-    }
+    if (!ensureUiLeaseForSeat(seatId, error)) return std::nullopt;
 
     return client_.pairController(
         seatId,
@@ -173,6 +181,37 @@ std::optional<hostipc::AudioMutationStatus> HostControlClient::resetAudio(
     return client_.resetAudio(
         processId,
         creationIdentity,
+        hostipc::kDefaultHostPipeTimeoutMs,
+        error);
+}
+
+std::optional<hostipc::HostSnapshot> HostControlClient::launchGame(
+    std::uint32_t seatId,
+    const std::string& titleUtf8,
+    const std::string& executablePathUtf8,
+    const std::string& launchArgumentsUtf8,
+    const std::string& workingDirectoryUtf8,
+    std::string* error) {
+    if (!ensureUiLeaseForSeat(seatId, error)) return std::nullopt;
+
+    hostipc::LaunchGameRequest request;
+    request.seatId = seatId;
+    request.titleUtf8 = titleUtf8;
+    request.executablePathUtf8 = executablePathUtf8;
+    request.launchArgumentsUtf8 = launchArgumentsUtf8;
+    request.workingDirectoryUtf8 = workingDirectoryUtf8;
+    return client_.launchGame(
+        request,
+        hostipc::kDefaultHostPipeTimeoutMs,
+        error);
+}
+
+std::optional<hostipc::HostSnapshot> HostControlClient::stopGame(
+    std::uint32_t seatId,
+    std::string* error) {
+    if (!ensureUiLeaseForSeat(seatId, error)) return std::nullopt;
+    return client_.stopGame(
+        seatId,
         hostipc::kDefaultHostPipeTimeoutMs,
         error);
 }

@@ -18,7 +18,16 @@ struct DeviceInfo {
     std::wstring name;
     std::wstring devicePath;
     DeviceType type;
+    // nativeHandle is retained for diagnostics/backward compatibility. For
+    // physical Raw Input devices, nativeHandles contains every top-level
+    // collection that belongs to the same stable physical identity.
     uintptr_t nativeHandle{0};
+    std::vector<uintptr_t> nativeHandles;
+    // Composite receivers and secondary HID functions are hidden from the
+    // user-facing inventory until Raw Input activity proves that role is
+    // actually in use. The canonical host still keeps the candidate identity
+    // available for validation once the UI has confirmed it.
+    bool requiresActivityConfirmation{false};
 };
 
 class HardwareDetector {

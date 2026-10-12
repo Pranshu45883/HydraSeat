@@ -14,8 +14,7 @@ SIGNER = ROOT / "tools" / "sign_release_artifacts.ps1"
 INSTALLER = ROOT / "tools" / "install_hydraseat.ps1"
 CONTROLLED_HARNESS = ROOT / "tools" / "run_installer_recovery_harness.py"
 
-OWNED_FILES_START = "$OwnedFiles = @("
-OWNED_FILES_END = "$OwnedArtifactIds"
+CORE_FILES_START = "$CoreOwnedFiles = @("
 QUOTED_RE = re.compile(r"^\s*\"(?P<value>[A-Za-z0-9._-]+)\"\s*,?\s*$", re.MULTILINE)
 
 
@@ -30,25 +29,22 @@ def require_once(text: str, needle: str, context: str) -> None:
 
 
 def extract_owned_files(installer_text: str) -> list[str]:
-    start = installer_text.find(OWNED_FILES_START)
+    start = installer_text.find(CORE_FILES_START)
     if start < 0:
-        fail("installer OwnedFiles allowlist could not be located")
-    start += len(OWNED_FILES_START)
-    end = installer_text.find(OWNED_FILES_END, start)
+        fail("installer CoreOwnedFiles allowlist could not be located")
+    start += len(CORE_FILES_START)
+    end = installer_text.find("\n)", start)
     if end < 0:
-        fail("installer OwnedFiles allowlist end marker could not be located")
+        fail("installer CoreOwnedFiles allowlist closing token is missing")
     body = installer_text[start:end].strip()
-    if not body.endswith(")"):
-        fail("installer OwnedFiles allowlist closing token is missing")
-    body = body[:-1]
     files = [item.group("value") for item in QUOTED_RE.finditer(body)]
     residual = QUOTED_RE.sub("", body).strip().replace(",", "").strip()
     if residual:
-        fail("installer OwnedFiles contains non-literal or unparsed content")
+        fail("installer CoreOwnedFiles contains non-literal or unparsed content")
     if not files:
-        fail("installer OwnedFiles cannot be empty")
+        fail("installer CoreOwnedFiles cannot be empty")
     if len(files) != len(set(files)):
-        fail("installer OwnedFiles contains duplicates")
+        fail("installer CoreOwnedFiles contains duplicates")
     return files
 
 
@@ -62,7 +58,7 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
     manifest_files: list[str] = []
     manifest_ids: dict[str, str] = {}
     script_entries = []
-    executable_entries = []
+    binary_entries = []
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             fail("release signing artifact must be an object")
@@ -80,8 +76,8 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         if not isinstance(architectures, list) or architectures != ["x64"]:
             fail(f"{file_name}: release host artifacts must target x64 exactly once")
         kind = artifact.get("kind")
-        if kind == "cmake-executable":
-            executable_entries.append(artifact)
+        if kind in ("cmake-executable", "cmake-shared-library"):
+            binary_entries.append(artifact)
         elif kind == "powershell-script":
             script_entries.append(artifact)
         else:
@@ -96,23 +92,24 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         fail("PowerShell signing artifact must source tools/install_hydraseat.ps1")
     if installer_artifact.get("fileName") != "install_hydraseat.ps1":
         fail("PowerShell signing artifact must publish install_hydraseat.ps1")
-    if not executable_entries:
-        fail("release package must contain reviewed executable artifacts")
+    if not binary_entries:
+        fail("release package must contain reviewed PE artifacts")
 
     owned_files = extract_owned_files(installer_text)
     if owned_files != manifest_files:
         fail(
-            "installer OwnedFiles must exactly match signing-manifest artifact order; "
+            "installer CoreOwnedFiles must exactly match signing-manifest artifact order; "
             f"manifest={manifest_files}, installer={owned_files}"
         )
     for file_name in manifest_files:
         mapping = f'    "{file_name}" = "{manifest_ids[file_name]}"'
         require_once(installer_text, mapping, "installer exact artifact identity map")
 
-    # Signer invariants: executable and script artifacts take distinct reviewed paths,
-    # then converge on the same Authenticode publisher/hash provenance checks.
+    # Signer invariants: HydraSeat-owned binaries are rebuilt/signed, then the
+    # exact Qt 6.8.3 runtime is frozen by windeployqt and hash-bound into the
+    # detached signed provenance.
     for needle in (
-        '$kind -eq "cmake-executable"',
+        '$kind -in @("cmake-executable", "cmake-shared-library")',
         '$kind -eq "powershell-script"',
         'Set-AuthenticodeSignature -LiteralPath $destination',
         '[string]$artifact.sourcePath -ne "tools/install_hydraseat.ps1"',
@@ -135,6 +132,17 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         'Release rebuild changed the reviewed source checkout; refusing to sign',
         'Assert-X64PortableExecutable -Path $source',
         'Reviewed CMake release output must be unsigned before release signing',
+        'Resolve-ReviewedBuildArtifact -BuildRoot $BuildX64',
+        'Get-ReviewedWinDeployQt',
+        'Get-ReviewedVcRedist',
+        'Release packaging requires windeployqt from exact Qt 6.8.3',
+        '"--no-translations"',
+        '"--no-compiler-runtime"',
+        'Copied Visual C++ Redistributable prerequisite is not validly signed by Microsoft',
+        '"--no-opengl-sw"',
+        'thirdPartyRedistributables = $thirdPartyRecords',
+        'schemaVersion = 2',
+        'Qt deployment modified a signed HydraSeat artifact',
         'Write-DetachedCmsSignature -ContentPath $provenancePath',
         'Assert-DetachedCmsSignature -ContentPath $provenancePath',
     ):
@@ -146,21 +154,30 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         "release signer",
     )
 
-    # Installer invariants: package and state ownership remain exact, files are
-    # individually hash/signature verified, and per-user deletion is separated from
-    # the ProgramData rollback transaction.
+    # Installer invariants: the mandatory core set remains exact while a bounded
+    # provenance-bound Qt runtime may occupy nested plugin paths. Only HydraSeat
+    # core files require the HydraSeat publisher signature; Qt bytes are bound by
+    # the detached signed provenance hash and transaction-owned file inventory.
     for needle in (
-        '$records.Count -ne $OwnedFiles.Count',
-        '$seen.ContainsKey($fileName)',
-        '$seenOwnedFiles.ContainsKey($fileName)',
+        '$records.Count -ne $CoreOwnedFiles.Count',
+        '$thirdPartyRecords = @($provenance.thirdPartyRedistributables)',
+        '$MaximumOwnedFiles = 64',
+        '$seen.ContainsKey($folded)',
+        '$seenOwnedFiles.ContainsKey($folded)',
         'Release file hash mismatch: $fileName',
         'Release file publisher/signature mismatch: $fileName',
+        'Third-party runtime hash mismatch: $relativePath',
+        'Release architecture directory contains an unexpected file: $actual',
         'signing-provenance.json.p7s',
         'Assert-DetachedCmsSignature -ContentPath $provenancePath',
         '$contentFile.Length -le 0 -or $contentFile.Length -gt $MaximumSigningProvenanceBytes',
         '$signatureFile.Length -gt $MaximumDetachedProvenanceSignatureBytes',
         'Release signing provenance contains unknown or missing fields',
-        'Release artifact provenance contains unknown or missing fields',
+        'Third-party runtime provenance contains unknown or missing fields',
+        '$VcRuntimeDeploymentTool = "visual-studio-redist"',
+        'function Ensure-VcRuntimePrerequisite {',
+        'Start-Process -FilePath $stagedPath -ArgumentList @("/install", "/quiet", "/norestart") -Wait -PassThru',
+        'Ensure-VcRuntimePrerequisite -Package $package -StageRoot $snapshot.stage',
         '$records = @($provenance.artifacts)',
         '$record.id -ne [string]$OwnedArtifactIds[$fileName]',
         '$record.kind -ne $expectedKind',
@@ -170,7 +187,7 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         'commitSha -notmatch',
         'if (-not [Environment]::Is64BitOperatingSystem) {',
         '$Architecture = "x64"',
-        '$ProcessesThatMustBeStopped = @($OwnedFiles | Where-Object {',
+        '$ProcessesThatMustBeStopped = @($CoreOwnedFiles | Where-Object {',
         '[IO.Path]::GetFileNameWithoutExtension($_)',
         'Close all HydraSeat release processes and return to ordinary Windows before install changes',
         '$UserDataRoot = Join-Path $env:LOCALAPPDATA "HydraSeat"',
@@ -179,13 +196,16 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         'Remove-EmptyMachineDataRoots',
         'Assert-OwnedDirectoryNotReparsePoint -Path $TransactionRoot',
         'function Assert-OwnedLeafNotReparsePoint {',
+        'function Set-ActiveOwnedFiles {',
+        'function Get-SafeRelativeFileInventory {',
+        'Ensure-OwnedParentDirectories -Root $snapshot.stage -Child $relativePath',
         'must be a normal file and not a reparse point',
         'Assert-OwnedLeafNotReparsePoint -Path $provenancePath -Label "HydraSeat signing provenance"',
         'Assert-OwnedLeafNotReparsePoint -Path $provenanceSignaturePath -Label "HydraSeat signing provenance signature"',
         'Assert-OwnedLeafNotReparsePoint -Path $filePath -Label "HydraSeat release file $fileName"',
+        'Assert-OwnedLeafNotReparsePoint -Path $destination -Label "HydraSeat install destination $($file.fileName)"',
         'Assert-OwnedLeafNotReparsePoint -Path $Path -Label "HydraSeat install state"',
         'Assert-OwnedLeafNotReparsePoint -Path $path -Label "HydraSeat installer transaction state marker"',
-        'Assert-OwnedLeafNotReparsePoint -Path $destination -Label "HydraSeat install destination $($file.fileName)"',
         'if ($Mode -eq "Validate") {',
         'Assert-NoPendingInstallerTransactions',
         '$MutationLock = Enter-InstallerMutationLock',
@@ -201,10 +221,11 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         'Verify-UninstalledOwnedState',
         'function Verify-StagedPackage {',
         'Staged release file hash verification failed: $fileName',
-        'Staged release file Authenticode verification failed: $fileName',
+        'Staged HydraSeat core file Authenticode verification failed: $fileName',
         'Installer staging root does not contain the exact verified owned file set',
         'Verify-StagedPackage -Package $package -StageRoot $snapshot.stage -ExpectedSigner $OwnSigner',
         'Repair requires the exact installed release identity; use the approved update/rollback flow for a different release',
+        'Repair package file ownership differs from the installed exact release',
         'Installed state identity does not match the verified release package',
         'Uninstall registration does not match the verified installed release',
         'Assert-Administrator',
@@ -220,6 +241,8 @@ def validate_contract(manifest_data: object, signer_text: str, installer_text: s
         fail("installer must define and invoke interrupted-transaction recovery exactly once")
     if installer_text.count('-Phase "snapshotting"') != 1 or installer_text.count('-Phase "prepared"') != 1:
         fail("installer snapshot creation must durably distinguish snapshotting from prepared state")
+    if installer_text.count('-Phase "staged"') != 2:
+        fail("install/repair and uninstall must both mark the exact point before machine mutation")
     if installer_text.count('-Phase "committed"') != 2:
         fail("install/repair and uninstall must both write a committed transaction marker")
     if installer_text.count('$cleanupSnapshot = $false') != 2 or installer_text.count(
@@ -396,7 +419,7 @@ def self_test() -> None:
         return data, signer, installer
 
     def duplicate_state_weakening(data, signer, installer):
-        installer = installer.replace("$seenOwnedFiles.ContainsKey($fileName)", "$false")
+        installer = installer.replace("$seenOwnedFiles.ContainsKey($folded)", "$false", 1)
         return data, signer, installer
 
     def force_validate_elevation(data, signer, installer):
@@ -501,7 +524,7 @@ def self_test() -> None:
 
     def narrow_running_process_guard(data, signer, installer):
         installer = installer.replace(
-            "$ProcessesThatMustBeStopped = @($OwnedFiles | Where-Object {",
+            "$ProcessesThatMustBeStopped = @($CoreOwnedFiles | Where-Object {",
             "$ProcessesThatMustBeStopped = @(\"HydraSeat\") # weakened",
             1,
         )

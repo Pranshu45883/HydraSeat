@@ -271,6 +271,8 @@ void testAudioEndpointInventory() {
 
             for (const auto& ep : endpoints) {
                 assert(!ep.endpointId.empty());
+                assert(ep.state == AudioEndpointState::Active);
+                assert(ep.isAvailable());
                 std::wcout << L"  Audio Endpoint: " << ep.endpointId << std::endl;
                 std::wcout << L"    FriendlyName: " << ep.friendlyName << std::endl;
                 if (ep.stableId) {

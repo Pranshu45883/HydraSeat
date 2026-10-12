@@ -27,6 +27,10 @@ public:
 
 public slots:
     void updateState(const EngineStatePayload& payload);
+    void selectSeat(std::uint32_t seatId);
+
+signals:
+    void applicationLibraryChanged();
 
 private slots:
     void onBrowseExecutable();
@@ -47,6 +51,7 @@ private:
     QLineEdit* m_searchBox{nullptr};
     QComboBox* m_filterCombo{nullptr};
     QVBoxLayout* m_listLayout{nullptr};
+    bool m_operationInFlight{false};
 
     static QString getAssignedSeat(
         const std::optional<hydra::runtime::ProcessIdentity>& identity,

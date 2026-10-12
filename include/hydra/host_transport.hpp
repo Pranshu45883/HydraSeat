@@ -16,7 +16,11 @@ class GameLauncher;
 namespace hydra::hostipc {
 
 constexpr std::uint32_t kDefaultHostPipeTimeoutMs = 5000u;
-constexpr std::size_t kMaxFramesPerConnection = 4096u;
+// Launch can legitimately spend up to 10 seconds resolving and placing the
+// authoritative game window. The IPC timeout must outlive that bounded work.
+constexpr std::uint32_t kHostLaunchTimeoutMs = 15000u;
+// Stop performs process-tree termination plus safe-state verification.
+constexpr std::uint32_t kHostStopTimeoutMs = 15000u;
 
 // Per-connection protocol state. UI configuration leases are connection-scoped:
 // the session releases every lease it acquired when the client disconnects.
@@ -73,6 +77,17 @@ public:
         std::string* error = nullptr);
     std::optional<HostSnapshot> releaseUiLease(
         std::uint32_t seatId,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<HardwareInventory> getHardwareInventory(
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<SeatHardwareAssignment> getSeatHardware(
+        std::uint32_t seatId,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<SeatHardwareAssignment> assignSeatHardware(
+        const SeatHardwareAssignment& assignment,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
         std::string* error = nullptr);
     std::optional<HostSnapshot> pairController(

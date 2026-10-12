@@ -97,15 +97,17 @@ int wmain(int argc, wchar_t* argv[]) {
         CreateEventW(nullptr, TRUE, FALSE, readyEventName.c_str())};
     if (!check(readyEvent.value != nullptr, "create readiness event")) return 3;
 
-    if (!check(
-            launcher.launchGameForWorkspace(
-                childProfile(
-                    helperPath, readyEventName, pipeEndpoint, 1, sourceGeneration),
-                seat1,
-                binding,
-                inventory,
-                pipeEndpoint),
-            "launch Seat with controller-derived XInput context")) {
+    const bool launched = launcher.launchGameForWorkspace(
+        childProfile(
+            helperPath, readyEventName, pipeEndpoint, 1, sourceGeneration),
+        seat1,
+        binding,
+        inventory,
+        pipeEndpoint);
+    if (!launched) {
+        std::cerr << "launch diagnostics: " << launcher.lastError() << '\n';
+    }
+    if (!check(launched, "launch Seat with controller-derived XInput context")) {
         return 4;
     }
 

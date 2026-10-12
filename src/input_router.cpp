@@ -1,20 +1,14 @@
 #include "hydra/input_router.hpp"
 
+#include <chrono>
 #include <iostream>
 
 namespace hydra {
 
-static InputRouter* g_routerInstance = nullptr;
-
-InputRouter::InputRouter() {
-    g_routerInstance = this;
-}
+InputRouter::InputRouter() = default;
 
 InputRouter::~InputRouter() {
     stop();
-    if (g_routerInstance == this) {
-        g_routerInstance = nullptr;
-    }
 }
 
 bool InputRouter::postInputToWindow(uint64_t hwndVal, const RawInputEvent& evt) {
@@ -43,11 +37,37 @@ bool InputRouter::postInputToWindow(uint64_t hwndVal, const RawInputEvent& evt) 
 }
 
 #ifdef _WIN32
-LRESULT CALLBACK InputRouter::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (msg == WM_INPUT && g_routerInstance) {
-        g_routerInstance->handleRawInput(reinterpret_cast<HRAWINPUT>(lParam));
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
+LRESULT CALLBACK InputRouter::WndProc(
+    HWND hwnd,
+    UINT msg,
+    WPARAM wParam,
+    LPARAM lParam) {
+    InputRouter* router = reinterpret_cast<InputRouter*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    if (msg == WM_NCCREATE) {
+        const auto* create =
+            reinterpret_cast<const CREATESTRUCTW*>(lParam);
+        router = create
+            ? static_cast<InputRouter*>(create->lpCreateParams)
+            : nullptr;
+        if (router != nullptr) {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                reinterpret_cast<LONG_PTR>(router));
+        }
     }
+
+    if (msg == WM_INPUT && router != nullptr) {
+        router->handleRawInput(
+            reinterpret_cast<HRAWINPUT>(lParam));
+    }
+
+    if (msg == WM_NCDESTROY) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+    }
+
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
@@ -65,6 +85,10 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
     RawInputEvent event{};
     event.deviceHandle = reinterpret_cast<uintptr_t>(raw->header.hDevice);
     event.rawDevType = raw->header.dwType;
+    event.timestampMicros = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
 
     if (raw->header.hDevice != NULL) {
         UINT nameSize = 0;
@@ -80,6 +104,8 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
     if (raw->header.dwType == RIM_TYPEKEYBOARD) {
         event.messageType = raw->data.keyboard.Message;
         event.vkey = raw->data.keyboard.VKey;
+        event.scanCode = raw->data.keyboard.MakeCode;
+        event.keyboardFlags = raw->data.keyboard.Flags;
         if (event.vkey == 0) {
             event.vkey = raw->data.keyboard.MakeCode;
         }
@@ -87,7 +113,13 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
         event.messageType = WM_MOUSEMOVE;
         event.deltaX = raw->data.mouse.lLastX;
         event.deltaY = raw->data.mouse.lLastY;
+        event.mouseButtonFlags = raw->data.mouse.usButtonFlags;
         event.mouseButtons = raw->data.mouse.usButtonFlags;
+        if ((raw->data.mouse.usButtonFlags &
+             (RI_MOUSE_WHEEL | RI_MOUSE_HWHEEL)) != 0) {
+            event.wheelDelta =
+                static_cast<std::int16_t>(raw->data.mouse.usButtonData);
+        }
 
         // Detect if this mouse event is actually from a touchpad
         // Windows Precision Touchpads route motion through RIM_TYPEMOUSE
@@ -111,9 +143,11 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
         if (raw->header.hDevice == NULL) {
             event.isTouchpad = true;
         }
-    } else if (raw->header.dwType == RIM_TYPEHID) {
-        event.messageType = WM_MOUSEMOVE;
-        event.isTouchpad = true;
+    } else {
+        // Generic HID input (controllers, consumer controls, digitizers, etc.)
+        // is not keyboard/mouse routing input. Do not reinterpret every HID
+        // report as a touchpad event.
+        return;
     }
 
     // Trigger device specific callback if registered
@@ -142,10 +176,18 @@ bool InputRouter::initialize(uint64_t targetHwndVal) {
         RegisterClassExW(&wc);
 
         m_hwnd = CreateWindowExW(
-            WS_EX_TOOLWINDOW, L"HydraSeatRawInputHost", L"HydraSeat Input Router",
-            WS_POPUP, 0, 0, 0, 0,
-            NULL, NULL, GetModuleHandle(NULL), NULL
-        );
+            WS_EX_TOOLWINDOW,
+            L"HydraSeatRawInputHost",
+            L"HydraSeat Input Router",
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            nullptr,
+            nullptr,
+            GetModuleHandle(nullptr),
+            this);
 
         if (!m_hwnd) {
             return false;
@@ -165,7 +207,12 @@ bool InputRouter::registerRawInputDevices(bool backgroundSink) {
 
     DWORD flags = backgroundSink ? (RIDEV_INPUTSINK | RIDEV_DEVNOTIFY) : RIDEV_DEVNOTIFY;
 
-    RAWINPUTDEVICE rid[3];
+    // Register only the two Raw Input top-level collections HydraSeat
+    // actually routes. Generic Desktop 0x05 is a GAME PAD, not a touchpad.
+    // Precision Touchpads use Digitizers page 0x0D / usage 0x05 and are
+    // system-owned; pointer-compatible touchpad activity already arrives
+    // through the normal mouse collection when Windows exposes it that way.
+    RAWINPUTDEVICE rid[2];
 
     // Keyboard
     rid[0].usUsagePage = 0x01; // Generic Desktop
@@ -179,13 +226,7 @@ bool InputRouter::registerRawInputDevices(bool backgroundSink) {
     rid[1].dwFlags = flags;
     rid[1].hwndTarget = m_hwnd;
 
-    // Touchpad / Precision Touchpad
-    rid[2].usUsagePage = 0x01; // Generic Desktop
-    rid[2].usUsage = 0x05;     // Touch Pad
-    rid[2].dwFlags = flags;
-    rid[2].hwndTarget = m_hwnd;
-
-    if (!RegisterRawInputDevices(rid, 3, sizeof(RAWINPUTDEVICE))) {
+    if (!RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE))) {
         return false;
     }
 #else
@@ -217,11 +258,10 @@ void InputRouter::stop() {
     m_running = false;
 #ifdef _WIN32
     if (m_hwnd) {
-        RAWINPUTDEVICE rid[3];
+        RAWINPUTDEVICE rid[2];
         rid[0].usUsagePage = 0x01; rid[0].usUsage = 0x06; rid[0].dwFlags = RIDEV_REMOVE; rid[0].hwndTarget = NULL;
         rid[1].usUsagePage = 0x01; rid[1].usUsage = 0x02; rid[1].dwFlags = RIDEV_REMOVE; rid[1].hwndTarget = NULL;
-        rid[2].usUsagePage = 0x01; rid[2].usUsage = 0x05; rid[2].dwFlags = RIDEV_REMOVE; rid[2].hwndTarget = NULL;
-        RegisterRawInputDevices(rid, 3, sizeof(RAWINPUTDEVICE));
+        RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE));
 
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;

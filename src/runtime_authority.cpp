@@ -62,15 +62,53 @@ bool SeatRuntime::bindTargetWindow(const ActivationToken& token,
     return true;
 }
 
+bool SeatRuntime::clearTargetWindow(
+    const ActivationToken& token,
+    const ProcessIdentity& owner,
+    std::uintptr_t expectedHwnd) noexcept {
+    if (!owner.valid() || expectedHwnd == 0) return false;
+
+    std::lock_guard lock(mutex_);
+    if (!ownsTokenLocked(token) ||
+        token.leaseClass != LeaseClass::GameProcess ||
+        !process_ || *process_ != owner ||
+        targetHwnd_ != expectedHwnd) {
+        return false;
+    }
+
+    targetHwnd_ = 0;
+    return true;
+}
+
 bool SeatRuntime::bindController(const ActivationToken& token,
                                  const controller::SeatBinding& binding) noexcept {
     if (binding.seatId != seatId_ || binding.runtimeKey.empty()) return false;
 
     std::lock_guard lock(mutex_);
     if (!ownsTokenLocked(token)) return false;
-    if (controllerBinding_ && *controllerBinding_ != binding) return false;
+
+    // A UI configuration lease may replace a stale/runtime-only controller
+    // mapping while no game owns the Seat. A live game lease must keep the
+    // exact binding frozen for its whole activation.
+    if (controllerBinding_ && *controllerBinding_ != binding) {
+        if (token.leaseClass != LeaseClass::UiConfiguration ||
+            gameLeaseActive_) {
+            return false;
+        }
+    }
 
     controllerBinding_ = binding;
+    return true;
+}
+
+bool SeatRuntime::clearController(const ActivationToken& token) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!ownsTokenLocked(token) ||
+        token.leaseClass != LeaseClass::UiConfiguration ||
+        gameLeaseActive_) {
+        return false;
+    }
+    controllerBinding_.reset();
     return true;
 }
 
@@ -159,6 +197,18 @@ bool SessionController::bindTargetWindow(const ActivationToken& token,
     return runtime->bindTargetWindow(token, owner, hwnd);
 }
 
+bool SessionController::clearTargetWindow(
+    const ActivationToken& token,
+    const ProcessIdentity& owner,
+    std::uintptr_t expectedHwnd) noexcept {
+    if (!owner.valid() || expectedHwnd == 0) return false;
+
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    if (!runtime) return false;
+    return runtime->clearTargetWindow(token, owner, expectedHwnd);
+}
+
 bool SessionController::bindController(
     const ActivationToken& token,
     const controller::SeatBinding& binding,
@@ -180,6 +230,13 @@ bool SessionController::bindController(
     }
 
     return runtime->bindController(token, binding);
+}
+
+bool SessionController::clearController(
+    const ActivationToken& token) noexcept {
+    std::lock_guard lock(mutex_);
+    const auto runtime = seat(token.seatId);
+    return runtime && runtime->clearController(token);
 }
 
 controller::PollResult SessionController::pollController(

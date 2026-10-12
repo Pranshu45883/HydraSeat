@@ -45,10 +45,12 @@ public slots:
 private slots:
     void onRoutingCompleted(
         std::uint32_t pid,
+        std::uint64_t creationIdentity,
         RouteVerificationResult result,
         const QString& errorMessage);
     void onResetCompleted(
         std::uint32_t pid,
+        std::uint64_t creationIdentity,
         bool success,
         const QString& errorMessage);
 
@@ -59,6 +61,7 @@ private:
     QVBoxLayout* m_outputsLayout{nullptr};
 
     QLabel* m_sessionsCountLabel{nullptr};
+    QLabel* m_sessionsErrorLabel{nullptr};
     QLabel* m_outputsCountLabel{nullptr};
 
     QLineEdit* m_searchBox{nullptr};

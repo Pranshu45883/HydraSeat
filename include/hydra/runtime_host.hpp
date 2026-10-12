@@ -2,12 +2,19 @@
 
 #include "hydra/audio_router.hpp"
 #include "hydra/host_protocol.hpp"
+#include "hydra/hardware_detector.hpp"
 #include "hydra/runtime_authority.hpp"
+#include "hydra/seat_hardware_configuration.hpp"
+#include "hydra/seat_hardware_store.hpp"
 
+#include <array>
 #include <cstdint>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace hydra::runtime {
 
@@ -17,7 +24,10 @@ namespace hydra::runtime {
 // cross-Seat serialization remain coherent.
 class RuntimeHost final {
 public:
-    RuntimeHost() noexcept = default;
+    RuntimeHost() = default;
+    explicit RuntimeHost(std::filesystem::path seatConfigPath);
+
+    bool loadPersistentSeatHardware(std::string* error = nullptr);
 
     RuntimeHost(const RuntimeHost&) = delete;
     RuntimeHost& operator=(const RuntimeHost&) = delete;
@@ -25,6 +35,16 @@ public:
     hostipc::HostSnapshot snapshot() const noexcept;
     std::optional<SeatRuntimeSnapshot> seatSnapshot(std::uint32_t seatId) const noexcept;
     controller::InventorySnapshot controllerInventorySnapshot() noexcept;
+    std::vector<DeviceInfo> hardwareInventory();
+    void observePhysicalInput(
+        DeviceType type,
+        const std::wstring& devicePath);
+    std::optional<SeatHardwareConfiguration> seatHardwareConfiguration(
+        std::uint32_t seatId) const;
+    bool configureSeatHardware(
+        const ActivationToken& uiLease,
+        const SeatHardwareConfiguration& configuration,
+        std::string* error = nullptr);
     std::optional<std::uint32_t> seatForProcess(
         const ProcessIdentity& process) const noexcept;
 
@@ -47,6 +67,9 @@ public:
     bool bindTargetWindow(const ActivationToken& token,
                           const ProcessIdentity& owner,
                           std::uintptr_t hwnd) noexcept;
+    bool clearTargetWindow(const ActivationToken& token,
+                           const ProcessIdentity& owner,
+                           std::uintptr_t expectedHwnd) noexcept;
     bool bindController(const ActivationToken& token,
                         const controller::SeatBinding& binding,
                         const controller::InventorySnapshot& inventory) noexcept;
@@ -66,8 +89,18 @@ private:
     void noteMutationLocked(bool changed) noexcept;
 
     mutable std::mutex mutex_;
+    mutable std::mutex controllerInventoryMutex_;
+    mutable std::mutex audioMutationMutex_;
     SessionController controller_;
     controller::ControllerInventory controllerInventory_;
+    HardwareDetector hardwareDetector_;
+    std::unordered_set<std::wstring> confirmedKeyboardIds_;
+    std::unordered_set<std::wstring> confirmedMouseIds_;
+    SeatHardwareConfigurations hardwareConfigurations_{{
+        SeatHardwareConfiguration{1},
+        SeatHardwareConfiguration{2},
+    }};
+    std::optional<SeatHardwareStore> seatHardwareStore_;
     std::uint64_t authorityRevision_{1};
 };
 

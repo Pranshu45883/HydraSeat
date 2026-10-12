@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "releaseScope": "HydraSeat v1 owned end-user release artifacts only; tests, probes, labs, third-party binaries, and drivers are excluded until separately reviewed.",
+  "releaseScope": "HydraSeat v1 owned end-user release artifacts plus the bounded Qt 6.8.3 runtime deployed by windeployqt; tests, probes, labs, unrelated third-party binaries, and drivers are excluded.",
   "artifacts": [
     {
       "id": "main-ui",
@@ -17,10 +17,31 @@
       "architectures": ["x64"]
     },
     {
-      "id": "seat-ui",
-      "kind": "cmake-executable",
-      "target": "hydra_seat_ui",
-      "fileName": "hydra_seat_ui.exe",
+      "id": "xinput-adapter",
+      "kind": "cmake-shared-library",
+      "target": "hydra_xinput_adapter",
+      "fileName": "hydra_xinput_adapter.dll",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "gate-c-adapter",
+      "kind": "cmake-shared-library",
+      "target": "hydra_gate_c_adapter",
+      "fileName": "hydra_gate_c_adapter.dll",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "gate-c-shim",
+      "kind": "cmake-shared-library",
+      "target": "hydra_gate_c_shim",
+      "fileName": "hydra_gate_c_shim.dll",
+      "architectures": ["x64"]
+    },
+    {
+      "id": "gate-c-external-bridge",
+      "kind": "cmake-shared-library",
+      "target": "hydra_gate_c_external_bridge",
+      "fileName": "hydra_gate_c_external_bridge.dll",
       "architectures": ["x64"]
     },
     {
@@ -62,7 +83,7 @@
   "excludedArtifactClasses": [
     "test executables",
     "diagnostic/lab/probe tools not in the end-user package",
-    "third-party binaries",
+    "third-party binaries other than the reviewed Qt 6.8.3 runtime",
     "drivers until a separately reviewed signed driver artifact is selected"
   ]
 }

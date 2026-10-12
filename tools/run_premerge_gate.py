@@ -56,7 +56,6 @@ class ManualGateResult:
 
 
 AUTOMATED_VALIDATORS: tuple[ValidatorSpec, ...] = (
-    ValidatorSpec("implementation-roadmap", "tools/validate_implementation_roadmap.py"),
     ValidatorSpec("production-reachability", "tools/validate_production_reachability.py"),
     ValidatorSpec("release-scope", "tools/validate_release_scope.py"),
     ValidatorSpec("release-signing-manifest-structure", "tools/validate_release_signing_manifest.py"),

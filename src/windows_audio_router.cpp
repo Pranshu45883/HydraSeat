@@ -44,12 +44,20 @@ struct ComPtr {
 // RAII wrapper for HSTRING
 struct ScopedHString {
     HSTRING hstr{nullptr};
-    ScopedHString(const std::wstring& str) {
-        WindowsCreateString(str.c_str(), static_cast<UINT32>(str.length()), &hstr);
+    HRESULT result{S_OK};
+
+    explicit ScopedHString(const std::wstring& str) {
+        // AudioPolicyConfig uses a null HSTRING to clear a persisted endpoint.
+        // An allocated empty HSTRING is not the same API contract.
+        if (!str.empty()) {
+            result = WindowsCreateString(
+                str.c_str(), static_cast<UINT32>(str.length()), &hstr);
+        }
     }
     ~ScopedHString() {
         if (hstr) WindowsDeleteString(hstr);
     }
+    bool ready() const noexcept { return SUCCEEDED(result); }
     operator HSTRING() const { return hstr; }
 };
 
@@ -176,13 +184,20 @@ static hydra::runtime::AudioRouteStatus validateEndpointExists(const std::wstrin
     return hydra::runtime::AudioRouteStatus::Success;
 }
 
-static hydra::runtime::AudioRouteStatus callAudioPolicyConfigFactory(DWORD pid, const std::wstring& deviceIdStr) {
+static hydra::runtime::AudioRouteStatus callAudioPolicyConfigFactory(
+    DWORD pid,
+    const std::wstring& deviceIdStr) {
     ScopedHString className(L"Windows.Media.Internal.AudioPolicyConfig");
-    ScopedHString deviceId(deviceIdStr);
+    if (!className.ready()) {
+        return hydra::runtime::AudioRouteStatus::OsApiError;
+    }
 
     ComPtr<IInspectable> factoryBase;
-    HRESULT hr = RoGetActivationFactory(className, __uuidof(IInspectable), (void**)&factoryBase);
-    if (FAILED(hr) || !factoryBase) return hydra::runtime::AudioRouteStatus::OsApiError;
+    HRESULT hr = RoGetActivationFactory(
+        className, __uuidof(IInspectable), (void**)&factoryBase);
+    if (FAILED(hr) || !factoryBase) {
+        return hydra::runtime::AudioRouteStatus::OsApiError;
+    }
 
     ComPtr<IAudioPolicyConfigFactory21H2> factory21H2;
     ComPtr<IAudioPolicyConfigFactoryDownlevel> factoryDownlevel;
@@ -198,13 +213,63 @@ static hydra::runtime::AudioRouteStatus callAudioPolicyConfigFactory(DWORD pid, 
         }
     }
 
-    if (is21H2) {
-        hr = factory21H2->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
-    } else {
-        hr = factoryDownlevel->SetPersistedDefaultAudioEndpoint(pid, eRender, eConsole, deviceId);
+    const auto getRole = [&](ERole role, std::wstring& value) {
+        HSTRING current = nullptr;
+        const HRESULT result = is21H2
+            ? factory21H2->GetPersistedDefaultAudioEndpoint(
+                  pid, eRender, role, &current)
+            : factoryDownlevel->GetPersistedDefaultAudioEndpoint(
+                  pid, eRender, role, &current);
+        if (FAILED(result)) return result;
+
+        value.clear();
+        if (current != nullptr) {
+            UINT32 length = 0;
+            const wchar_t* raw = WindowsGetStringRawBuffer(current, &length);
+            if (raw != nullptr && length != 0) {
+                value.assign(raw, raw + length);
+            }
+            WindowsDeleteString(current);
+        }
+        return result;
+    };
+
+    const auto setRole = [&](ERole role, const std::wstring& value) {
+        ScopedHString deviceId(value);
+        if (!deviceId.ready()) return deviceId.result;
+        return is21H2
+            ? factory21H2->SetPersistedDefaultAudioEndpoint(
+                  pid, eRender, role, deviceId)
+            : factoryDownlevel->SetPersistedDefaultAudioEndpoint(
+                  pid, eRender, role, deviceId);
+    };
+
+    // The two role writes are independent. Capture both first so a partial
+    // Windows/API failure never leaves HydraSeat reporting "failed" while one
+    // role has silently changed. EarTrumpet uses the same two role endpoints;
+    // HydraSeat additionally restores the captured state on partial failure.
+    std::wstring beforeMultimedia;
+    std::wstring beforeConsole;
+    if (FAILED(getRole(eMultimedia, beforeMultimedia)) ||
+        FAILED(getRole(eConsole, beforeConsole))) {
+        return hydra::runtime::AudioRouteStatus::OsApiError;
     }
 
-    return SUCCEEDED(hr) ? hydra::runtime::AudioRouteStatus::Success : hydra::runtime::AudioRouteStatus::RoutingFailed;
+    const HRESULT multimedia = setRole(eMultimedia, deviceIdStr);
+    if (FAILED(multimedia)) {
+        (void)setRole(eMultimedia, beforeMultimedia);
+        (void)setRole(eConsole, beforeConsole);
+        return hydra::runtime::AudioRouteStatus::RoutingFailed;
+    }
+
+    const HRESULT console = setRole(eConsole, deviceIdStr);
+    if (FAILED(console)) {
+        (void)setRole(eConsole, beforeConsole);
+        (void)setRole(eMultimedia, beforeMultimedia);
+        return hydra::runtime::AudioRouteStatus::RoutingFailed;
+    }
+
+    return hydra::runtime::AudioRouteStatus::Success;
 }
 
 } // namespace

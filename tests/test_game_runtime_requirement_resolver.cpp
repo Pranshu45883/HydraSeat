@@ -356,6 +356,8 @@ void testTrustedRuntimeRejectsSeatScopeExpansion() {
     check(rejected.code == TrustedPlanRequirementCode::ValidationSeatScopeExceeded &&
               rejected.gameId == "game:a",
           "Host-side fresh trusted gate independently rejects one-Seat authority reused for two Seats");
+    check(trustedPlanRequirementCodeName(rejected.code) == "ValidationSeatScopeExceeded",
+          "seat-scope rejection retains its diagnostic code name");
 }
 
 void testProviderCatalogAndMissingEvidenceFailClosedPerGame() {

@@ -16,7 +16,7 @@ Snapshot alignment: **2026-10-01**. This roadmap separates implemented software 
 - [x] portable two-player setup model.
 - [x] diagnostics and provider/profile/compatibility pipeline foundations.
 - [x] release acceptance and validation tooling.
-- [x] host/client authority split with host IPC v2.
+- [x] host/client authority split with host IPC v3.
 - [x] host-owned Windows audio mutation path.
 - [x] host-owned custom-executable launch/stop path with strict Seat Job ownership and exact process publication.
 - [x] signed installer bootstrap, local compatibility evidence/runner, and runtime-requirement authority targets activated and tested.
@@ -49,7 +49,7 @@ These check marks mean the software path is integrated and has automated evidenc
 - [x] audio actions use exact process identity through the host.
 - [x] Applications UI sends custom-executable Launch/Stop intent through HostControlClient only.
 - [x] obsolete Qt MainWindow/WorkspaceWidget code that directly owned InputRouter/WorkspaceManager/GameLauncher is removed.
-- [ ] Pranshu: implement the Settings page; the current navigation target is only a placeholder.
+- [x] Pranshu UI: Settings page keeps the established layout and now has persistent functional state for supported controls; unsupported appearance/notification/audio-default controls are shown as fixed/disabled instead of fake toggles.
 - [ ] Pranshu: run the physical-device usability pass for friendly names, reconnect feedback, busy/disabled states, and recovery guidance.
 - [ ] Pranshu: refine user-facing failure explanations from real-game/manual observations.
 - [ ] Pranshu: complete display/keyboard/mouse Seat-assignment UX only after the backend exposes the corresponding bounded host command; do not bypass host IPC.

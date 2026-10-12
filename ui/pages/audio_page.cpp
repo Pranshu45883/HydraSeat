@@ -43,6 +43,14 @@ AudioPage::AudioPage(RoutingController* router, QWidget* parent)
     m_sessionsCountLabel->setStyleSheet("font-size: 13px; font-weight: bold; color: #777777; margin-bottom: 8px;");
     leftLayout->addWidget(m_sessionsCountLabel);
 
+    m_sessionsErrorLabel = new QLabel(
+        "Audio session inventory is temporarily unavailable.", leftWidget);
+    m_sessionsErrorLabel->setStyleSheet(
+        "font-size: 12px; color: #E10600; margin-bottom: 8px;");
+    m_sessionsErrorLabel->setWordWrap(true);
+    m_sessionsErrorLabel->setVisible(false);
+    leftLayout->addWidget(m_sessionsErrorLabel);
+
     auto* sessScroll = new QScrollArea();
     sessScroll->setWidgetResizable(true);
     sessScroll->setStyleSheet("QScrollArea { border: none; background-color: transparent; }");
@@ -79,6 +87,17 @@ AudioPage::AudioPage(RoutingController* router, QWidget* parent)
     splitLayout->addWidget(rightWidget, 1);
 
     layout->addLayout(splitLayout);
+
+    connect(
+        m_searchBox,
+        &QLineEdit::textChanged,
+        this,
+        [this](const QString&) { updateState(m_lastPayload); });
+    connect(
+        m_filterCombo,
+        qOverload<int>(&QComboBox::currentIndexChanged),
+        this,
+        [this](int) { updateState(m_lastPayload); });
 
     if (m_router) {
         connect(m_router, &RoutingController::routingCompleted, this, &AudioPage::onRoutingCompleted);
@@ -157,11 +176,30 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
     card.routeCombo->addItem("System Default", "");
     for (const auto& ep : m_lastPayload.audioEndpoints) {
         if (!ep.isAvailable()) continue;
-        card.routeCombo->addItem(QString::fromStdWString(ep.friendlyName), QString::fromStdWString(ep.endpointId));
+        card.routeCombo->addItem(
+            QString::fromStdWString(ep.friendlyName),
+            QString::fromStdWString(ep.endpointId));
     }
 
-    int cIdx = card.routeCombo->findData(QString::fromStdWString(session.endpointId));
+    int cIdx =
+        card.routeCombo->findData(QString::fromStdWString(session.endpointId));
     if (cIdx >= 0) card.routeCombo->setCurrentIndex(cIdx);
+
+    const auto ownedByHydraSeat = [&]() {
+        if (!session.processIdentity || !session.processIdentity->valid() ||
+            !m_lastPayload.hostSnapshot) {
+            return false;
+        }
+        for (const auto& seat : m_lastPayload.hostSnapshot->seats) {
+            if (seat.processOwned &&
+                seat.processId == session.processIdentity->pid &&
+                seat.processCreationIdentity ==
+                    session.processIdentity->creationIdentity) {
+                return true;
+            }
+        }
+        return false;
+    }();
 
     fl->addWidget(card.routeCombo);
 
@@ -183,7 +221,27 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
     card.routeBtn->setStyleSheet(
         "QPushButton { background-color: #E10600; color: #F5F5F5; border: none; border-radius: 6px; height: 32px; padding: 0 16px; font-weight: bold; }"
         "QPushButton:hover { background-color: #FF1A1A; }"
+        "QPushButton:disabled { background-color: #333333; color: #777777; }"
     );
+
+    const bool routingAvailable =
+        ownedByHydraSeat && !m_lastPayload.audioEndpointError;
+    card.routeCombo->setEnabled(routingAvailable);
+    card.routeBtn->setEnabled(routingAvailable);
+    card.resetBtn->setEnabled(ownedByHydraSeat);
+    if (!ownedByHydraSeat) {
+        const QString message =
+            "Audio mutation is available only for an application owned by an active HydraSeat Seat.";
+        card.routeCombo->setToolTip(message);
+        card.routeBtn->setToolTip(message);
+        card.resetBtn->setToolTip(message);
+    } else if (m_lastPayload.audioEndpointError) {
+        const QString message =
+            "Audio output inventory is unavailable; routing is temporarily disabled.";
+        card.routeCombo->setToolTip(message);
+        card.routeBtn->setToolTip(message);
+    }
+
     btnLayout->addWidget(card.routeBtn);
     fl->addLayout(btnLayout);
 
@@ -193,25 +251,112 @@ void AudioPage::buildSessionCard(const hydra::windows::AudioSessionObservation& 
         if (m_router) m_router->requestReset(cpid, ccid);
     });
     connect(card.routeBtn, &QPushButton::clicked, [this, cpid, ccid, combo = card.routeCombo]() {
-        QString ep = combo->currentData().toString();
-        if (m_router) m_router->requestRoute(cpid, ccid, ep);
+        const QString endpointId = combo->currentData().toString();
+        if (!m_router) return;
+        if (endpointId.isEmpty()) {
+            m_router->requestReset(cpid, ccid);
+        } else {
+            m_router->requestRoute(cpid, ccid, endpointId);
+        }
     });
 
     m_sessionsLayout->insertWidget(m_sessionsLayout->count() - 1, card.frame);
     m_sessionCards.append(card);
 }
 
-bool AudioPage::tryUpdateExistingCard(const hydra::windows::AudioSessionObservation& session) {
+bool AudioPage::tryUpdateExistingCard(
+    const hydra::windows::AudioSessionObservation& session) {
+    const std::uint64_t creationIdentity =
+        session.processIdentity
+            ? session.processIdentity->creationIdentity
+            : 0u;
+
     for (auto& card : m_sessionCards) {
-        if (card.pid == session.processId && card.creationIdentity == (session.processIdentity ? session.processIdentity->creationIdentity : 0)) {
-            card.stateLabel->setText(stateText(session.state));
-            card.stateLabel->setStyleSheet(QString("font-size: 12px; font-weight: bold; color: %1; border: none;").arg(stateColor(session.state)));
-            if (card.currentEndpointId != session.endpointId) {
-                card.currentEndpointId = session.endpointId;
-                card.currentOutputLabel->setText(QString("Current output: %1").arg(resolveEndpointFriendlyName(session.endpointId)));
-            }
-            return true;
+        if (card.pid != session.processId ||
+            card.creationIdentity != creationIdentity) {
+            continue;
         }
+
+        card.stateLabel->setText(stateText(session.state));
+        card.stateLabel->setStyleSheet(
+            QString(
+                "font-size: 12px; font-weight: bold; color: %1; border: none;")
+                .arg(stateColor(session.state)));
+
+        const bool ownedByHydraSeat = [&]() {
+            if (!session.processIdentity || !session.processIdentity->valid() ||
+                !m_lastPayload.hostSnapshot) {
+                return false;
+            }
+            for (const auto& seat : m_lastPayload.hostSnapshot->seats) {
+                if (seat.processOwned &&
+                    seat.processId == session.processIdentity->pid &&
+                    seat.processCreationIdentity ==
+                        session.processIdentity->creationIdentity) {
+                    return true;
+                }
+            }
+            return false;
+        }();
+
+        const bool routingAvailable =
+            ownedByHydraSeat && !m_lastPayload.audioEndpointError;
+        card.routeBtn->setEnabled(routingAvailable);
+        card.resetBtn->setEnabled(ownedByHydraSeat);
+        card.routeCombo->setEnabled(routingAvailable);
+
+        if (!ownedByHydraSeat) {
+            const QString message =
+                "Audio mutation is available only for an application owned by an active HydraSeat Seat.";
+            card.routeCombo->setToolTip(message);
+            card.routeBtn->setToolTip(message);
+            card.resetBtn->setToolTip(message);
+        } else {
+            card.resetBtn->setToolTip({});
+            if (m_lastPayload.audioEndpointError) {
+                const QString message =
+                    "Audio output inventory is unavailable; routing is temporarily disabled.";
+                card.routeCombo->setToolTip(message);
+                card.routeBtn->setToolTip(message);
+            } else {
+                card.routeCombo->setToolTip({});
+                card.routeBtn->setToolTip({});
+            }
+        }
+
+        const bool endpointChanged =
+            card.currentEndpointId != session.endpointId;
+        if (endpointChanged) {
+            card.currentEndpointId = session.endpointId;
+            card.currentOutputLabel->setText(
+                QString("Current output: %1")
+                    .arg(resolveEndpointFriendlyName(session.endpointId)));
+        }
+
+        // Keep route options synchronized with hot-plugged endpoints, but do
+        // not rewrite a combo while the user is interacting with it.
+        if (!card.routeCombo->hasFocus()) {
+            const QString selected = card.routeCombo->currentData().toString();
+            card.routeCombo->blockSignals(true);
+            card.routeCombo->clear();
+            card.routeCombo->addItem("System Default", "");
+            for (const auto& ep : m_lastPayload.audioEndpoints) {
+                if (!ep.isAvailable()) continue;
+                card.routeCombo->addItem(
+                    QString::fromStdWString(ep.friendlyName),
+                    QString::fromStdWString(ep.endpointId));
+            }
+            QString wanted = selected;
+            if (endpointChanged || wanted.isEmpty()) {
+                wanted = QString::fromStdWString(session.endpointId);
+            }
+            const int endpointIndex = card.routeCombo->findData(wanted);
+            card.routeCombo->setCurrentIndex(
+                endpointIndex >= 0 ? endpointIndex : 0);
+            card.routeCombo->blockSignals(false);
+        }
+
+        return true;
     }
     return false;
 }
@@ -219,57 +364,111 @@ bool AudioPage::tryUpdateExistingCard(const hydra::windows::AudioSessionObservat
 void AudioPage::updateState(const EngineStatePayload& payload) {
     m_lastPayload = payload;
 
-    int totalSess = payload.audioSessions.size();
+    const int totalSess = static_cast<int>(payload.audioSessions.size());
     int actSess = 0;
-    for (const auto& s : payload.audioSessions) if (s.state == hydra::windows::AudioSessionState::Active) actSess++;
-    m_sessionsCountLabel->setText(QString("AUDIO SESSIONS   %1 total / %2 active").arg(totalSess).arg(actSess));
+    for (const auto& session : payload.audioSessions) {
+        if (session.state == hydra::windows::AudioSessionState::Active) {
+            ++actSess;
+        }
+    }
 
-    int totalOut = payload.audioEndpoints.size();
+    if (payload.audioSessionError) {
+        m_sessionsCountLabel->setText("AUDIO SESSIONS   unavailable");
+        m_sessionsErrorLabel->setVisible(true);
+    } else {
+        m_sessionsCountLabel->setText(
+            QString("AUDIO SESSIONS   %1 total / %2 active")
+                .arg(totalSess)
+                .arg(actSess));
+        m_sessionsErrorLabel->setVisible(false);
+    }
+
+    const int totalOut = static_cast<int>(payload.audioEndpoints.size());
     int actOut = 0;
 
-    // Process outputs
+    // Process outputs.
     while (QLayoutItem* item = m_outputsLayout->takeAt(0)) {
         if (item->widget()) item->widget()->deleteLater();
         delete item;
     }
-    for (const auto& ep : payload.audioEndpoints) {
-        if (ep.isAvailable()) actOut++;
 
-        auto* frame = new QFrame();
-        frame->setMaximumWidth(400);
-        frame->setStyleSheet("background-color: #151515; border-radius: 6px; padding: 12px; border: 1px solid #292929;");
-        auto* fl = new QVBoxLayout(frame);
-        fl->setContentsMargins(0,0,0,0);
+    if (payload.audioEndpointError) {
+        auto* error = new QLabel(
+            "Audio output inventory is temporarily unavailable.");
+        error->setWordWrap(true);
+        error->setStyleSheet(
+            "font-size: 12px; color: #E10600;");
+        m_outputsLayout->addWidget(error);
+        m_outputsCountLabel->setText("AUDIO OUTPUTS   unavailable");
+    } else {
+        for (const auto& ep : payload.audioEndpoints) {
+            if (ep.isAvailable()) ++actOut;
 
-        auto* nameLabel = new QLabel(QString::fromStdWString(ep.friendlyName), frame);
-        nameLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
-        fl->addWidget(nameLabel);
+            auto* frame = new QFrame();
+            frame->setMaximumWidth(400);
+            frame->setStyleSheet(
+                "background-color: #151515; border-radius: 6px; padding: 12px; "
+                "border: 1px solid #292929;");
+            auto* fl = new QVBoxLayout(frame);
+            fl->setContentsMargins(0, 0, 0, 0);
 
-        auto* stLabel = new QLabel(ep.isAvailable() ? "● Active" : "○ Not Present", frame);
-        stLabel->setStyleSheet(QString("font-size: 12px; font-weight: bold; color: %1; border: none;").arg(ep.isAvailable() ? "#E10600" : "#777777"));
-        fl->addWidget(stLabel);
+            auto* nameLabel =
+                new QLabel(QString::fromStdWString(ep.friendlyName), frame);
+            nameLabel->setStyleSheet(
+                "font-size: 14px; font-weight: bold; color: #F5F5F5; "
+                "border: none;");
+            fl->addWidget(nameLabel);
 
-        m_outputsLayout->addWidget(frame);
+            auto* stLabel = new QLabel(
+                ep.isAvailable() ? "● Active" : "○ Not Present", frame);
+            stLabel->setStyleSheet(
+                QString(
+                    "font-size: 12px; font-weight: bold; color: %1; "
+                    "border: none;")
+                    .arg(ep.isAvailable() ? "#E10600" : "#777777"));
+            fl->addWidget(stLabel);
+
+            m_outputsLayout->addWidget(frame);
+        }
+
+        m_outputsCountLabel->setText(
+            QString("AUDIO OUTPUTS   %1 total / %2 active")
+                .arg(totalOut)
+                .arg(actOut));
     }
     m_outputsLayout->addStretch();
 
-    m_outputsCountLabel->setText(QString("AUDIO OUTPUTS   %1 total / %2 active").arg(totalOut).arg(actOut));
+    if (payload.audioSessionError) {
+        for (auto& card : m_sessionCards) {
+            if (card.frame) {
+                m_sessionsLayout->removeWidget(card.frame);
+                card.frame->deleteLater();
+            }
+        }
+        m_sessionCards.clear();
+        return;
+    }
 
-    // Update Sessions
-    QString filterText = m_searchBox->text();
-    int filterType = m_filterCombo->currentIndex();
+    // Update sessions.
+    const QString filterText = m_searchBox->text();
+    const int filterType = m_filterCombo->currentIndex();
 
     for (int i = m_sessionCards.size() - 1; i >= 0; --i) {
         bool found = false;
         for (const auto& session : payload.audioSessions) {
+            const auto creationIdentity =
+                session.processIdentity
+                    ? session.processIdentity->creationIdentity
+                    : 0u;
             if (m_sessionCards[i].pid == session.processId &&
-                m_sessionCards[i].creationIdentity == (session.processIdentity ? session.processIdentity->creationIdentity : 0) &&
+                m_sessionCards[i].creationIdentity == creationIdentity &&
                 sessionMatchesFilter(session, filterText, filterType)) {
                 found = true;
                 break;
             }
         }
         if (!found) {
+            m_sessionsLayout->removeWidget(m_sessionCards[i].frame);
             m_sessionCards[i].frame->deleteLater();
             m_sessionCards.removeAt(i);
         }
@@ -283,9 +482,14 @@ void AudioPage::updateState(const EngineStatePayload& payload) {
     }
 }
 
-void AudioPage::onRoutingCompleted(uint32_t pid, RouteVerificationResult result, const QString& errorMessage) {
+void AudioPage::onRoutingCompleted(
+    std::uint32_t pid,
+    std::uint64_t creationIdentity,
+    RouteVerificationResult result,
+    const QString& errorMessage) {
     for (auto& card : m_sessionCards) {
-        if (card.pid == pid) {
+        if (card.pid == pid &&
+            card.creationIdentity == creationIdentity) {
             card.feedbackLabel->setVisible(true);
             if (result == RouteVerificationResult::Success) {
                 card.feedbackLabel->setText("Routing successful.");
@@ -299,9 +503,14 @@ void AudioPage::onRoutingCompleted(uint32_t pid, RouteVerificationResult result,
     }
 }
 
-void AudioPage::onResetCompleted(uint32_t pid, bool success, const QString& errorMessage) {
+void AudioPage::onResetCompleted(
+    std::uint32_t pid,
+    std::uint64_t creationIdentity,
+    bool success,
+    const QString& errorMessage) {
     for (auto& card : m_sessionCards) {
-        if (card.pid == pid) {
+        if (card.pid == pid &&
+            card.creationIdentity == creationIdentity) {
             card.feedbackLabel->setVisible(true);
             if (success) {
                 card.feedbackLabel->setText("Reset successful.");

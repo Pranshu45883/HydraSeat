@@ -43,7 +43,6 @@ SAFE_TARGET = re.compile(r"^[A-Za-z0-9_]{1,96}$")
 COMPONENT_ROLES = {
     "ApplicationUI",
     "AuthoritativeHost",
-    "SeatUI",
     "RecoveryWatchdog",
     "RecoveryReset",
     "ProfileCLI",
@@ -60,6 +59,7 @@ SIGNING_STATES = {
 }
 QUALIFICATION_MODES = {"Controlled", "ReleaseCandidate"}
 INPUT_MODES = {"BuildRoot", "PackageRoot"}
+CMAKE_PE_KINDS = {"cmake-executable", "cmake-shared-library"}
 ALLOWED_PACKAGE_METADATA = {"signing-provenance.json", "signing-provenance.json.p7s"}
 POLICY_KEYS = {
     "schemaVersion", "product", "architecture", "releaseSigningManifestPath",
@@ -68,6 +68,12 @@ POLICY_KEYS = {
 POLICY_LEGAL_KEYS = {"projectLicenseState", "distributionNoticesState"}
 POLICY_LIMIT_KEYS = {"maximumArtifactBytes", "maximumManifestBytes", "maximumPackagedFiles"}
 POLICY_ARTIFACT_KEYS = {"id", "componentRole", "packagePath"}
+POLICY_THIRD_PARTY_KEYS = {
+    "id", "provider", "version", "deploymentTool", "requiredPaths",
+}
+MANIFEST_THIRD_PARTY_KEYS = {
+    "id", "provider", "version", "deploymentTool", "packagePath", "bytes", "sha256",
+}
 SIGNING_MANIFEST_KEYS = {"schemaVersion", "releaseScope", "artifacts", "excludedArtifactClasses"}
 MANIFEST_KEYS = {
     "schemaVersion", "kind", "product", "release", "source", "reviewedInputs",
@@ -242,6 +248,27 @@ def _safe_package_path(value: object, label: str) -> str:
     return value
 
 
+def _safe_x64_runtime_path(
+    value: object,
+    label: str,
+    *,
+    allow_vc_redist: bool = False,
+) -> str:
+    value = _safe_repo_relative(value, label)
+    pure = PurePosixPath(value)
+    if len(pure.parts) < 2 or len(pure.parts) > 8 or pure.parts[0] != "x64":
+        raise ArtifactManifestError(f"{label} must stay below the x64 package root")
+    if any(not SAFE_FILE.fullmatch(part) for part in pure.parts[1:]):
+        raise ArtifactManifestError(f"{label} contains an unsafe path segment")
+    if pure.suffix.lower() == ".dll":
+        return value
+    if allow_vc_redist and value.casefold() == "x64/vc_redist.x64.exe":
+        return value
+    raise ArtifactManifestError(
+        f"{label} must name a DLL or the reviewed vc_redist.x64.exe prerequisite"
+    )
+
+
 def _safe_token(value: object, label: str) -> str:
     if not isinstance(value, str) or not TOKEN.fullmatch(value):
         raise ArtifactManifestError(f"{label} is not a bounded token")
@@ -319,12 +346,54 @@ def _validate_policy(policy: dict, repo_root: Path) -> tuple[dict, dict]:
         seen_casefold.add(folded)
         roles_by_id[artifact_id] = (role, package_path)
     third_party = policy["thirdPartyRedistributables"]
-    if not isinstance(third_party, list):
-        raise ArtifactManifestError("thirdPartyRedistributables must be an array")
-    if third_party:
+    if not isinstance(third_party, list) or len(third_party) != 2:
         raise ArtifactManifestError(
-            "current reviewed signing scope declares no third-party redistributables; update release policy explicitly before shipping one"
+            "reviewed release must declare the bounded Qt runtime and MSVC prerequisite groups"
         )
+
+    qt_runtime, msvc_runtime = third_party
+    if not isinstance(qt_runtime, dict) or not isinstance(msvc_runtime, dict):
+        raise ArtifactManifestError("third-party runtime policies must be objects")
+    _exact_keys(qt_runtime, POLICY_THIRD_PARTY_KEYS, "Qt runtime policy")
+    _exact_keys(msvc_runtime, POLICY_THIRD_PARTY_KEYS, "MSVC runtime policy")
+
+    if (
+        qt_runtime["id"] != "qt-runtime"
+        or qt_runtime["provider"] != "Qt Project"
+        or qt_runtime["version"] != "6.8.3"
+        or qt_runtime["deploymentTool"] != "windeployqt"
+    ):
+        raise ArtifactManifestError(
+            "Qt runtime policy differs from the reviewed 6.8.3 contract"
+        )
+    qt_required = [
+        "x64/Qt6Core.dll",
+        "x64/Qt6Gui.dll",
+        "x64/Qt6Widgets.dll",
+        "x64/platforms/qwindows.dll",
+    ]
+    if qt_runtime["requiredPaths"] != qt_required:
+        raise ArtifactManifestError(
+            "Qt runtime required path set differs from the reviewed contract"
+        )
+    for path in qt_required:
+        _safe_x64_runtime_path(path, "Qt runtime required path")
+
+    if (
+        msvc_runtime["id"] != "msvc-runtime-installer"
+        or msvc_runtime["provider"] != "Microsoft"
+        or msvc_runtime["version"] != "VS2022"
+        or msvc_runtime["deploymentTool"] != "visual-studio-redist"
+        or msvc_runtime["requiredPaths"] != ["x64/vc_redist.x64.exe"]
+    ):
+        raise ArtifactManifestError(
+            "MSVC prerequisite policy differs from the reviewed VS2022 contract"
+        )
+    _safe_x64_runtime_path(
+        "x64/vc_redist.x64.exe",
+        "MSVC runtime prerequisite path",
+        allow_vc_redist=True,
+    )
     signing_doc, _ = _load_json(repo_root / signing_path, "reviewed release signing manifest")
     _exact_keys(signing_doc, SIGNING_MANIFEST_KEYS, "reviewed release signing manifest")
     if signing_doc["schemaVersion"] != 1:
@@ -357,7 +426,7 @@ def _validate_policy(policy: dict, repo_root: Path) -> tuple[dict, dict]:
         _ = role
         if PurePosixPath(package_path).name != file_name:
             raise ArtifactManifestError("preflight packagePath basename differs from signing manifest fileName")
-        if kind == "cmake-executable":
+        if kind in CMAKE_PE_KINDS:
             target = signing.get("target")
             if not isinstance(target, str) or not SAFE_TARGET.fullmatch(target):
                 raise ArtifactManifestError("release executable has invalid CMake target")
@@ -546,7 +615,7 @@ def _artifact_source_map(
         if input_mode == "PackageRoot":
             source_locator = declared["packagePath"]
             source = _resolve_under(package_root, source_locator, "package artifact path")
-        elif signing["kind"] == "cmake-executable":
+        elif signing["kind"] in CMAKE_PE_KINDS:
             relative = f"{configuration}/{file_name}" if cache_info["multiConfig"] else file_name
             source_locator = relative.replace("\\", "/")
             source = _resolve_under(build_root, source_locator, "build artifact path")
@@ -567,58 +636,134 @@ def _walk_regular_files(root: Path, maximum_files: int) -> set[str]:
     _integer(maximum_files, "maximum packaged files", 1, 64)
     result: set[str] = set()
     folded: set[str] = set()
-    root_entries = 0
-    for child in root.iterdir():
-        root_entries += 1
-        if root_entries > maximum_files + len(ALLOWED_PACKAGE_METADATA) + 1:
-            raise ArtifactManifestError("package root contains an unbounded number of entries")
-        if child.name == "x64":
-            if not child.is_dir() or _is_reparse(child):
-                raise ArtifactManifestError("package x64 root must be one non-reparse directory")
-            x64_entries = 0
-            for leaf in child.iterdir():
-                x64_entries += 1
-                if x64_entries > maximum_files:
-                    raise ArtifactManifestError("package x64 root exceeds the reviewed file-count bound")
-                if _is_reparse(leaf) or not leaf.is_file():
-                    raise ArtifactManifestError("package contains a reparse/symlink/non-regular x64 entry")
-                relative = f"x64/{leaf.name}"
-                _safe_package_path(relative, "packaged x64 file path")
-                key = relative.casefold()
-                if key in folded:
-                    raise ArtifactManifestError("package contains Windows case-fold path collision")
-                folded.add(key)
-                result.add(relative)
-            continue
-        if child.is_dir() or _is_reparse(child) or not child.is_file():
-            raise ArtifactManifestError("package contains an unexpected/reparse directory or non-regular root entry")
-        relative = _safe_repo_relative(child.name, "packaged root metadata path")
+    directory_count = 0
+
+    def add_file(path: Path, label: str) -> None:
+        nonlocal result, folded
+        if _is_reparse(path) or not path.is_file():
+            raise ArtifactManifestError(f"{label} is not a regular non-reparse file")
+        relative = path.relative_to(root).as_posix()
+        _safe_repo_relative(relative, label)
         key = relative.casefold()
         if key in folded:
             raise ArtifactManifestError("package contains Windows case-fold path collision")
         folded.add(key)
         result.add(relative)
-    if len(result) > maximum_files + len(ALLOWED_PACKAGE_METADATA):
-        raise ArtifactManifestError("package file inventory exceeds the reviewed bounded count")
+        if len(result) > maximum_files + len(ALLOWED_PACKAGE_METADATA):
+            raise ArtifactManifestError("package file inventory exceeds the reviewed bounded count")
+
+    root_entries = list(root.iterdir())
+    if len(root_entries) > maximum_files + len(ALLOWED_PACKAGE_METADATA) + 1:
+        raise ArtifactManifestError("package root contains an unbounded number of entries")
+
+    for child in root_entries:
+        if child.name == "x64":
+            if not child.is_dir() or _is_reparse(child):
+                raise ArtifactManifestError("package x64 root must be one non-reparse directory")
+            pending = [child]
+            while pending:
+                directory = pending.pop()
+                directory_count += 1
+                if directory_count > maximum_files:
+                    raise ArtifactManifestError("package x64 directory inventory exceeds the reviewed bound")
+                for entry in directory.iterdir():
+                    if _is_reparse(entry):
+                        raise ArtifactManifestError("package contains a reparse/symlink x64 entry")
+                    if entry.is_dir():
+                        pending.append(entry)
+                        continue
+                    if not entry.is_file():
+                        raise ArtifactManifestError("package contains a non-regular x64 entry")
+                    relative = entry.relative_to(root).as_posix()
+                    pure = PurePosixPath(_safe_repo_relative(relative, "packaged x64 file path"))
+                    if pure.parts[0] != "x64" or len(pure.parts) > 8 or                        any(not SAFE_FILE.fullmatch(part) for part in pure.parts[1:]):
+                        raise ArtifactManifestError("packaged x64 file path is outside the reviewed bounded shape")
+                    add_file(entry, "packaged x64 file")
+            continue
+
+        if child.is_dir() or _is_reparse(child):
+            raise ArtifactManifestError("package contains an unexpected/reparse root directory")
+        add_file(child, "packaged root metadata path")
+
     return result
 
 
 def _validate_package_file_set(package_root: Path, policy: dict) -> None:
     actual = _walk_regular_files(package_root, policy["limits"]["maximumPackagedFiles"])
-    required = {item["packagePath"] for item in policy["artifacts"]}
+    core_required = {item["packagePath"] for item in policy["artifacts"]}
+    runtime_required = {
+        path
+        for group in policy["thirdPartyRedistributables"]
+        for path in group["requiredPaths"]
+    }
+    required = core_required | runtime_required
+
     provenance_present = "signing-provenance.json" in actual
     signature_present = "signing-provenance.json.p7s" in actual
     if provenance_present != signature_present:
         raise ArtifactManifestError("package contains an incomplete signing provenance pair")
-    allowed = set(required)
-    if provenance_present:
-        allowed |= ALLOWED_PACKAGE_METADATA
+
     missing = sorted(required - actual)
-    extra = sorted(actual - allowed)
     if missing:
-        raise ArtifactManifestError("release package is missing allowlisted file(s): " + ", ".join(missing))
-    if extra:
-        raise ArtifactManifestError("release package contains unexpected file(s): " + ", ".join(extra))
+        raise ArtifactManifestError(
+            "release package is missing allowlisted file(s): " + ", ".join(missing)
+        )
+
+    extras = actual - core_required - runtime_required - ALLOWED_PACKAGE_METADATA
+    for path in sorted(extras):
+        _safe_x64_runtime_path(
+            path,
+            "deployed third-party runtime path",
+            allow_vc_redist=True,
+        )
+
+
+def _third_party_runtime_rows(package_root: Path | None, policy: dict) -> list[dict]:
+    if package_root is None:
+        return []
+
+    package_root = package_root.resolve()
+    actual = _walk_regular_files(
+        package_root, policy["limits"]["maximumPackagedFiles"]
+    )
+    core = {item["packagePath"] for item in policy["artifacts"]}
+    runtime_paths = sorted(
+        actual - core - ALLOWED_PACKAGE_METADATA,
+        key=str.casefold,
+    )
+    qt_policy, msvc_policy = policy["thirdPartyRedistributables"]
+    rows: list[dict] = []
+    for package_path in runtime_paths:
+        _safe_x64_runtime_path(
+            package_path,
+            "manifest third-party runtime path",
+            allow_vc_redist=True,
+        )
+        runtime_policy = (
+            msvc_policy
+            if package_path.casefold() == "x64/vc_redist.x64.exe"
+            else qt_policy
+        )
+        path = _resolve_under(
+            package_root,
+            package_path,
+            "manifest third-party runtime file",
+        )
+        sha256, size = _sha256_file(
+            path,
+            "manifest third-party runtime file",
+            policy["limits"]["maximumArtifactBytes"],
+        )
+        rows.append({
+            "id": runtime_policy["id"],
+            "provider": runtime_policy["provider"],
+            "version": runtime_policy["version"],
+            "deploymentTool": runtime_policy["deploymentTool"],
+            "packagePath": package_path,
+            "bytes": size,
+            "sha256": sha256,
+        })
+    return rows
 
 
 def inspect_release_inputs(
@@ -685,11 +830,11 @@ def inspect_release_inputs(
     for record in records:
         artifact_id = record["declared"]["id"]
         report["expected"].append(artifact_id)
-        if record["signing"]["kind"] == "cmake-executable":
+        if record["signing"]["kind"] in CMAKE_PE_KINDS:
             allowed_build_names.add(record["signing"]["fileName"].casefold())
         try:
             _assert_regular(record["path"], f"expected release artifact {artifact_id}", max_artifact)
-            if record["signing"]["kind"] == "cmake-executable":
+            if record["signing"]["kind"] in CMAKE_PE_KINDS:
                 _, signed = _pe_observation(record["path"], max_artifact)
             else:
                 signed = _script_signature_observation(record["path"], max_artifact)
@@ -785,7 +930,7 @@ def generate_release_bundle(
     for record in records:
         artifact_id = record["declared"]["id"]
         digest, size = _sha256_file(record["path"], f"release artifact {artifact_id}", max_artifact)
-        if record["signing"]["kind"] == "cmake-executable":
+        if record["signing"]["kind"] in CMAKE_PE_KINDS:
             architecture, signed_material = _pe_observation(record["path"], max_artifact)
         else:
             architecture = "x64"
@@ -843,11 +988,18 @@ def generate_release_bundle(
             "signingProvenanceSha256": signing_provenance,
             "provenanceState": provenance_state,
         })
+    third_party_rows = _third_party_runtime_rows(
+        package_root if input_mode == "PackageRoot" else None,
+        inputs["policy"],
+    )
+
     blockers: list[str] = []
     if qualification_mode == "Controlled":
         blockers.append("controlled-preflight-only")
     if source["treeState"] != "Clean":
         blockers.append("source-tree-dirty")
+    if not package_verified:
+        blockers.append("qt-runtime-package-not-verified")
     if any(row["signingState"] != "ProductionSignatureVerified" for row in artifact_rows):
         blockers.append("production-signatures-not-independently-verified")
     if inputs["policy"]["legal"]["projectLicenseState"] != "Resolved":
@@ -887,7 +1039,7 @@ def generate_release_bundle(
         },
         "legal": copy.deepcopy(inputs["policy"]["legal"]),
         "artifacts": sorted(artifact_rows, key=lambda item: item["id"]),
-        "thirdPartyRedistributables": [],
+        "thirdPartyRedistributables": third_party_rows,
         "integrity": {
             "artifactBytesVerified": True,
             "manifestDeterministic": True,
@@ -931,7 +1083,18 @@ def generate_release_bundle(
 
 
 def _checksum_bytes(manifest: dict) -> bytes:
-    lines = [f"{item['sha256']}  {item['packagePath']}" for item in sorted(manifest["artifacts"], key=lambda row: row["packagePath"].casefold())]
+    rows = [
+        (item["packagePath"], item["sha256"])
+        for item in manifest["artifacts"]
+    ]
+    rows.extend(
+        (item["packagePath"], item["sha256"])
+        for item in manifest["thirdPartyRedistributables"]
+    )
+    lines = [
+        f"{sha256}  {package_path}"
+        for package_path, sha256 in sorted(rows, key=lambda row: row[0].casefold())
+    ]
     return ("\n".join(lines) + "\n").encode("ascii")
 
 
@@ -951,6 +1114,20 @@ def _sbom_document(manifest: dict, manifest_sha: str) -> dict:
                 {"name": "hydraseat:sourceCommitSha", "value": item["sourceCommitSha"]},
             ],
         })
+    for item in manifest["thirdPartyRedistributables"]:
+        components.append({
+            "type": "file",
+            "name": PurePosixPath(item["packagePath"]).name,
+            "version": item["version"],
+            "hashes": [{"alg": "SHA-256", "content": item["sha256"]}],
+            "properties": [
+                {"name": "hydraseat:thirdPartyId", "value": item["id"]},
+                {"name": "hydraseat:provider", "value": item["provider"]},
+                {"name": "hydraseat:deploymentTool", "value": item["deploymentTool"]},
+                {"name": "hydraseat:packagePath", "value": item["packagePath"]},
+            ],
+        })
+
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
@@ -971,7 +1148,10 @@ def _sbom_document(manifest: dict, manifest_sha: str) -> dict:
         },
         "components": components,
         "properties": [
-            {"name": "hydraseat:thirdPartyRedistributables", "value": "0"},
+            {
+                "name": "hydraseat:thirdPartyRedistributables",
+                "value": str(len(manifest["thirdPartyRedistributables"])),
+            },
             {"name": "hydraseat:distributionNoticesState", "value": manifest["legal"]["distributionNoticesState"]},
         ],
     }
@@ -1038,8 +1218,104 @@ def _validate_manifest_structure(manifest: dict, inputs: dict) -> None:
     _exact_keys(manifest["legal"], LEGAL_KEYS, "manifest legal state")
     if manifest["legal"] != inputs["policy"]["legal"]:
         raise ArtifactManifestError("manifest legal state differs from reviewed policy")
-    if manifest["thirdPartyRedistributables"] != []:
-        raise ArtifactManifestError("manifest invents undeclared third-party redistributables")
+    third_party = manifest["thirdPartyRedistributables"]
+    runtime_policies = inputs["policy"]["thirdPartyRedistributables"]
+    policy_by_runtime_id = {
+        item["id"]: item for item in runtime_policies
+    }
+    required_runtime_paths = {
+        path.casefold()
+        for policy in runtime_policies
+        for path in policy["requiredPaths"]
+    }
+    if manifest["source"]["inputMode"] == "BuildRoot":
+        if third_party != []:
+            raise ArtifactManifestError(
+                "BuildRoot manifest cannot claim third-party runtime bytes that were not staged"
+            )
+    else:
+        if (
+            not isinstance(third_party, list)
+            or len(third_party) < len(required_runtime_paths)
+        ):
+            raise ArtifactManifestError(
+                "PackageRoot manifest is missing reviewed third-party runtime bytes"
+            )
+        seen_runtime: set[str] = set()
+        previous_runtime_path = ""
+        for item in third_party:
+            if not isinstance(item, dict):
+                raise ArtifactManifestError(
+                    "manifest third-party runtime record must be an object"
+                )
+            _exact_keys(
+                item,
+                MANIFEST_THIRD_PARTY_KEYS,
+                "manifest third-party runtime record",
+            )
+            runtime_policy = policy_by_runtime_id.get(item["id"])
+            if runtime_policy is None or (
+                item["provider"] != runtime_policy["provider"]
+                or item["version"] != runtime_policy["version"]
+                or item["deploymentTool"] != runtime_policy["deploymentTool"]
+            ):
+                raise ArtifactManifestError(
+                    "manifest third-party runtime identity differs from reviewed policy"
+                )
+
+            package_path = _safe_x64_runtime_path(
+                item["packagePath"],
+                "manifest third-party runtime package path",
+                allow_vc_redist=True,
+            )
+            if (
+                item["id"] == "msvc-runtime-installer"
+                and package_path.casefold() != "x64/vc_redist.x64.exe"
+            ):
+                raise ArtifactManifestError(
+                    "MSVC prerequisite record has an unreviewed package path"
+                )
+            if (
+                item["id"] == "qt-runtime"
+                and not package_path.casefold().endswith(".dll")
+            ):
+                raise ArtifactManifestError(
+                    "Qt runtime record must describe a DLL"
+                )
+
+            if (
+                previous_runtime_path
+                and package_path.casefold() <= previous_runtime_path.casefold()
+            ):
+                raise ArtifactManifestError(
+                    "manifest third-party runtime ordering is not deterministic"
+                )
+            previous_runtime_path = package_path
+            folded = package_path.casefold()
+            if folded in seen_runtime:
+                raise ArtifactManifestError(
+                    "manifest third-party runtime contains a duplicate/case-fold path"
+                )
+            seen_runtime.add(folded)
+            _integer(
+                item["bytes"],
+                "manifest third-party runtime bytes",
+                1,
+                inputs["policy"]["limits"]["maximumArtifactBytes"],
+            )
+            _safe_hex(
+                item["sha256"],
+                64,
+                "manifest third-party runtime hash",
+            )
+
+        missing_runtime = sorted(required_runtime_paths - seen_runtime)
+        if missing_runtime:
+            raise ArtifactManifestError(
+                "manifest third-party runtime omits required reviewed path(s): "
+                + ", ".join(missing_runtime)
+            )
+
     artifacts = manifest["artifacts"]
     if not isinstance(artifacts, list) or len(artifacts) != len(inputs["policy"]["artifacts"]):
         raise ArtifactManifestError("manifest artifact count differs from reviewed allowlist")
@@ -1100,6 +1376,16 @@ def _validate_manifest_structure(manifest: dict, inputs: dict) -> None:
         raise ArtifactManifestError("controlled manifest omitted controlled-preflight qualification blocker")
     if manifest["source"]["treeState"] != "Clean" and "source-tree-dirty" not in blockers:
         raise ArtifactManifestError("dirty source manifest omitted qualification blocker")
+    if manifest["source"]["inputMode"] == "BuildRoot":
+        if integrity["packageFileSetVerified"] is not False or            "qt-runtime-package-not-verified" not in blockers:
+            raise ArtifactManifestError(
+                "BuildRoot manifest must remain blocked on unstaged Qt runtime"
+            )
+    else:
+        if integrity["packageFileSetVerified"] is not True or            "qt-runtime-package-not-verified" in blockers:
+            raise ArtifactManifestError(
+                "PackageRoot manifest has inconsistent Qt package verification state"
+            )
     if any(item["signingState"] != "ProductionSignatureVerified" for item in artifacts) and \
        "production-signatures-not-independently-verified" not in blockers:
         raise ArtifactManifestError("manifest falsely qualifies without independent production signature verification")
@@ -1187,7 +1473,7 @@ def validate_release_bundle(
             raise ArtifactManifestError(f"artifact bytes changed after manifest generation: {item['id']}")
         if size != item["bytes"]:
             raise ArtifactManifestError(f"artifact size changed after manifest generation: {item['id']}")
-        if item["kind"] == "cmake-executable":
+        if item["kind"] in CMAKE_PE_KINDS:
             architecture, signature_present = _pe_observation(path, max_artifact)
             if architecture != item["architecture"]:
                 raise ArtifactManifestError(f"artifact architecture changed: {item['id']}")
@@ -1201,6 +1487,22 @@ def validate_release_bundle(
         if state == "ProductionSignatureVerified":
             if not signature_present or item["signingProvenanceSha256"] != signing_provenance_hash:
                 raise ArtifactManifestError("production signature claim does not revalidate against exact P8 signing provenance")
+
+    if manifest["source"]["inputMode"] == "PackageRoot":
+        for item in manifest["thirdPartyRedistributables"]:
+            path = _resolve_under(
+                package_root.resolve(),
+                item["packagePath"],
+                "manifest-bound Qt runtime file",
+            )
+            digest, size = _sha256_file(
+                path, "manifest-bound Qt runtime file", max_artifact
+            )
+            if digest != item["sha256"] or size != item["bytes"]:
+                raise ArtifactManifestError(
+                    "Qt runtime bytes changed after manifest generation"
+                )
+
     output_dir = manifest_path.parent
     checksum_bytes = _read_bounded(output_dir / CHECKSUMS_NAME, "release checksum file", MAX_JSON_BYTES)
     if checksum_bytes != _checksum_bytes(manifest):
@@ -1257,7 +1559,9 @@ def _fixture_repo(root: Path) -> tuple[Path, Path, str]:
     artifact_specs = [
         ("main-ui", "HydraSeat", "HydraSeat.exe", "ApplicationUI"),
         ("host", "hydra_host", "hydra_host.exe", "AuthoritativeHost"),
-        ("seat-ui", "hydra_seat_ui", "hydra_seat_ui.exe", "SeatUI"),
+        ("gate-c-adapter", "hydra_gate_c_adapter", "hydra_gate_c_adapter.dll", "RuntimeComponent"),
+        ("gate-c-shim", "hydra_gate_c_shim", "hydra_gate_c_shim.dll", "RuntimeComponent"),
+        ("gate-c-external-bridge", "hydra_gate_c_external_bridge", "hydra_gate_c_external_bridge.dll", "RuntimeComponent"),
         ("watchdog", "hydra_watchdog", "hydra_watchdog.exe", "RecoveryWatchdog"),
         ("reset", "hydra_reset", "hydra_reset.exe", "RecoveryReset"),
         ("profile-cli", "hydraseat_profilectl", "hydraseat_profilectl.exe", "ProfileCLI"),
@@ -1269,7 +1573,7 @@ def _fixture_repo(root: Path) -> tuple[Path, Path, str]:
     for index, (artifact_id, target, file_name, role) in enumerate(artifact_specs):
         signing["artifacts"].append({
             "id": artifact_id,
-            "kind": "cmake-executable",
+            "kind": "cmake-shared-library" if file_name.endswith(".dll") else "cmake-executable",
             "target": target,
             "fileName": file_name,
             "architectures": ["x64"],
@@ -1298,9 +1602,29 @@ def _fixture_repo(root: Path) -> tuple[Path, Path, str]:
         "releaseSigningManifestPath": "config/release-signing-manifest.json",
         "releaseScopePath": "config/release-scope-v1.json",
         "legal": {"projectLicenseState": "Unresolved", "distributionNoticesState": "Unresolved"},
-        "limits": {"maximumArtifactBytes": 1024 * 1024, "maximumManifestBytes": MAX_JSON_BYTES, "maximumPackagedFiles": 16},
+        "limits": {"maximumArtifactBytes": 1024 * 1024, "maximumManifestBytes": MAX_JSON_BYTES, "maximumPackagedFiles": 64},
         "artifacts": policy_artifacts,
-        "thirdPartyRedistributables": [],
+        "thirdPartyRedistributables": [
+            {
+                "id": "qt-runtime",
+                "provider": "Qt Project",
+                "version": "6.8.3",
+                "deploymentTool": "windeployqt",
+                "requiredPaths": [
+                    "x64/Qt6Core.dll",
+                    "x64/Qt6Gui.dll",
+                    "x64/Qt6Widgets.dll",
+                    "x64/platforms/qwindows.dll",
+                ],
+            },
+            {
+                "id": "msvc-runtime-installer",
+                "provider": "Microsoft",
+                "version": "VS2022",
+                "deploymentTool": "visual-studio-redist",
+                "requiredPaths": ["x64/vc_redist.x64.exe"],
+            },
+        ],
     }
     (repo / "config" / "release-signing-manifest.json").write_bytes(_canonical_json_bytes(signing))
     (repo / "config" / "release-scope-v1.json").write_bytes(_canonical_json_bytes(scope))
@@ -1328,14 +1652,27 @@ def _fixture_repo(root: Path) -> tuple[Path, Path, str]:
 
 def _make_package(repo: Path, build: Path, package: Path) -> None:
     inputs = load_reviewed_inputs(repo)
-    (package / "x64").mkdir(parents=True)
+    x64 = package / "x64"
+    x64.mkdir(parents=True)
     for signing in inputs["signing"]["artifacts"]:
-        destination = package / "x64" / signing["fileName"]
-        if signing["kind"] == "cmake-executable":
+        destination = x64 / signing["fileName"]
+        if signing["kind"] in CMAKE_PE_KINDS:
             source = build / "Release" / signing["fileName"]
         else:
             source = repo / signing["sourcePath"]
         shutil.copyfile(source, destination)
+
+    # Deterministic stand-ins for the exact reviewed Qt runtime paths. These
+    # fixtures exercise package ownership/hash semantics only; they never claim
+    # production Qt provenance or execute the bytes.
+    for group in inputs["policy"]["thirdPartyRedistributables"]:
+        for relative in group["requiredPaths"]:
+            pure = PurePosixPath(relative)
+            destination = package.joinpath(*pure.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(
+                b"fixture-third-party:" + relative.encode("ascii") + b"\n"
+            )
 
 
 def _expect_error(label: str, operation: Callable[[], object]) -> None:
@@ -1422,8 +1759,10 @@ def self_test() -> None:
 
         bounded_package = base / "bounded-package"
         _make_package(repo, build, bounded_package)
-        for index in range(9):
-            (bounded_package / "x64" / f"extra-{index}.tmp").write_bytes(b"bounded-extra")
+        for index in range(60):
+            (bounded_package / "x64" / f"extra-{index}.dll").write_bytes(
+                b"bounded-extra"
+            )
         _expect_error("unbounded package entry count", lambda: generate_release_bundle(
             repo, base / "bounded-out", "PackageRoot", None, bounded_package,
             "Release", "0.1.0", 7, commit, "Controlled"))
@@ -1467,7 +1806,7 @@ def self_test() -> None:
         policy_path.write_bytes(original_policy_bytes)
 
         # 10 wrong PE architecture.
-        wrong_arch = build / "Release" / "hydra_seat_ui.exe"
+        wrong_arch = build / "Release" / "HydraSeat.exe"
         right_arch_bytes = wrong_arch.read_bytes()
         wrong_arch.write_bytes(_make_fake_pe(machine=0x14C))
         _expect_error("wrong architecture", lambda: generate_release_bundle(

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "productVersion": "v1",
-  "scopeDate": "2026-08-29",
+  "scopeDate": "2026-10-04",
   "scopeSemantics": {
     "release-target": "Inside the HydraSeat v1 release qualification matrix; not a support claim until required validation passes.",
     "experimental": "May be exercised only with explicit warning/opt-in and is not part of the normal v1 support promise.",
@@ -20,7 +20,7 @@
   "hostPlatform": {
     "operatingSystem": "Windows",
     "hostArchitecture": "x64",
-    "targetProcessArchitectures": ["x64", "x86"],
+    "targetProcessArchitectures": ["x64"],
     "windowsBuildFamilies": [
       {
         "id": "windows-11-24h2",
@@ -81,13 +81,13 @@
       "id": "controller.xinput",
       "disposition": "release-target",
       "validation": "physical-manual-required",
-      "notes": "XInput is a distinct controller API and requires scenario-specific physical evidence."
+      "notes": "v1 XInput production routing is limited to the reviewed main-executable static-import redirect path; dependent/dynamic module XInput is not implied. Every claimed title/scenario still requires specific physical evidence."
     },
     {
       "id": "controller.directinput",
-      "disposition": "release-target",
-      "validation": "physical-manual-required",
-      "notes": "DirectInput is a distinct controller API and requires scenario-specific physical evidence."
+      "disposition": "deferred",
+      "validation": "not-required-for-v1",
+      "notes": "DirectInput policy/probe foundations exist, but no canonical production pairing/launch redirect path is integrated in v1; it must not be claimed by XInput evidence."
     },
     {
       "id": "controller.raw-hid-sdl-vendor",
@@ -103,9 +103,9 @@
     },
     {
       "id": "provider.steam-readonly-discovery",
-      "disposition": "release-target",
-      "validation": "real-provider-game-required",
-      "notes": "Read-only local discovery and normal Steam launch URI path only; no credential or launcher-policy bypass."
+      "disposition": "deferred",
+      "validation": "not-required-for-v1",
+      "notes": "Steam provider discovery/URI planning foundations exist, but the canonical v1 host/UI launch path does not consume them yet; no Steam product-path claim is made."
     },
     {
       "id": "provider.custom-exe",
@@ -139,9 +139,9 @@
     },
     {
       "id": "community.compatibility-sharing",
-      "disposition": "release-target",
-      "validation": "privacy-and-service-policy-required",
-      "notes": "Local-first evidence remains authoritative; sharing is explicit opt-in with exact redacted preview."
+      "disposition": "deferred",
+      "validation": "not-required-for-v1",
+      "notes": "Local validation/redaction/share-model foundations remain available, but v1 has no concrete submission transport or canonical opt-in UI; remote sharing is not a release-target."
     }
   ],
   "runtimePolicy": {
@@ -178,7 +178,7 @@
       "id": "microsoft-windows-client-supported-versions",
       "classification": "official-platform-documentation",
       "url": "https://learn.microsoft.com/en-us/windows/release-health/supported-versions-windows-client",
-      "consultedOn": "2026-08-29",
+      "consultedOn": "2026-10-04",
       "use": "Release-target Windows build-family snapshot only; no source code copied or adapted."
     }
   ]

@@ -4,6 +4,8 @@
 #include "hydra/gate_c_protocol.hpp"
 #include "hydra/gate_c_shim_api.h"
 #include "hydra/gate_c_transport.hpp"
+#include "hydra/win32_iat_patch.hpp"
+#include "hydra/xinput_iat_redirect.hpp"
 
 #ifdef _WIN32
 
@@ -13,7 +15,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -70,6 +74,53 @@ HWND findApplicationWindow(HWND bootstrap) {
     (void)EnumWindows(findWindowCallback,
                       reinterpret_cast<LPARAM>(&search));
     return search.found;
+}
+
+std::uint32_t detectSupportedApiMask() {
+    const auto replacement =
+        reinterpret_cast<std::uintptr_t>(&bridgeWindowProc);
+
+    std::uint32_t mask = 0u;
+
+    const std::array<std::uintptr_t, hydra::gatec::kPollingImportCount>
+        pollingReplacements{replacement, replacement, replacement};
+    for (std::uint32_t bit = 0u;
+         bit < hydra::gatec::kPollingImportCount;
+         ++bit) {
+        std::vector<hydra::gatec::PollingIatSlot> slots;
+        const auto report =
+            hydra::gatec::discoverCurrentProcessPollingImports(
+                pollingReplacements, 1u << bit, slots);
+        if (report) mask |= 1u << bit;
+    }
+
+    const std::array<std::uintptr_t, hydra::gatec::kCursorFocusImportCount>
+        cursorReplacements{
+            replacement, replacement, replacement, replacement, replacement,
+            replacement, replacement, replacement, replacement, replacement};
+    for (std::uint32_t bit = 0u;
+         bit < hydra::gatec::kCursorFocusImportCount;
+         ++bit) {
+        std::vector<hydra::gatec::CursorFocusIatSlot> slots;
+        const auto report =
+            hydra::gatec::discoverCurrentProcessCursorFocusImports(
+                cursorReplacements, 1u << bit, slots);
+        if (report) mask |= 1u << (bit + 3u);
+    }
+
+    const std::array<std::uintptr_t, hydra::gatec::kRawInputImportCount>
+        rawReplacements{replacement, replacement, replacement, replacement};
+    for (std::uint32_t bit = 0u;
+         bit < hydra::gatec::kRawInputImportCount;
+         ++bit) {
+        std::vector<hydra::gatec::RawInputIatSlot> slots;
+        const auto report =
+            hydra::gatec::discoverCurrentProcessRawInputImports(
+                rawReplacements, 1u << bit, slots);
+        if (report) mask |= 1u << (bit + 13u);
+    }
+
+    return mask;
 }
 
 bool readConfig(ExternalBridgeConfigV1& config) {
@@ -148,6 +199,24 @@ HydraGateCAdapterControlStateV1 adapterControl(
     return value;
 }
 
+std::optional<hydra::controller::XInputReplacementSet>
+xinputReplacements() {
+    const HMODULE module =
+        GetModuleHandleW(L"hydra_xinput_adapter.dll");
+    if (module == nullptr) return std::nullopt;
+
+    hydra::controller::XInputReplacementSet replacements;
+    replacements.getState = reinterpret_cast<std::uintptr_t>(
+        GetProcAddress(module, "XInputGetState"));
+    replacements.setState = reinterpret_cast<std::uintptr_t>(
+        GetProcAddress(module, "XInputSetState"));
+    replacements.getCapabilities =
+        reinterpret_cast<std::uintptr_t>(
+            GetProcAddress(module, "XInputGetCapabilities"));
+    if (!replacements.valid()) return std::nullopt;
+    return replacements;
+}
+
 bool configureWindow(HydraGateCAdapterHandle adapter, HWND target,
                      bool foreground, bool capture) {
     if (adapter == nullptr || target == nullptr) return false;
@@ -209,6 +278,15 @@ DWORD WINAPI bridgeWorker(void*) {
     ExternalBridgeConfigV1 config{};
     if (!readConfig(config)) return 10;
 
+    hydra::controller::XInputIatRedirect xinputRedirect;
+    if (GetModuleHandleW(L"hydra_xinput_adapter.dll") != nullptr) {
+        const auto replacements = xinputReplacements();
+        if (!replacements) return 19;
+        const auto redirect =
+            xinputRedirect.install(*replacements);
+        if (!redirect) return 20;
+    }
+
     HWND bootstrap = createBootstrapWindow();
     if (bootstrap == nullptr) return 11;
 
@@ -218,32 +296,51 @@ DWORD WINAPI bridgeWorker(void*) {
         return 12;
     }
 
-    HydraGateCShimConfigV3 shim{};
-    shim.struct_size = sizeof(shim);
-    shim.api_version = HYDRA_GATE_C_SHIM_API_VERSION;
-    shim.seat_id = config.seatId;
-    shim.process_id = GetCurrentProcessId();
-    shim.required_api_mask = config.requiredApiMask;
-    shim.target_window = reinterpret_cast<std::uint64_t>(bootstrap);
-    if ((config.requiredApiMask & HYDRA_GATE_C_SHIM_CURSOR_FOCUS_API_MASK) != 0) {
-        shim.flags |= HYDRA_GATE_C_SHIM_ENABLE_CURSOR_FOCUS;
-    }
-    if ((config.requiredApiMask & HYDRA_GATE_C_SHIM_RAW_INPUT_API_MASK) != 0) {
-        shim.flags |= HYDRA_GATE_C_SHIM_ENABLE_RAW_INPUT;
+    std::uint32_t requiredApiMask = config.requiredApiMask;
+    if (requiredApiMask ==
+        hydra::gatec::kExternalBridgeAutoDetectApiMask) {
+        requiredApiMask = detectSupportedApiMask();
     }
 
-    if (hydra_gate_c_shim_install_v3(adapter, &shim) !=
-        HYDRA_GATE_C_SHIM_OK) {
+    const bool xinputOnly =
+        requiredApiMask == 0u && xinputRedirect.installed();
+    if (!xinputOnly &&
+        !hydra::gatec::validProfiledShimMask(requiredApiMask)) {
         hydra_gate_c_adapter_destroy(adapter);
         DestroyWindow(bootstrap);
-        return 13;
+        return 18;
+    }
+
+    bool shimInstalled = false;
+    if (!xinputOnly) {
+        HydraGateCShimConfigV3 shim{};
+        shim.struct_size = sizeof(shim);
+        shim.api_version = HYDRA_GATE_C_SHIM_API_VERSION;
+        shim.seat_id = config.seatId;
+        shim.process_id = GetCurrentProcessId();
+        shim.required_api_mask = requiredApiMask;
+        shim.target_window = reinterpret_cast<std::uint64_t>(bootstrap);
+        if ((requiredApiMask & HYDRA_GATE_C_SHIM_CURSOR_FOCUS_API_MASK) != 0) {
+            shim.flags |= HYDRA_GATE_C_SHIM_ENABLE_CURSOR_FOCUS;
+        }
+        if ((requiredApiMask & HYDRA_GATE_C_SHIM_RAW_INPUT_API_MASK) != 0) {
+            shim.flags |= HYDRA_GATE_C_SHIM_ENABLE_RAW_INPUT;
+        }
+
+        if (hydra_gate_c_shim_install_v3(adapter, &shim) !=
+            HYDRA_GATE_C_SHIM_OK) {
+            hydra_gate_c_adapter_destroy(adapter);
+            DestroyWindow(bootstrap);
+            return 13;
+        }
+        shimInstalled = true;
     }
 
     std::string error;
     auto channel = hydra::gatec::connectGateCClient(
         config.pipeName, 5000, &error);
     if (!channel.valid()) {
-        (void)hydra_gate_c_shim_uninstall();
+        if (shimInstalled) (void)hydra_gate_c_shim_uninstall();
         hydra_gate_c_adapter_destroy(adapter);
         DestroyWindow(bootstrap);
         return 14;
@@ -257,7 +354,7 @@ DWORD WINAPI bridgeWorker(void*) {
     hello.targetWindow = reinterpret_cast<std::uint64_t>(bootstrap);
     if (!channel.writeFrame(hydra::gatec::encodeHello(1, hello), 5000,
                             &error)) {
-        (void)hydra_gate_c_shim_uninstall();
+        if (shimInstalled) (void)hydra_gate_c_shim_uninstall();
         hydra_gate_c_adapter_destroy(adapter);
         DestroyWindow(bootstrap);
         return 15;
@@ -267,7 +364,7 @@ DWORD WINAPI bridgeWorker(void*) {
     if (!ackFrame || !ackFrame.frame ||
         !hydra::gatec::decodeHelloAck(*ackFrame.frame, ack, &error) ||
         !ack.accepted) {
-        (void)hydra_gate_c_shim_uninstall();
+        if (shimInstalled) (void)hydra_gate_c_shim_uninstall();
         hydra_gate_c_adapter_destroy(adapter);
         DestroyWindow(bootstrap);
         return 16;
@@ -278,6 +375,7 @@ DWORD WINAPI bridgeWorker(void*) {
     bool virtualCapture = false;
     std::uint64_t lastSequence = 1;
     bool rawDiagnosticWritten = false;
+    bool gracefulShutdown = false;
     bool running = true;
     while (running) {
         HWND discovered = findApplicationWindow(bootstrap);
@@ -305,7 +403,7 @@ DWORD WINAPI bridgeWorker(void*) {
                 HYDRA_GATE_C_ADAPTER_OK) {
                 break;
             }
-            if ((config.requiredApiMask & HYDRA_GATE_C_SHIM_RAW_INPUT_API_MASK) != 0) {
+            if ((requiredApiMask & HYDRA_GATE_C_SHIM_RAW_INPUT_API_MASK) != 0) {
                 if (!rawDiagnosticWritten &&
                     input.kind == hydra::gatec::InputKind::Mouse) {
                     std::uint32_t registrationCount = 0;
@@ -361,22 +459,37 @@ DWORD WINAPI bridgeWorker(void*) {
         }
         if (frame.type == MessageType::Shutdown) {
             if (!hydra::gatec::decodeShutdown(frame, &error)) break;
+            gracefulShutdown = true;
             running = false;
             continue;
         }
         break;
     }
 
-    (void)hydra_gate_c_shim_mark_adapter_unavailable();
-    const bool restored = hydra_gate_c_shim_uninstall() ==
-                          HYDRA_GATE_C_SHIM_OK;
-    if (applicationWindow != nullptr && IsWindow(applicationWindow) != FALSE) {
-        (void)PostMessageW(applicationWindow, WM_CLOSE, 0, 0);
+    if (shimInstalled) {
+        (void)hydra_gate_c_shim_mark_adapter_unavailable();
     }
+    const bool shimRestored =
+        !shimInstalled ||
+        hydra_gate_c_shim_uninstall() == HYDRA_GATE_C_SHIM_OK;
+    const bool xinputRestored =
+        !xinputRedirect.installed() ||
+        static_cast<bool>(xinputRedirect.uninstall());
     channel.close();
     hydra_gate_c_adapter_destroy(adapter);
     DestroyWindow(bootstrap);
-    return restored ? 0 : 17;
+
+    if (!gracefulShutdown) {
+        // A broken host/bridge channel means this process can no longer prove
+        // Seat-local input ownership. Returning after restoring the original
+        // imports would reopen machine-wide keyboard/mouse/XInput access and
+        // fail open. Terminate the target immediately; the host Job Object then
+        // reconciles the exact owned process tree without relying on WM_CLOSE.
+        (void)TerminateProcess(GetCurrentProcess(), ERROR_DEVICE_NOT_CONNECTED);
+        return 21;
+    }
+
+    return shimRestored && xinputRestored ? 0 : 17;
 }
 
 } // namespace

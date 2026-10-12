@@ -23,11 +23,13 @@
 namespace hydra::installer {
 namespace {
 
-constexpr std::array<std::wstring_view, 9> kArchitectureFiles{
+constexpr std::array<std::wstring_view, 11> kArchitectureFiles{
     L"HydraSeatSetup.exe",
     L"HydraSeat.exe",
     L"hydra_host.exe",
-    L"hydra_seat_ui.exe",
+    L"hydra_gate_c_adapter.dll",
+    L"hydra_gate_c_shim.dll",
+    L"hydra_gate_c_external_bridge.dll",
     L"hydra_watchdog.exe",
     L"hydra_reset.exe",
     L"hydraseat_profilectl.exe",

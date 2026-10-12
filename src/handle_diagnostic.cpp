@@ -39,6 +39,7 @@ int main() {
 
     // Also print to console
     FILE* f2 = fopen("handle_diagnostic.txt", "r");
+    if (!f2) return 1;
     char buf[1024];
     while (fgets(buf, sizeof(buf), f2)) {
         printf("%s", buf);

@@ -1,4 +1,5 @@
 #include "hydra/controller_inventory.hpp"
+#include "hydra/raw_input_utils.hpp"
 
 #include <array>
 #include <cwchar>
@@ -156,13 +157,33 @@ bool appendPhysicalControllers(std::vector<PhysicalControllerDescriptor>& output
         std::uint16_t productId = 0;
         if (!describeGameController(detail->DevicePath, vendorId, productId)) continue;
 
-        GUID containerId{};
-        if (!readContainerId(deviceSet, deviceInfo, containerId)) continue;
-        const auto persistentId = formatContainerId(containerId);
+        // HID controller interfaces can also be provided by ViGEm/vJoy/other
+        // virtual buses. Reuse the same SetupAPI/Config Manager ancestry
+        // resolution as keyboard/mouse inventory and expose only controllers
+        // that can be tied to a local physical transport.
+        const auto identity =
+            hydra::win32::resolveDeviceInterfaceIdentity(detail->DevicePath);
+        if (identity.syntheticOrRemote || !identity.physicalTransportProven) {
+            continue;
+        }
+
+        std::wstring persistentId;
+        if (identity.physicalContainerId &&
+            !identity.physicalContainerId->empty()) {
+            persistentId = L"container:" + *identity.physicalContainerId;
+        } else {
+            GUID containerId{};
+            if (!readContainerId(deviceSet, deviceInfo, containerId)) continue;
+            persistentId = formatContainerId(containerId);
+        }
+        persistentId = canonicalPersistentId(std::move(persistentId));
         if (!seenContainers.insert(persistentId).second) continue;
 
-        auto displayName = readStringProperty(
-            deviceSet, deviceInfo, DEVPKEY_Device_FriendlyName);
+        auto displayName = identity.physicalDisplayName.value_or(std::wstring{});
+        if (displayName.empty()) {
+            displayName = readStringProperty(
+                deviceSet, deviceInfo, DEVPKEY_Device_FriendlyName);
+        }
         if (displayName.empty()) {
             displayName = readStringProperty(
                 deviceSet, deviceInfo, DEVPKEY_Device_DeviceDesc);

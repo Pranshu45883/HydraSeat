@@ -17,7 +17,10 @@ void printCategory(
                    << L"  Path: "
                    << (device.devicePath.empty() ? L"<unavailable>" : device.devicePath)
                    << L"\n"
-                   << L"  Native/index: " << device.nativeHandle << L"\n\n";
+                   << L"  Native/index: " << device.nativeHandle << L"\n"
+                   << L"  Activity confirmation: "
+                   << (device.requiresActivityConfirmation ? L"required" : L"not required")
+                   << L"\n\n";
     }
 }
 

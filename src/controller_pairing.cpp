@@ -33,8 +33,8 @@ XInputPairingSnapshot captureXInputPairingSnapshot() noexcept {
         XINPUT_STATE native{};
         const DWORD result = XInputGetState(static_cast<DWORD>(slot), &native);
         if (result == ERROR_SUCCESS) {
-            snapshot.slots[slot].connected = true;
-            snapshot.slots[slot].state = normalizeXInputState(native);
+            snapshot.slotStates[slot].connected = true;
+            snapshot.slotStates[slot].state = normalizeXInputState(native);
             continue;
         }
         if (result != ERROR_DEVICE_NOT_CONNECTED) {
@@ -60,8 +60,8 @@ PairingProbeResult detectUniqueXInputButtonPress(
 
     std::optional<std::uint8_t> candidate;
     for (std::uint8_t slot = 0; slot < kXInputSlotCount; ++slot) {
-        const auto& previous = before.slots[slot];
-        const auto& current = after.slots[slot];
+        const auto& previous = before.slotStates[slot];
+        const auto& current = after.slotStates[slot];
         if (!previous.connected || !current.connected) continue;
 
         const std::uint16_t newlyPressed = static_cast<std::uint16_t>(

@@ -1,11 +1,16 @@
 #include "ui/pages/applications_page.hpp"
+#include "ui/application_library.hpp"
+#include "ui/ui_settings.hpp"
 
 #include <QByteArray>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <utility>
 
@@ -33,6 +38,11 @@ std::string utf8(const QString& value) {
     const QByteArray bytes = value.toUtf8();
     return std::string(bytes.constData(), static_cast<std::size_t>(bytes.size()));
 }
+
+struct HostSnapshotTaskResult {
+    std::optional<hydra::hostipc::HostSnapshot> snapshot;
+    std::string error;
+};
 
 } // namespace
 
@@ -210,6 +220,16 @@ ApplicationsPage::ApplicationsPage(
     refreshLaunchControls();
 }
 
+void ApplicationsPage::selectSeat(std::uint32_t seatId) {
+    if (!m_seatCombo || seatId == 0) return;
+    const int index =
+        m_seatCombo->findData(QVariant::fromValue(seatId));
+    if (index >= 0) {
+        m_seatCombo->setCurrentIndex(index);
+        refreshLaunchControls();
+    }
+}
+
 std::uint32_t ApplicationsPage::selectedSeatId() const noexcept {
     if (!m_seatCombo) return 0;
     bool ok = false;
@@ -249,13 +269,24 @@ void ApplicationsPage::refreshLaunchControls() {
     const bool hasExecutable =
         m_executableEdit && !m_executableEdit->text().trimmed().isEmpty();
 
+    if (m_seatCombo) {
+        m_seatCombo->setEnabled(!m_operationInFlight);
+    }
+    if (m_executableEdit) {
+        m_executableEdit->setEnabled(!m_operationInFlight);
+    }
+    if (m_argumentsEdit) {
+        m_argumentsEdit->setEnabled(!m_operationInFlight);
+    }
     if (m_launchButton) {
         m_launchButton->setEnabled(
+            !m_operationInFlight &&
             hostReady && leaseAvailable && !seat->gameLeaseActive &&
             hasExecutable);
     }
     if (m_stopButton) {
         m_stopButton->setEnabled(
+            !m_operationInFlight &&
             hostReady && leaseAvailable && seat->gameLeaseActive);
     }
 }
@@ -268,12 +299,22 @@ void ApplicationsPage::onBrowseExecutable() {
         "Windows applications (*.exe);;All files (*.*)");
     if (!selected.isEmpty()) {
         m_executableEdit->setText(selected);
+        const QFileInfo file(selected);
+        ApplicationLibrary::remember(ApplicationLaunchEntry{
+            file.completeBaseName(),
+            file.absoluteFilePath(),
+            m_argumentsEdit ? m_argumentsEdit->text() : QString{},
+            file.absolutePath(),
+        });
+        emit applicationLibraryChanged();
     }
 }
 
 void ApplicationsPage::onLaunchRequested() {
-    if (!m_hostControl) {
-        setLaunchFeedback("Canonical host control is unavailable.", true);
+    if (!m_hostControl || m_operationInFlight) {
+        if (!m_hostControl) {
+            setLaunchFeedback("Canonical host control is unavailable.", true);
+        }
         return;
     }
 
@@ -281,40 +322,91 @@ void ApplicationsPage::onLaunchRequested() {
     const QString path = m_executableEdit->text().trimmed();
     const QFileInfo file(path);
     if (seatId == 0 || path.isEmpty() || !file.isAbsolute() ||
-        !file.exists() || !file.isFile()) {
+        !file.exists() || !file.isFile() ||
+        file.suffix().compare(QStringLiteral("exe"), Qt::CaseInsensitive) != 0) {
         setLaunchFeedback(
-            "Select an existing absolute executable path before launching.",
+            "Select an existing absolute Windows .exe before launching.",
             true);
         return;
     }
 
-    std::string error;
-    const auto result = m_hostControl->launchGame(
-        seatId,
-        utf8(file.fileName()),
-        utf8(file.absoluteFilePath()),
-        utf8(m_argumentsEdit->text()),
-        utf8(file.absolutePath()),
-        &error);
-    if (!result) {
-        setLaunchFeedback(
-            error.empty()
-                ? "The canonical host rejected the launch request."
-                : QString::fromStdString(error),
-            true);
-        return;
-    }
+    const QString title = file.completeBaseName();
+    const QString executablePath = file.absoluteFilePath();
+    const QString arguments =
+        m_argumentsEdit ? m_argumentsEdit->text() : QString{};
+    const QString workingDirectory = file.absolutePath();
+    const auto hostControl = m_hostControl;
 
-    m_lastPayload.hostSnapshot = *result;
+    m_operationInFlight = true;
     setLaunchFeedback(
-        QString("Seat %1 launch accepted by hydra_host.").arg(seatId),
+        QString("Starting Seat %1 application...").arg(seatId),
         false);
     refreshLaunchControls();
+
+    auto* watcher = new QFutureWatcher<HostSnapshotTaskResult>(this);
+    connect(
+        watcher,
+        &QFutureWatcher<HostSnapshotTaskResult>::finished,
+        this,
+        [this,
+         watcher,
+         seatId,
+         title,
+         executablePath,
+         arguments,
+         workingDirectory]() {
+            const auto task = watcher->result();
+            watcher->deleteLater();
+            m_operationInFlight = false;
+
+            if (!task.snapshot) {
+                setLaunchFeedback(
+                    task.error.empty()
+                        ? "The canonical host rejected the launch request."
+                        : QString::fromStdString(task.error),
+                    true);
+                refreshLaunchControls();
+                return;
+            }
+
+            m_lastPayload.hostSnapshot = *task.snapshot;
+            ApplicationLibrary::remember(ApplicationLaunchEntry{
+                title,
+                executablePath,
+                arguments,
+                workingDirectory,
+            });
+            emit applicationLibraryChanged();
+            setLaunchFeedback(
+                QString("Seat %1 launch accepted by hydra_host.").arg(seatId),
+                false);
+            refreshLaunchControls();
+        });
+
+    watcher->setFuture(QtConcurrent::run(
+        [hostControl,
+         seatId,
+         titleUtf8 = utf8(title),
+         executableUtf8 = utf8(executablePath),
+         argumentsUtf8 = utf8(arguments),
+         workingDirectoryUtf8 = utf8(workingDirectory)]() mutable {
+            HostSnapshotTaskResult task;
+            task.snapshot = hostControl->launchGame(
+                seatId,
+                titleUtf8,
+                executableUtf8,
+                argumentsUtf8,
+                workingDirectoryUtf8,
+                &task.error);
+            return task;
+        }));
 }
 
 void ApplicationsPage::onStopRequested() {
-    if (!m_hostControl) {
-        setLaunchFeedback("Canonical host control is unavailable.", true);
+    if (!m_hostControl || m_operationInFlight) {
+        if (!m_hostControl) {
+            setLaunchFeedback("Canonical host control is unavailable.", true);
+        }
         return;
     }
 
@@ -324,22 +416,58 @@ void ApplicationsPage::onStopRequested() {
         return;
     }
 
-    std::string error;
-    const auto result = m_hostControl->stopGame(seatId, &error);
-    if (!result) {
-        setLaunchFeedback(
-            error.empty()
-                ? "The canonical host could not stop this Seat safely."
-                : QString::fromStdString(error),
-            true);
-        return;
+    if (UiSettings::load().confirmSeatStop) {
+        const auto answer = QMessageBox::question(
+            this,
+            "Stop Seat application",
+            QString("Stop the application running on Seat %1?").arg(seatId),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (answer != QMessageBox::Yes) return;
     }
 
-    m_lastPayload.hostSnapshot = *result;
+    const auto hostControl = m_hostControl;
+    m_operationInFlight = true;
     setLaunchFeedback(
-        QString("Seat %1 game stopped and authority released.").arg(seatId),
+        QString("Stopping Seat %1 application...").arg(seatId),
         false);
     refreshLaunchControls();
+
+    auto* watcher = new QFutureWatcher<HostSnapshotTaskResult>(this);
+    connect(
+        watcher,
+        &QFutureWatcher<HostSnapshotTaskResult>::finished,
+        this,
+        [this, watcher, seatId]() {
+            const auto task = watcher->result();
+            watcher->deleteLater();
+            m_operationInFlight = false;
+
+            if (!task.snapshot) {
+                setLaunchFeedback(
+                    task.error.empty()
+                        ? "The canonical host could not stop this Seat safely."
+                        : QString::fromStdString(task.error),
+                    true);
+                refreshLaunchControls();
+                return;
+            }
+
+            m_lastPayload.hostSnapshot = *task.snapshot;
+            setLaunchFeedback(
+                QString("Seat %1 game stopped and authority released.")
+                    .arg(seatId),
+                false);
+            refreshLaunchControls();
+        });
+
+    watcher->setFuture(QtConcurrent::run(
+        [hostControl, seatId]() {
+            HostSnapshotTaskResult task;
+            task.snapshot = hostControl->stopGame(
+                seatId, &task.error);
+            return task;
+        }));
 }
 
 QString ApplicationsPage::getAssignedSeat(

@@ -19,9 +19,14 @@ struct RawInputEvent {
     uint32_t messageType{0}; // WM_KEYDOWN, WM_KEYUP, WM_MOUSEMOVE, etc.
     uint32_t rawDevType{0};  // RIM_TYPEKEYBOARD, RIM_TYPEMOUSE, RIM_TYPEHID
     uint32_t vkey{0};
+    uint16_t scanCode{0};
+    uint16_t keyboardFlags{0};
     int32_t deltaX{0};
     int32_t deltaY{0};
-    uint32_t mouseButtons{0};
+    uint16_t mouseButtonFlags{0};
+    uint32_t mouseButtons{0}; // compatibility alias for metrics/tests
+    int16_t wheelDelta{0};
+    uint64_t timestampMicros{0};
     bool isTouchpad{false};
     uint32_t assignedWorkspaceId{0};
 };

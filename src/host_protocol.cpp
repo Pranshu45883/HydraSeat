@@ -69,6 +69,12 @@ bool validMessageType(MessageType type) noexcept {
     case MessageType::LaunchGameResult:
     case MessageType::StopGame:
     case MessageType::StopGameResult:
+    case MessageType::GetHardwareInventory:
+    case MessageType::HardwareInventory:
+    case MessageType::GetSeatHardware:
+    case MessageType::SeatHardware:
+    case MessageType::AssignSeatHardware:
+    case MessageType::AssignSeatHardwareResult:
         return true;
     }
     return false;
@@ -76,6 +82,13 @@ bool validMessageType(MessageType type) noexcept {
 
 bool validRole(ClientRole role) noexcept {
     return role == ClientRole::ReadOnly || role == ClientRole::Control;
+}
+
+bool validHardwareDeviceKind(HardwareDeviceKind kind) noexcept {
+    return kind == HardwareDeviceKind::Display ||
+           kind == HardwareDeviceKind::Keyboard ||
+           kind == HardwareDeviceKind::Mouse ||
+           kind == HardwareDeviceKind::Controller;
 }
 
 bool validError(ErrorCode code) noexcept {
@@ -290,6 +303,12 @@ std::string_view messageTypeName(MessageType type) noexcept {
     case MessageType::LaunchGameResult: return "LaunchGameResult";
     case MessageType::StopGame: return "StopGame";
     case MessageType::StopGameResult: return "StopGameResult";
+    case MessageType::GetHardwareInventory: return "GetHardwareInventory";
+    case MessageType::HardwareInventory: return "HardwareInventory";
+    case MessageType::GetSeatHardware: return "GetSeatHardware";
+    case MessageType::SeatHardware: return "SeatHardware";
+    case MessageType::AssignSeatHardware: return "AssignSeatHardware";
+    case MessageType::AssignSeatHardwareResult: return "AssignSeatHardwareResult";
     }
     return "Unknown";
 }
@@ -530,6 +549,168 @@ std::optional<SeatRequest> decodeSeatRequest(
         return std::nullopt;
     }
     return request;
+}
+
+std::vector<std::byte> encodeHardwareInventory(
+    const HardwareInventory& inventory) {
+    if (inventory.devices.size() > kHostProtocolMaxHardwareDevices) return {};
+
+    std::vector<std::byte> out;
+    appendInteger(out, static_cast<std::uint32_t>(inventory.devices.size()));
+    appendInteger(out, std::uint32_t{0});
+
+    for (const auto& device : inventory.devices) {
+        if (!validHardwareDeviceKind(device.kind) ||
+            !validUtf8(
+                device.stableIdUtf8,
+                kHostProtocolMaxHardwareDeviceIdBytes,
+                false) ||
+            !validUtf8(
+                device.displayNameUtf8,
+                kHostProtocolMaxHardwareDeviceNameBytes,
+                true)) {
+            return {};
+        }
+        appendInteger(out, static_cast<std::uint8_t>(device.kind));
+        appendInteger(out, std::uint8_t{0});
+        appendInteger(out, std::uint8_t{0});
+        appendInteger(out, std::uint8_t{0});
+        appendString(out, device.stableIdUtf8);
+        appendString(out, device.displayNameUtf8);
+        if (out.size() > kHostProtocolMaxPayloadBytes) return {};
+    }
+    return out;
+}
+
+std::optional<HardwareInventory> decodeHardwareInventory(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 8u ||
+        payload.size() > kHostProtocolMaxPayloadBytes) {
+        return std::nullopt;
+    }
+
+    std::size_t offset = 0;
+    std::uint32_t count = 0;
+    std::uint32_t reserved = 0;
+    if (!readInteger(payload, offset, count) ||
+        !readInteger(payload, offset, reserved) ||
+        reserved != 0 ||
+        count > kHostProtocolMaxHardwareDevices) {
+        return std::nullopt;
+    }
+
+    HardwareInventory inventory;
+    inventory.devices.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        std::uint8_t rawKind = 0;
+        std::uint8_t reserved1 = 0;
+        std::uint8_t reserved2 = 0;
+        std::uint8_t reserved3 = 0;
+        HardwareDeviceRecord device;
+        if (!readInteger(payload, offset, rawKind) ||
+            !readInteger(payload, offset, reserved1) ||
+            !readInteger(payload, offset, reserved2) ||
+            !readInteger(payload, offset, reserved3) ||
+            reserved1 != 0 || reserved2 != 0 || reserved3 != 0) {
+            return std::nullopt;
+        }
+        device.kind = static_cast<HardwareDeviceKind>(rawKind);
+        if (!validHardwareDeviceKind(device.kind) ||
+            !readString(
+                payload,
+                offset,
+                kHostProtocolMaxHardwareDeviceIdBytes,
+                false,
+                device.stableIdUtf8) ||
+            !readString(
+                payload,
+                offset,
+                kHostProtocolMaxHardwareDeviceNameBytes,
+                true,
+                device.displayNameUtf8)) {
+            return std::nullopt;
+        }
+        inventory.devices.push_back(std::move(device));
+    }
+    if (offset != payload.size()) return std::nullopt;
+    return inventory;
+}
+
+std::vector<std::byte> encodeSeatHardwareAssignment(
+    const SeatHardwareAssignment& assignment) {
+    if (!validSeatId(assignment.seatId) ||
+        !validUtf8(
+            assignment.displayIdUtf8,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true) ||
+        !validUtf8(
+            assignment.keyboardIdUtf8,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true) ||
+        !validUtf8(
+            assignment.mouseIdUtf8,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true) ||
+        !validUtf8(
+            assignment.controllerIdUtf8,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true)) {
+        return {};
+    }
+
+    std::vector<std::byte> out;
+    appendInteger(out, assignment.seatId);
+    appendInteger(out, std::uint32_t{0});
+    appendString(out, assignment.displayIdUtf8);
+    appendString(out, assignment.keyboardIdUtf8);
+    appendString(out, assignment.mouseIdUtf8);
+    appendString(out, assignment.controllerIdUtf8);
+    if (out.size() > kHostProtocolMaxPayloadBytes) return {};
+    return out;
+}
+
+std::optional<SeatHardwareAssignment> decodeSeatHardwareAssignment(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 20u ||
+        payload.size() > kHostProtocolMaxPayloadBytes) {
+        return std::nullopt;
+    }
+
+    std::size_t offset = 0;
+    SeatHardwareAssignment assignment;
+    std::uint32_t reserved = 0;
+    if (!readInteger(payload, offset, assignment.seatId) ||
+        !readInteger(payload, offset, reserved) ||
+        reserved != 0 ||
+        !validSeatId(assignment.seatId) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true,
+            assignment.displayIdUtf8) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true,
+            assignment.keyboardIdUtf8) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true,
+            assignment.mouseIdUtf8) ||
+        !readString(
+            payload,
+            offset,
+            kHostProtocolMaxHardwareDeviceIdBytes,
+            true,
+            assignment.controllerIdUtf8) ||
+        offset != payload.size()) {
+        return std::nullopt;
+    }
+    return assignment;
 }
 
 std::vector<std::byte> encodeControllerPairRequest(
@@ -856,7 +1037,8 @@ bool isMutatingRequest(MessageType type) noexcept {
            type == MessageType::RouteAudio ||
            type == MessageType::ResetAudio ||
            type == MessageType::LaunchGame ||
-           type == MessageType::StopGame;
+           type == MessageType::StopGame ||
+           type == MessageType::AssignSeatHardware;
 }
 
 MessageType responseTypeFor(MessageType request) noexcept {
@@ -871,6 +1053,9 @@ MessageType responseTypeFor(MessageType request) noexcept {
     case MessageType::ResetAudio: return MessageType::ResetAudioResult;
     case MessageType::LaunchGame: return MessageType::LaunchGameResult;
     case MessageType::StopGame: return MessageType::StopGameResult;
+    case MessageType::GetHardwareInventory: return MessageType::HardwareInventory;
+    case MessageType::GetSeatHardware: return MessageType::SeatHardware;
+    case MessageType::AssignSeatHardware: return MessageType::AssignSeatHardwareResult;
     default: return MessageType::Error;
     }
 }

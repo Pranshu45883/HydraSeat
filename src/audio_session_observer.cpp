@@ -120,8 +120,13 @@ AudioSessionInventoryResult AudioSessionObserver::enumerateSessions() {
     }
 
     ComPtr<IMMDeviceCollection> pCollection;
-    // We enumerate all endpoints to ensure we don't miss sessions on disconnected/disabled devices.
-    hr = pEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATEMASK_ALL, &pCollection);
+    // The routing UI can only act on currently usable render devices. Walking
+    // disabled/unplugged/not-present endpoint history duplicates sessions
+    // (especially System Sounds) and presents processes that cannot be routed
+    // to a live output. Keep observation aligned with the active output
+    // inventory.
+    hr = pEnumerator->EnumAudioEndpoints(
+        eRender, DEVICE_STATE_ACTIVE, &pCollection);
     if (FAILED(hr) || !pCollection) {
         result.error = AudioSessionObserverError{AudioSessionObserverError::Code::EndpointEnumerationFailed, hr};
         return result;

@@ -6,7 +6,6 @@
 #include <QStackedWidget>
 #include <memory>
 
-#include "hydra/hardware_detector.hpp"
 #include "ui/engine_poller.hpp"
 #include "ui/host_control_client.hpp"
 #include "ui/routing_controller.hpp"
@@ -29,7 +28,6 @@ private:
     void setupStatusbar();
 
     std::shared_ptr<HostControlClient> m_hostControl;
-    std::shared_ptr<hydra::HardwareDetector> m_hardwareDetector;
     std::unique_ptr<EnginePoller> m_enginePoller;
     std::unique_ptr<RoutingController> m_routingController;
 

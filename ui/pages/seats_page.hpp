@@ -6,7 +6,9 @@
 #include <QScrollArea>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
+#include "hydra/controller_pairing.hpp"
 #include "ui/engine_poller.hpp"
 #include "ui/host_control_client.hpp"
 
@@ -21,11 +23,14 @@ public:
 
 public slots:
     void updateState(const EngineStatePayload& payload);
+    void refreshApplications();
 
 private slots:
+    void onApplicationSelectionChanged(std::uint32_t seatId);
     void onLaunchRequested(std::uint32_t seatId);
     void onStopRequested(std::uint32_t seatId);
     void onConfigureRequested(std::uint32_t seatId);
+    void onControllerSelectionChanged(std::uint32_t seatId);
 
 private:
     struct SeatWidgets {
@@ -44,6 +49,11 @@ private:
         QPushButton* launchBtn{nullptr};
         QPushButton* stopBtn{nullptr};
         QPushButton* reconfigureBtn{nullptr};
+
+        std::optional<hydra::controller::XInputPairingSnapshot>
+            controllerPairingBaseline;
+        QString controllerPairingId;
+        bool operationInFlight{false};
     };
 
     std::shared_ptr<HostControlClient> m_hostControl;
@@ -55,7 +65,7 @@ private:
     void updateSeatData(
         std::uint32_t seatId,
         SeatWidgets& widgets);
-    void populateCombos(SeatWidgets& widgets);
+    void populateCombos(std::uint32_t seatId, SeatWidgets& widgets);
     const hydra::hostipc::SeatSnapshot* seatSnapshot(
         std::uint32_t seatId) const noexcept;
 };

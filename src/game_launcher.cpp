@@ -1,11 +1,20 @@
 #include "hydra/game_launcher.hpp"
 
+#include "hydra/gate_c_external_session.hpp"
+#include "hydra/hardware_identity.hpp"
+#include "hydra/input_router.hpp"
+#include "hydra/process_group.hpp"
 #include "hydra/runtime_host.hpp"
+#include "hydra/seat_display_layout.hpp"
 #include "hydra/virtual_xinput_pipe.hpp"
 #include "hydra/virtual_xinput_service.hpp"
+#include "hydra/window_placement.hpp"
+#include "hydra/window_tracker.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <thread>
 #include <utility>
@@ -16,6 +25,7 @@
 
 #include <algorithm>
 #include <cwchar>
+#include <limits>
 #endif
 
 namespace hydra {
@@ -105,6 +115,112 @@ bool containsNul(const std::wstring& value) noexcept {
     return value.find(L'\0') != std::wstring::npos;
 }
 
+std::optional<std::filesystem::path> currentExecutableDirectory(
+    std::string* error) {
+    std::array<wchar_t, 32768> modulePath{};
+    const DWORD length = GetModuleFileNameW(
+        nullptr,
+        modulePath.data(),
+        static_cast<DWORD>(modulePath.size()));
+    if (length == 0 || length >= modulePath.size()) {
+        if (error) {
+            *error =
+                "failed to resolve the hydra_host.exe installation directory";
+        }
+        return std::nullopt;
+    }
+
+    std::filesystem::path path(
+        std::wstring(modulePath.data(), length));
+    const auto parent = path.parent_path();
+    if (parent.empty()) {
+        if (error) {
+            *error =
+                "hydra_host.exe has no resolvable installation directory";
+        }
+        return std::nullopt;
+    }
+    return parent;
+}
+
+struct SeatInputDevices {
+    std::vector<std::uintptr_t> keyboardHandles;
+    std::vector<std::uintptr_t> mouseHandles;
+
+    bool configured() const noexcept {
+        return !keyboardHandles.empty() || !mouseHandles.empty();
+    }
+};
+
+std::optional<SeatInputDevices> resolveSeatInputDevices(
+    runtime::RuntimeHost& host,
+    std::uint32_t seatId,
+    std::string* error) {
+    const auto configuration = host.seatHardwareConfiguration(seatId);
+    if (!configuration) {
+        if (error) *error = "Seat hardware configuration is unavailable";
+        return std::nullopt;
+    }
+
+    SeatInputDevices result{};
+    if (configuration->keyboardId.empty() && configuration->mouseId.empty()) {
+        return result;
+    }
+
+    const auto inventory = host.hardwareInventory();
+    const auto resolve = [&](DeviceType type,
+                             const std::wstring& persistentId,
+                             const char* label)
+        -> std::optional<std::vector<std::uintptr_t>> {
+        if (persistentId.empty()) {
+            return std::vector<std::uintptr_t>{};
+        }
+        const auto found = std::find_if(
+            inventory.begin(), inventory.end(), [&](const DeviceInfo& device) {
+                return device.type == type && device.id == persistentId &&
+                       (device.nativeHandle != 0 || !device.nativeHandles.empty());
+            });
+        if (found == inventory.end()) {
+            if (error) {
+                *error = std::string("assigned ") + label +
+                         " is disconnected or no longer resolves to a live Raw Input device";
+            }
+            return std::nullopt;
+        }
+
+        auto handles = found->nativeHandles;
+        if (handles.empty() && found->nativeHandle != 0) {
+            handles.push_back(found->nativeHandle);
+        }
+        handles.erase(
+            std::remove(handles.begin(), handles.end(), std::uintptr_t{0}),
+            handles.end());
+        std::sort(handles.begin(), handles.end());
+        handles.erase(
+            std::unique(handles.begin(), handles.end()),
+            handles.end());
+        if (handles.empty()) {
+            if (error) {
+                *error = std::string("assigned ") + label +
+                         " has no live Raw Input collections";
+            }
+            return std::nullopt;
+        }
+        return handles;
+    };
+
+    const auto keyboard = resolve(
+        DeviceType::Keyboard, configuration->keyboardId, "keyboard");
+    if (!keyboard) return std::nullopt;
+    const auto mouse = resolve(
+        DeviceType::Mouse, configuration->mouseId, "mouse");
+    if (!mouse) return std::nullopt;
+
+    result.keyboardHandles = *keyboard;
+    result.mouseHandles = *mouse;
+    return result;
+}
+
 bool keyMatches(std::wstring_view entry, std::wstring_view key) noexcept {
     const auto equals = entry.find(L'=');
     if (equals == std::wstring_view::npos || equals != key.size()) return false;
@@ -170,6 +286,160 @@ std::wstring hostXInputPipeEndpoint(
            std::to_wstring(GetCurrentProcessId()) + L"." +
            std::to_wstring(seatId) + L"." + std::to_wstring(generation);
 }
+
+std::optional<std::string> wideToUtf8(std::wstring_view value) {
+    if (value.empty()) return std::string{};
+    if (value.size() >
+        static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+        return std::nullopt;
+    }
+
+    const int sourceLength = static_cast<int>(value.size());
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        WC_ERR_INVALID_CHARS,
+        value.data(),
+        sourceLength,
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    if (required <= 0) return std::nullopt;
+
+    std::string result(static_cast<std::size_t>(required), '\0');
+    const int written = WideCharToMultiByte(
+        CP_UTF8,
+        WC_ERR_INVALID_CHARS,
+        value.data(),
+        sourceLength,
+        result.data(),
+        required,
+        nullptr,
+        nullptr);
+    if (written != required) return std::nullopt;
+    return result;
+}
+
+std::optional<display::SeatDisplayGroup> resolveSeatDisplayGroup(
+    runtime::RuntimeHost& host,
+    std::uint32_t seatId,
+    std::string* error) {
+    const auto configuration = host.seatHardwareConfiguration(seatId);
+    if (!configuration) {
+        if (error) *error = "Seat hardware configuration is unavailable";
+        return std::nullopt;
+    }
+    if (configuration->displayId.empty()) {
+        if (error) error->clear();
+        return std::nullopt;
+    }
+
+    const auto inventory = host.hardwareInventory();
+    const auto found = std::find_if(
+        inventory.begin(),
+        inventory.end(),
+        [&](const DeviceInfo& device) {
+            return device.type == DeviceType::Display &&
+                   device.id == configuration->displayId;
+        });
+    if (found == inventory.end()) {
+        if (error) {
+            *error = "assigned display is no longer connected";
+        }
+        return std::nullopt;
+    }
+    if (found->devicePath.empty()) {
+        if (error) {
+            *error = "assigned display has no live GDI device name";
+        }
+        return std::nullopt;
+    }
+
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    if (!EnumDisplaySettingsExW(
+            found->devicePath.c_str(),
+            ENUM_CURRENT_SETTINGS,
+            &mode,
+            0)) {
+        if (error) {
+            *error =
+                "failed to resolve current desktop bounds for assigned display";
+        }
+        return std::nullopt;
+    }
+
+    const auto left = static_cast<std::int64_t>(mode.dmPosition.x);
+    const auto top = static_cast<std::int64_t>(mode.dmPosition.y);
+    const auto right =
+        left + static_cast<std::int64_t>(mode.dmPelsWidth);
+    const auto bottom =
+        top + static_cast<std::int64_t>(mode.dmPelsHeight);
+    constexpr auto minimum =
+        static_cast<std::int64_t>((std::numeric_limits<std::int32_t>::min)());
+    constexpr auto maximum =
+        static_cast<std::int64_t>((std::numeric_limits<std::int32_t>::max)());
+    if (mode.dmPelsWidth == 0 || mode.dmPelsHeight == 0 ||
+        left < minimum || left > maximum ||
+        top < minimum || top > maximum ||
+        right < minimum || right > maximum ||
+        bottom < minimum || bottom > maximum) {
+        if (error) {
+            *error = "assigned display reports invalid desktop bounds";
+        }
+        return std::nullopt;
+    }
+
+    const auto outputId = wideToUtf8(configuration->displayId);
+    if (!outputId || outputId->empty()) {
+        if (error) {
+            *error = "assigned display stable ID is not valid Unicode";
+        }
+        return std::nullopt;
+    }
+
+    display::SeatDisplayOutput output;
+    output.outputId = *outputId;
+    output.globalBounds = {
+        static_cast<std::int32_t>(left),
+        static_cast<std::int32_t>(top),
+        static_cast<std::int32_t>(right),
+        static_cast<std::int32_t>(bottom),
+    };
+    output.windowsPrimary = true;
+
+    display::SeatDisplayGroup group;
+    group.seatId = seatId;
+    group.outputs.push_back(output);
+    group.primaryOutputId = output.outputId;
+    group.globalBounds = output.globalBounds;
+    group.primaryOriginX = output.globalBounds.left;
+    group.primaryOriginY = output.globalBounds.top;
+    return group;
+}
+
+process::ProcessTreeSnapshot exactRootProcessTree(
+    std::uint32_t seatId,
+    const runtime::ProcessIdentity& identity,
+    const std::wstring& executablePath) {
+    process::ProcessIdentity root;
+    root.processId = identity.pid;
+    root.creationTime100ns = identity.creationIdentity;
+    root.executablePath = executablePath;
+
+    process::ProcessRecord rootRecord;
+    rootRecord.identity = root;
+    rootRecord.root = true;
+
+    process::ProcessTreeSnapshot tree;
+    tree.seatId = seatId;
+    tree.capability = process::ChildTrackingCapability::RootOnly;
+    tree.root = root;
+    tree.processes.push_back(std::move(rootRecord));
+    tree.sequence = 1;
+    tree.trackingComplete = true;
+    return tree;
+}
 #endif
 
 } // namespace
@@ -211,6 +481,259 @@ struct GameLauncher::ControllerPipeRuntime {
 #endif
 };
 
+struct GameLauncher::SeatWindowRuntime final
+    : windowing::WindowTargetObserver,
+      std::enable_shared_from_this<GameLauncher::SeatWindowRuntime> {
+#ifdef _WIN32
+    runtime::RuntimeHost* host{nullptr};
+    runtime::ActivationToken token{};
+    runtime::ProcessIdentity processIdentity{};
+    display::SeatDisplayGroup displayGroup;
+    windowing::WindowTracker tracker;
+    std::optional<windowing::WindowRestoreState> restoreState;
+    std::uint64_t observerId{0};
+    std::atomic<std::uintptr_t> boundHwnd{0};
+    std::atomic<bool> shuttingDown{false};
+
+    SeatWindowRuntime(
+        runtime::RuntimeHost& runtimeHost,
+        runtime::ActivationToken activation,
+        runtime::ProcessIdentity processIdentity,
+        display::SeatDisplayGroup group)
+        : host(&runtimeHost),
+          token(activation),
+          processIdentity(processIdentity),
+          displayGroup(std::move(group)) {}
+
+    static std::shared_ptr<SeatWindowRuntime> create(
+        runtime::RuntimeHost& host,
+        runtime::ActivationToken token,
+        runtime::ProcessIdentity processIdentity,
+        process::ProcessTreeSnapshot tree,
+        display::SeatDisplayGroup group,
+        std::string* error) {
+        auto runtime = std::shared_ptr<SeatWindowRuntime>(
+            new SeatWindowRuntime(
+                host,
+                token,
+                processIdentity,
+                std::move(group)));
+
+        windowing::WindowProfileRules rules;
+        rules.defaultRole = windowing::WindowRole::PrimaryGame;
+        rules.visualTargetRole = windowing::WindowRole::PrimaryGame;
+        if (!runtime->tracker.setProfileRules(std::move(rules), error)) {
+            return {};
+        }
+
+        runtime->tracker.setProcessTrees({std::move(tree)});
+        if (!runtime->tracker.start(error)) {
+            return {};
+        }
+
+        runtime->observerId = runtime->tracker.addTargetObserver(
+            token.seatId,
+            windowing::WindowTargetKind::Visual,
+            runtime);
+        if (runtime->observerId == 0) {
+            if (error) {
+                *error = "failed to register Seat visual-target observer";
+            }
+            runtime->tracker.stop();
+            return {};
+        }
+
+        // The target can have resolved between tracker start and observer
+        // registration. Sample once so host HWND authority never depends on a
+        // future WinEvent that might not arrive.
+        if (const auto current = runtime->tracker.target(
+                token.seatId,
+                windowing::WindowTargetKind::Visual)) {
+            runtime->onWindowTargetChanged(*current);
+        }
+        return runtime;
+    }
+
+    bool exactProcess(
+        const windowing::WindowTargetSnapshot& target) const noexcept {
+        return target.window &&
+               target.window->identity.process.processId ==
+                   processIdentity.pid &&
+               target.window->identity.process.creationTime100ns ==
+                   processIdentity.creationIdentity;
+    }
+
+    void onWindowTargetChanged(
+        const windowing::WindowTargetSnapshot& target) noexcept override {
+        if (shuttingDown.load(std::memory_order_acquire) ||
+            target.seatId != token.seatId ||
+            target.kind != windowing::WindowTargetKind::Visual) {
+            return;
+        }
+
+        if (target.status == windowing::WindowTargetStatus::Bound &&
+            exactProcess(target)) {
+            const auto hwnd = target.window->identity.nativeHandle;
+            const auto previous = boundHwnd.load(std::memory_order_acquire);
+            if (previous == hwnd) return;
+
+            if (previous != 0) {
+                (void)host->clearTargetWindow(
+                    token, processIdentity, previous);
+                boundHwnd.store(0, std::memory_order_release);
+            }
+
+            if (host->bindTargetWindow(
+                    token, processIdentity, hwnd)) {
+                boundHwnd.store(hwnd, std::memory_order_release);
+            }
+            return;
+        }
+
+        const auto previous =
+            boundHwnd.exchange(0, std::memory_order_acq_rel);
+        if (previous != 0) {
+            (void)host->clearTargetWindow(
+                token, processIdentity, previous);
+        }
+    }
+
+    bool placeInitial(std::string* error) {
+        const auto deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::seconds(10);
+
+        std::optional<windowing::WindowTargetSnapshot> target;
+        while (std::chrono::steady_clock::now() < deadline) {
+            target = tracker.target(
+                token.seatId,
+                windowing::WindowTargetKind::Visual);
+            if (target &&
+                target->status == windowing::WindowTargetStatus::FailedClosed) {
+                if (error) {
+                    *error =
+                        "window tracker failed closed because the owned visual target is ambiguous";
+                }
+                return false;
+            }
+            if (target &&
+                target->status == windowing::WindowTargetStatus::Bound &&
+                exactProcess(*target) &&
+                tracker.validateIdentity(target->window->identity)) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+
+        if (!target ||
+            target->status != windowing::WindowTargetStatus::Bound ||
+            !exactProcess(*target) ||
+            !tracker.validateIdentity(target->window->identity)) {
+            if (error) {
+                *error =
+                    "timed out waiting for an authoritative window from the launched executable";
+            }
+            return false;
+        }
+
+        onWindowTargetChanged(*target);
+        if (boundHwnd.load(std::memory_order_acquire) !=
+            target->window->identity.nativeHandle) {
+            if (error) {
+                *error =
+                    "failed to publish the exact owned target window to host authority";
+            }
+            return false;
+        }
+
+        windowing::WindowPlacementPolicy policy;
+        policy.mode =
+            windowing::WindowPlacementMode::PlaceOnPrimaryOutput;
+        policy.retryCount = 2;
+        policy.retryDelayMs = 75;
+        policy.placementTolerancePixels = 4;
+        policy.followRecreatedWindow = true;
+
+        windowing::WindowPlacementEngine engine(tracker);
+        auto result =
+            engine.apply(*target->window, displayGroup, policy);
+        if (result.status != windowing::WindowPlacementStatus::Applied &&
+            result.status != windowing::WindowPlacementStatus::NoChange) {
+            if (error) {
+                if (!result.diagnostics.empty()) {
+                    *error =
+                        "assigned-display placement failed: " +
+                        result.diagnostics.front();
+                } else {
+                    *error =
+                        "assigned-display placement failed without diagnostics";
+                }
+            }
+            return false;
+        }
+
+        if (result.restoreState.valid) {
+            restoreState = std::move(result.restoreState);
+        }
+        return true;
+    }
+
+    void shutdown() noexcept {
+        bool expected = false;
+        if (!shuttingDown.compare_exchange_strong(
+                expected,
+                true,
+                std::memory_order_acq_rel)) {
+            return;
+        }
+
+        if (observerId != 0) {
+            tracker.removeTargetObserver(observerId);
+            observerId = 0;
+        }
+
+        if (restoreState && restoreState->valid) {
+            windowing::WindowPlacementEngine engine(tracker);
+            std::string rollbackError;
+            if (!engine.rollback(*restoreState, &rollbackError) &&
+                !rollbackError.empty()) {
+                std::cerr
+                    << "[GameLauncher] window rollback warning: "
+                    << rollbackError << '\n';
+            }
+        }
+        restoreState.reset();
+
+        const auto previous =
+            boundHwnd.exchange(0, std::memory_order_acq_rel);
+        if (previous != 0) {
+            (void)host->clearTargetWindow(
+                token, processIdentity, previous);
+        }
+        tracker.stop();
+    }
+
+    ~SeatWindowRuntime() override {
+        shutdown();
+    }
+#else
+    static std::shared_ptr<SeatWindowRuntime> create(
+        runtime::RuntimeHost&,
+        runtime::ActivationToken,
+        runtime::ProcessIdentity,
+        process::ProcessTreeSnapshot,
+        display::SeatDisplayGroup,
+        std::string*) {
+        return {};
+    }
+
+    void onWindowTargetChanged(
+        const windowing::WindowTargetSnapshot&) noexcept override {}
+    bool placeInitial(std::string*) { return false; }
+    void shutdown() noexcept {}
+#endif
+};
+
 GameLauncher::~GameLauncher() {
 #ifdef _WIN32
     for (std::uint32_t seatId = 1; seatId <= 2; ++seatId) {
@@ -222,6 +745,8 @@ GameLauncher::~GameLauncher() {
         // still kills its assigned tree, but we deliberately do not mark the
         // runtime Idle because safe-state verification did not complete.
         auto& state = *seatProcesses_[*index];
+        state.inputSession.reset();
+        state.windowRuntime.reset();
         state.controllerPipe.reset();
         HANDLE job = toNativeHandle(state.jobHandle);
         HANDLE process = toNativeHandle(state.processHandle);
@@ -253,6 +778,28 @@ bool GameLauncher::publishProcess(
     return controller_ && controller_->publishProcess(token, process);
 }
 
+bool GameLauncher::bindTargetWindow(
+    const runtime::ActivationToken& token,
+    const runtime::ProcessIdentity& process,
+    std::uintptr_t hwnd) noexcept {
+    if (host_) return host_->bindTargetWindow(token, process, hwnd);
+    return controller_ &&
+           controller_->bindTargetWindow(token, process, hwnd);
+}
+
+bool GameLauncher::clearTargetWindow(
+    const runtime::ActivationToken& token,
+    const runtime::ProcessIdentity& process,
+    std::uintptr_t expectedHwnd) noexcept {
+    if (host_) {
+        return host_->clearTargetWindow(
+            token, process, expectedHwnd);
+    }
+    return controller_ &&
+           controller_->clearTargetWindow(
+               token, process, expectedHwnd);
+}
+
 bool GameLauncher::bindController(
     const runtime::ActivationToken& token,
     const controller::SeatBinding& binding,
@@ -275,7 +822,62 @@ bool GameLauncher::endSeatActivation(
     return controller_ && controller_->endSeatActivation(token);
 }
 
-bool GameLauncher::hasWorkspaceGame(std::uint32_t workspaceId) const noexcept {
+std::string GameLauncher::lastError() const {
+    std::lock_guard lock(processMutex_);
+    return lastError_;
+}
+
+void GameLauncher::setLastError(std::string message) {
+    std::lock_guard lock(processMutex_);
+    lastError_ = std::move(message);
+}
+
+void GameLauncher::reapExitedGames() noexcept {
+    // Reconciliation runs on every host request, including read-only polling.
+    // Never let a long launch/stop operation make GetSnapshot wait behind the
+    // GameLauncher mutex and falsely report the canonical host as unavailable.
+    std::unique_lock lock(processMutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+#ifdef _WIN32
+    for (std::uint32_t seatId = 1; seatId <= 2; ++seatId) {
+        const auto index = seatIndex(seatId);
+        if (!index || !seatProcesses_[*index]) continue;
+
+        auto& session = *seatProcesses_[*index];
+        HANDLE job = toNativeHandle(session.jobHandle);
+        if (!job || job == INVALID_HANDLE_VALUE) continue;
+
+        DWORD activeProcesses = 0;
+        if (!queryActiveProcessCount(job, activeProcesses) ||
+            activeProcesses != 0) {
+            continue;
+        }
+
+        // The owned Job Object is already empty: this is reconciliation, not
+        // termination. Tear down per-Seat helpers first while the activation
+        // token is still valid, then return canonical authority to Idle.
+        session.inputSession.reset();
+        session.windowRuntime.reset();
+        session.controllerPipe.reset();
+
+        if (!endSeatActivation(session.token)) {
+            lastError_ =
+                "a naturally exited Seat process tree could not release runtime authority";
+            continue;
+        }
+
+        HANDLE process = toNativeHandle(session.processHandle);
+        if (process && process != INVALID_HANDLE_VALUE) {
+            CloseHandle(process);
+        }
+        CloseHandle(job);
+        seatProcesses_[*index].reset();
+    }
+#endif
+}
+
+bool GameLauncher::hasWorkspaceGame(std::uint32_t workspaceId) const {
+    std::lock_guard lock(processMutex_);
     const auto index = seatIndex(workspaceId);
     return index && seatProcesses_[*index].has_value();
 }
@@ -283,16 +885,36 @@ bool GameLauncher::hasWorkspaceGame(std::uint32_t workspaceId) const noexcept {
 bool GameLauncher::launchGameForWorkspace(
     const GameProfile& game,
     const WorkspaceConfig& workspace) {
+    std::lock_guard lock(processMutex_);
+    lastError_.clear();
 #ifdef _WIN32
-    // Production host launch automatically carries forward a controller binding
-    // already established by the connection-scoped UI configuration lease.
+    // Stable physical controller identity is persisted with the Seat; the
+    // XInput slot is runtime-only and must be paired for the current session.
     if (host_) {
+        const auto hardware =
+            host_->seatHardwareConfiguration(workspace.workspaceId);
         const auto snapshot = host_->seatSnapshot(workspace.workspaceId);
-        if (snapshot && snapshot->controllerBinding) {
+
+        if (hardware && !hardware->controllerId.empty()) {
+            if (!snapshot || !snapshot->controllerBinding ||
+                !snapshot->controllerBinding->persistentControllerId ||
+                *snapshot->controllerBinding->persistentControllerId !=
+                    hardware->controllerId) {
+                lastError_ =
+                    "the assigned controller is not paired to a current XInput source; pair it in Seats and try again";
+                return false;
+            }
+
             auto inventory = host_->controllerInventorySnapshot();
-            if (!inventory.authoritative ||
-                !controller::bindingMatchesInventory(
+            if (!inventory.authoritative) {
+                lastError_ =
+                    "controller inventory is unavailable; reconnect the controller and try again";
+                return false;
+            }
+            if (!controller::bindingMatchesInventory(
                     *snapshot->controllerBinding, inventory)) {
+                lastError_ =
+                    "the paired controller disconnected or its XInput slot changed; pair it again";
                 return false;
             }
             const auto endpoint = hostXInputPipeEndpoint(
@@ -316,6 +938,8 @@ bool GameLauncher::launchGameForWorkspace(
     const controller::SeatBinding& controllerBinding,
     const controller::InventorySnapshot& inventory,
     std::wstring xinputPipeEndpoint) {
+    std::lock_guard lock(processMutex_);
+    lastError_.clear();
     return launchGameForWorkspaceImpl(
         game, workspace, &controllerBinding, &inventory, &xinputPipeEndpoint);
 }
@@ -328,12 +952,48 @@ bool GameLauncher::launchGameForWorkspaceImpl(
     const std::wstring* xinputPipeEndpoint) {
 #ifdef _WIN32
     const auto index = seatIndex(workspace.workspaceId);
-    if ((!controller_ && !host_) || !index || game.executablePath.empty() ||
-        containsNul(game.executablePath) ||
-        containsNul(game.launchArguments) ||
-        containsNul(game.workingDirectory) ||
-        seatProcesses_[*index]) {
+    if (!controller_ && !host_) {
+        lastError_ = "game launcher has no runtime authority owner";
         return false;
+    }
+    if (!index) {
+        lastError_ = "only Seat 1 and Seat 2 are supported";
+        return false;
+    }
+    if (game.executablePath.empty() || containsNul(game.executablePath) ||
+        containsNul(game.launchArguments) || containsNul(game.workingDirectory)) {
+        lastError_ = "launch target contains an invalid executable path or command line";
+        return false;
+    }
+    if (seatProcesses_[*index]) {
+        lastError_ = "this Seat already owns a running game process tree";
+        return false;
+    }
+
+    SeatInputDevices inputDevices{};
+    std::optional<display::SeatDisplayGroup> displayGroup;
+    if (host_) {
+        std::string inputError;
+        const auto resolvedInput = resolveSeatInputDevices(
+            *host_, workspace.workspaceId, &inputError);
+        if (!resolvedInput) {
+            lastError_ = inputError.empty()
+                ? "assigned keyboard/mouse could not be resolved"
+                : std::move(inputError);
+            return false;
+        }
+        inputDevices = *resolvedInput;
+
+        std::string displayError;
+        displayGroup = resolveSeatDisplayGroup(
+            *host_, workspace.workspaceId, &displayError);
+        if (!displayGroup && !displayError.empty()) {
+            lastError_ = displayError;
+            std::cerr
+                << "[GameLauncher] assigned display rejected launch: "
+                << displayError << '\n';
+            return false;
+        }
     }
 
     const bool wantsXInput =
@@ -345,11 +1005,17 @@ bool GameLauncher::launchGameForWorkspaceImpl(
          controllerBinding->api != controller::ApiSurface::XInput ||
          controllerBinding->sourceGeneration == 0 ||
          xinputPipeEndpoint->empty() || containsNul(*xinputPipeEndpoint))) {
+        lastError_ =
+            "controller launch configuration is incomplete or stale";
         return false;
     }
 
     const auto token = beginSeatActivation(workspace.workspaceId);
-    if (!token.valid()) return false;
+    if (!token.valid()) {
+        lastError_ =
+            "Seat runtime authority could not begin a new game activation";
+        return false;
+    }
 
     bool activationOwned = true;
     const auto endActivation = [&]() noexcept {
@@ -364,16 +1030,22 @@ bool GameLauncher::launchGameForWorkspaceImpl(
     DWORD creationFlags = CREATE_SUSPENDED;
     if (wantsXInput) {
         if (!bindController(token, *controllerBinding, *inventory)) {
+            lastError_ =
+                "the selected controller binding is no longer valid";
             endActivation();
             return false;
         }
         const auto mapping = virtualXInputMapping(token);
         if (!mapping) {
+            lastError_ =
+                "virtual XInput mapping could not be created for this Seat";
             endActivation();
             return false;
         }
         environment = xinputEnvironmentBlock(*mapping, *xinputPipeEndpoint);
         if (!environment) {
+            lastError_ =
+                "virtual XInput environment could not be constructed safely";
             endActivation();
             return false;
         }
@@ -402,6 +1074,10 @@ bool GameLauncher::launchGameForWorkspaceImpl(
         &processInfo);
 
     if (!created) {
+        const DWORD createError = GetLastError();
+        lastError_ =
+            "CreateProcessW failed for the selected executable (win32=" +
+            std::to_string(createError) + ")";
         controllerPipe.reset();
         endActivation();
         return false;
@@ -409,6 +1085,10 @@ bool GameLauncher::launchGameForWorkspaceImpl(
 
     HANDLE job = createStrictSeatJob();
     if (!job) {
+        const DWORD jobError = GetLastError();
+        lastError_ =
+            "strict Seat Job Object creation failed (win32=" +
+            std::to_string(jobError) + ")";
         terminateCreatedProcess(processInfo.hProcess);
         CloseHandle(processInfo.hThread);
         CloseHandle(processInfo.hProcess);
@@ -418,6 +1098,10 @@ bool GameLauncher::launchGameForWorkspaceImpl(
     }
 
     if (!AssignProcessToJobObject(job, processInfo.hProcess)) {
+        const DWORD jobAssignError = GetLastError();
+        lastError_ =
+            "game process could not be assigned to the strict Seat Job Object "
+            "(win32=" + std::to_string(jobAssignError) + ")";
         terminateCreatedProcess(processInfo.hProcess);
         CloseHandle(job);
         CloseHandle(processInfo.hThread);
@@ -432,7 +1116,11 @@ bool GameLauncher::launchGameForWorkspaceImpl(
         fromNativeHandle(job),
         token,
         {},
-        std::move(controllerPipe)};
+        std::move(controllerPipe),
+        {},
+        inputDevices.keyboardHandles,
+        inputDevices.mouseHandles,
+        {}};
     activationOwned = false;
 
     const auto rollback = [&]() {
@@ -446,23 +1134,109 @@ bool GameLauncher::launchGameForWorkspaceImpl(
     const auto identity =
         readProcessIdentity(processInfo.hProcess, processInfo.dwProcessId);
     if (!identity.valid()) {
+        lastError_ =
+            "the launched process identity could not be verified";
         rollback();
         return false;
     }
 
     seatProcesses_[*index]->identity = identity;
     if (!publishProcess(token, identity)) {
+        lastError_ =
+            "canonical Seat authority rejected the launched process identity";
         rollback();
         return false;
     }
 
+    if (displayGroup) {
+        std::string windowError;
+        auto windowRuntime = SeatWindowRuntime::create(
+            *host_,
+            token,
+            identity,
+            exactRootProcessTree(
+                workspace.workspaceId,
+                identity,
+                game.executablePath),
+            std::move(*displayGroup),
+            &windowError);
+        if (!windowRuntime) {
+            lastError_ = windowError.empty()
+                ? "display/window ownership tracker could not be established"
+                : windowError;
+            std::cerr
+                << "[GameLauncher] display/window tracker setup failed: "
+                << lastError_ << '\n';
+            rollback();
+            return false;
+        }
+        seatProcesses_[*index]->windowRuntime =
+            std::move(windowRuntime);
+    }
+
+    // Establish every process-local input boundary while the target's
+    // primary thread is still suspended. Resuming first creates a bleed window:
+    // keyboard/mouse can observe system Raw Input and an XInput title can bind
+    // directly to the machine-wide controller slots before HydraSeat redirects
+    // its reviewed static imports.
+    if (inputDevices.configured() || wantsXInput) {
+        std::string inputError;
+        const auto artifactDirectory = currentExecutableDirectory(&inputError);
+        if (!artifactDirectory) {
+            lastError_ = inputError.empty()
+                ? "Gate C runtime directory could not be resolved"
+                : std::move(inputError);
+            rollback();
+            return false;
+        }
+
+        gatec::ExternalInputSessionOptions options{};
+        options.seatId = workspace.workspaceId;
+        options.processHandle = fromNativeHandle(processInfo.hProcess);
+        options.processId = processInfo.dwProcessId;
+        options.artifactDirectory = *artifactDirectory;
+        options.enableXInputRedirect = wantsXInput;
+
+        auto inputSession =
+            gatec::ExternalInputSession::attach(options, &inputError);
+        if (!inputSession) {
+            lastError_ = inputError.empty()
+                ? (wantsXInput
+                       ? "process-local input/XInput isolation could not be established"
+                       : "process-local keyboard/mouse isolation could not be established")
+                : std::move(inputError);
+            rollback();
+            return false;
+        }
+        seatProcesses_[*index]->inputSession = std::move(inputSession);
+    }
+
     if (ResumeThread(processInfo.hThread) == static_cast<DWORD>(-1)) {
+        const DWORD resumeError = GetLastError();
+        lastError_ =
+            "the launched process could not be resumed safely (win32=" +
+            std::to_string(resumeError) + ")";
         rollback();
         return false;
     }
 
     CloseHandle(processInfo.hThread);
     processInfo.hThread = nullptr;
+
+    if (seatProcesses_[*index]->windowRuntime) {
+        std::string placementError;
+        if (!seatProcesses_[*index]->windowRuntime->placeInitial(
+                &placementError)) {
+            lastError_ = placementError.empty()
+                ? "assigned display placement failed"
+                : placementError;
+            std::cerr
+                << "[GameLauncher] assigned display placement failed: "
+                << placementError << '\n';
+            rollback();
+            return false;
+        }
+    }
 
     std::wcout << L"[GameLauncher] Started " << game.title
                << L" for Seat #" << workspace.workspaceId
@@ -478,7 +1252,93 @@ bool GameLauncher::launchGameForWorkspaceImpl(
 #endif
 }
 
+bool GameLauncher::routePhysicalInput(const RawInputEvent& event) {
+#ifdef _WIN32
+    std::lock_guard lock(processMutex_);
+    if (event.deviceHandle == 0) return false;
+
+    const bool keyboardEvent = event.rawDevType == RIM_TYPEKEYBOARD;
+    const bool mouseEvent = event.rawDevType == RIM_TYPEMOUSE;
+    if (!keyboardEvent && !mouseEvent) return false;
+
+    SeatProcess* target = nullptr;
+    for (auto& candidate : seatProcesses_) {
+        if (!candidate || !candidate->inputSession ||
+            !candidate->inputSession->active()) {
+            continue;
+        }
+        const auto containsHandle = [&](const auto& handles) {
+            return std::find(
+                       handles.begin(),
+                       handles.end(),
+                       event.deviceHandle) != handles.end();
+        };
+        const bool matches =
+            (keyboardEvent && containsHandle(candidate->keyboardHandles)) ||
+            (mouseEvent && containsHandle(candidate->mouseHandles));
+        if (!matches) continue;
+        if (target != nullptr) {
+            lastError_ = "one physical input device resolved to more than one active Seat";
+            return false;
+        }
+        target = &*candidate;
+    }
+    if (target == nullptr) return false;
+
+    gatec::InputEventMessage message{};
+    message.timestampMicros = event.timestampMicros;
+    message.isTouchpad = event.isTouchpad;
+    if (keyboardEvent) {
+        message.kind = gatec::InputKind::Keyboard;
+        message.vkey = event.vkey;
+        message.scanCode = event.scanCode;
+        message.keyboardFlags = event.keyboardFlags;
+        switch (event.messageType) {
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN:
+            message.keyTransition = gatec::KeyTransition::Down;
+            break;
+        case WM_KEYUP:
+        case WM_SYSKEYUP:
+            message.keyTransition = gatec::KeyTransition::Up;
+            break;
+        default:
+            return false;
+        }
+    } else {
+        message.kind = gatec::InputKind::Mouse;
+        message.deltaX = event.deltaX;
+        message.deltaY = event.deltaY;
+        message.mouseButtonFlags = event.mouseButtonFlags;
+        message.wheelDelta = event.wheelDelta;
+    }
+
+    std::string error;
+    if (!target->inputSession->sendInput(message, &error)) {
+        const std::uint32_t failedSeatId = target->token.seatId;
+        const std::string deliveryError = error.empty()
+            ? "process-local input delivery failed"
+            : "process-local input delivery failed: " + error;
+
+        // Once the process-local bridge cannot accept Seat input, continuing the
+        // owned process tree would be fail-open: a launcher-handoff child could
+        // outlive the injected root with no proven input isolation. The launcher
+        // mutex is recursive by design, so stop the exact Seat Job synchronously.
+        const bool stopped = stopWorkspaceGame(failedSeatId);
+        lastError_ = stopped
+            ? deliveryError + "; Seat process tree terminated fail closed"
+            : deliveryError + "; Seat process tree termination also failed";
+        return false;
+    }
+    return true;
+#else
+    (void)event;
+    return false;
+#endif
+}
+
 bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
+    std::lock_guard lock(processMutex_);
 #ifdef _WIN32
     const auto index = seatIndex(workspaceId);
     if ((!controller_ && !host_) || !index || !seatProcesses_[*index]) {
@@ -493,6 +1353,10 @@ bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
         return false;
     }
 
+    // Keep Seat-local isolation/tracking alive until the exact owned process
+    // tree is confirmed stopped. If termination or verification fails, returning
+    // with the game still running must not silently drop keyboard/mouse isolation
+    // or window ownership.
     DWORD activeProcesses = 0;
     if (!queryActiveProcessCount(job, activeProcesses)) return false;
     if (activeProcesses != 0 && !TerminateJobObject(job, ERROR_CANCELLED)) {
@@ -502,6 +1366,8 @@ bool GameLauncher::stopWorkspaceGame(std::uint32_t workspaceId) {
     if (!waitForJobEmpty(job, 5000)) return false;
     if (WaitForSingleObject(process, 5000) != WAIT_OBJECT_0) return false;
 
+    session.inputSession.reset();
+    session.windowRuntime.reset();
     session.controllerPipe.reset();
     if (!endSeatActivation(session.token)) return false;
 

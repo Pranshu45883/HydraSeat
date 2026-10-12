@@ -1,10 +1,16 @@
 #include "hydra/hardware_detector.hpp"
 #include "hydra/controller_inventory.hpp"
+#include "hydra/display_topology.hpp"
+#include "hydra/hardware_identity.hpp"
+#include "hydra/raw_input_utils.hpp"
 
 #include <iostream>
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <limits>
+#include <map>
+#include <unordered_map>
 #include <unordered_set>
 
 #ifdef _WIN32
@@ -20,276 +26,289 @@
 
 namespace hydra {
 
-// Extract clean hardware ID key (strips HID sub-collections like &Col01, &Col02)
-static std::wstring getHardwareDeviceKey(const std::wstring& devPath) {
-    std::wstring pathUpper = devPath;
-    for (auto& c : pathUpper) c = ::towupper(c);
+namespace {
 
-    size_t start = pathUpper.find(L"HID#");
-    if (start == std::wstring::npos) start = pathUpper.find(L"ACPI#");
-    if (start != std::wstring::npos) {
-        size_t firstHash = pathUpper.find(L"#", start);
-        if (firstHash != std::wstring::npos) {
-            size_t secondHash = pathUpper.find(L"#", firstHash + 1);
-            if (secondHash != std::wstring::npos) {
-                std::wstring key = pathUpper.substr(firstHash + 1, secondHash - firstHash - 1);
-                size_t colPos = key.find(L"&COL");
-                if (colPos != std::wstring::npos) {
-                    key.erase(colPos);
-                }
-                return key;
+enum class PhysicalInputRole {
+    Keyboard,
+    Mouse,
+};
+
+struct RawInputEndpoint {
+    PhysicalInputRole role{PhysicalInputRole::Keyboard};
+    uintptr_t nativeHandle{0};
+    std::wstring devicePath;
+    win32::DeviceInterfaceIdentity identity;
+};
+
+struct PhysicalInputGroup {
+    std::wstring physicalKey;
+    std::wstring displayName;
+    std::vector<RawInputEndpoint> keyboards;
+    std::vector<RawInputEndpoint> mice;
+};
+
+std::wstring physicalIdentityKey(
+    const win32::DeviceInterfaceIdentity& identity) {
+    const std::wstring_view container =
+        identity.physicalContainerId
+            ? std::wstring_view(*identity.physicalContainerId)
+            : std::wstring_view{};
+    const std::wstring_view ancestor =
+        identity.physicalAncestorInstanceId
+            ? std::wstring_view(*identity.physicalAncestorInstanceId)
+            : (identity.parentDeviceInstanceId
+                   ? std::wstring_view(*identity.parentDeviceInstanceId)
+                   : std::wstring_view{});
+    const std::wstring_view device =
+        identity.deviceInstanceId
+            ? std::wstring_view(*identity.deviceInstanceId)
+            : std::wstring_view{};
+    return hardware::selectPhysicalIdentity(
+        container, ancestor, device, identity.interfacePath);
+}
+
+bool receiverLike(std::wstring_view name) {
+    const auto normalized = hardware::normalizeDevicePath(name);
+    return hardware::containsToken(normalized, L"RECEIVER") ||
+           hardware::containsToken(normalized, L"DONGLE") ||
+           hardware::containsToken(normalized, L"ADAPTER");
+}
+
+std::optional<PhysicalInputRole> primaryRole(
+    const PhysicalInputGroup& group) {
+    struct Candidate {
+        std::uint16_t order;
+        PhysicalInputRole role;
+    };
+    std::optional<Candidate> best;
+
+    const auto consider = [&](const RawInputEndpoint& endpoint) {
+        const auto protocol = endpoint.identity.usbInterfaceProtocol;
+        if (protocol) {
+            if (*protocol == 1 && endpoint.role != PhysicalInputRole::Keyboard) {
+                return;
+            }
+            if (*protocol == 2 && endpoint.role != PhysicalInputRole::Mouse) {
+                return;
             }
         }
-    }
-    return pathUpper;
+
+        const std::uint16_t order = endpoint.identity.usbInterfaceNumber
+            ? static_cast<std::uint16_t>(*endpoint.identity.usbInterfaceNumber)
+            : (std::numeric_limits<std::uint16_t>::max)();
+        if (!best || order < best->order) {
+            best = Candidate{order, endpoint.role};
+        }
+    };
+
+    for (const auto& endpoint : group.keyboards) consider(endpoint);
+    for (const auto& endpoint : group.mice) consider(endpoint);
+    if (!best) return std::nullopt;
+    return best->role;
 }
+
+const RawInputEndpoint* representativeEndpoint(
+    const std::vector<RawInputEndpoint>& endpoints) {
+    if (endpoints.empty()) return nullptr;
+    return &*std::min_element(
+        endpoints.begin(), endpoints.end(),
+        [](const RawInputEndpoint& lhs, const RawInputEndpoint& rhs) {
+            return hardware::normalizeDevicePath(lhs.devicePath) <
+                   hardware::normalizeDevicePath(rhs.devicePath);
+        });
+}
+
+std::vector<PhysicalInputGroup> enumeratePhysicalInputGroups() {
+    std::vector<PhysicalInputGroup> groups;
+#ifdef _WIN32
+    const auto rawDevices = win32::enumerateRawInputDevices();
+    if (!rawDevices) return groups;
+
+    std::map<std::wstring, PhysicalInputGroup> byPhysicalIdentity;
+    for (const auto& rawDevice : rawDevices.devices) {
+        if (rawDevice.dwType != RIM_TYPEKEYBOARD &&
+            rawDevice.dwType != RIM_TYPEMOUSE) {
+            continue;
+        }
+
+        const auto path = win32::rawInputDeviceName(rawDevice.hDevice);
+        if (!path) continue;
+
+        auto identity = win32::resolveDeviceInterfaceIdentity(*path);
+        if (identity.syntheticOrRemote || !identity.physicalTransportProven) {
+            continue;
+        }
+
+        const auto physicalKey = physicalIdentityKey(identity);
+        if (physicalKey.empty()) continue;
+
+        auto& group = byPhysicalIdentity[physicalKey];
+        group.physicalKey = physicalKey;
+        if (group.displayName.empty() && identity.physicalDisplayName) {
+            group.displayName = *identity.physicalDisplayName;
+        }
+
+        RawInputEndpoint endpoint;
+        endpoint.role = rawDevice.dwType == RIM_TYPEKEYBOARD
+            ? PhysicalInputRole::Keyboard
+            : PhysicalInputRole::Mouse;
+        endpoint.nativeHandle =
+            reinterpret_cast<uintptr_t>(rawDevice.hDevice);
+        endpoint.devicePath = *path;
+        endpoint.identity = std::move(identity);
+
+        auto& endpoints = endpoint.role == PhysicalInputRole::Keyboard
+            ? group.keyboards
+            : group.mice;
+
+        // Keep every top-level collection until role arbitration is done.
+        // Collections collapse to one user-facing physical device later.
+        endpoints.push_back(std::move(endpoint));
+    }
+
+    groups.reserve(byPhysicalIdentity.size());
+    for (auto& [key, group] : byPhysicalIdentity) {
+        (void)key;
+        if (group.displayName.empty()) {
+            group.displayName = L"Physical HID device";
+        }
+        groups.push_back(std::move(group));
+    }
+#endif
+    return groups;
+}
+
+std::vector<DeviceInfo> devicesForRole(
+    const std::vector<PhysicalInputGroup>& groups,
+    PhysicalInputRole wantedRole) {
+    std::vector<DeviceInfo> result;
+
+    for (const auto& group : groups) {
+        const auto& endpoints = wantedRole == PhysicalInputRole::Keyboard
+            ? group.keyboards
+            : group.mice;
+        const auto* representative = representativeEndpoint(endpoints);
+        if (!representative) continue;
+
+        const bool composite =
+            !group.keyboards.empty() && !group.mice.empty();
+        const auto primary = primaryRole(group);
+        const bool needsActivity =
+            composite &&
+            (receiverLike(group.displayName) ||
+             !primary ||
+             *primary != wantedRole);
+
+        DeviceInfo info;
+        info.type = wantedRole == PhysicalInputRole::Keyboard
+            ? DeviceType::Keyboard
+            : DeviceType::Mouse;
+        info.devicePath = representative->devicePath;
+        for (const auto& endpoint : endpoints) {
+            if (endpoint.nativeHandle == 0) continue;
+            if (std::find(
+                    info.nativeHandles.begin(),
+                    info.nativeHandles.end(),
+                    endpoint.nativeHandle) == info.nativeHandles.end()) {
+                info.nativeHandles.push_back(endpoint.nativeHandle);
+            }
+        }
+        if (!info.nativeHandles.empty()) {
+            info.nativeHandle = info.nativeHandles.front();
+        }
+        info.id = win32::makeStableRawInputDeviceId(
+            wantedRole == PhysicalInputRole::Keyboard
+                ? L"keyboard"
+                : L"mouse",
+            representative->identity);
+        if (info.id.empty()) continue;
+        info.name = group.displayName;
+        if (wantedRole == PhysicalInputRole::Keyboard &&
+            hardware::isLikelyInternalKeyboardPath(
+                representative->devicePath)) {
+            info.name = L"Internal Keyboard";
+        } else if (wantedRole == PhysicalInputRole::Mouse &&
+                   hardware::isLikelyTouchpadPath(
+                       representative->devicePath)) {
+            info.name = L"Touchpad";
+        }
+        info.requiresActivityConfirmation = needsActivity;
+        result.push_back(std::move(info));
+    }
+
+    std::sort(
+        result.begin(), result.end(),
+        [](const DeviceInfo& lhs, const DeviceInfo& rhs) {
+            if (lhs.requiresActivityConfirmation !=
+                rhs.requiresActivityConfirmation) {
+                return !lhs.requiresActivityConfirmation;
+            }
+            if (lhs.name != rhs.name) return lhs.name < rhs.name;
+            return lhs.id < rhs.id;
+        });
+    return result;
+}
+
+} // namespace
 
 std::vector<DeviceInfo> HardwareDetector::detectDisplays() {
     std::vector<DeviceInfo> result;
 
 #ifdef _WIN32
-    DISPLAY_DEVICEW dd;
-    dd.cb = sizeof(dd);
-    DWORD deviceNum = 0;
+    // Seat v1 targets physical monitors. DisplayConfig + DXGI gives us the
+    // target identity/transport evidence that EnumDisplayDevices alone cannot:
+    // virtual/remote/indirect outputs can also be attached to the desktop.
+    display::DisplayTopologyInventory topologyInventory;
+    const auto topology = topologyInventory.refresh();
+    if (!topology.querySucceeded) return result;
 
-    while (EnumDisplayDevicesW(NULL, deviceNum, &dd, 0)) {
-        if (dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) {
-            DeviceInfo info;
-            info.id = dd.DeviceName;
-            info.name = dd.DeviceString;
-            info.devicePath = dd.DeviceID;
-            info.type = DeviceType::Display;
-            result.push_back(info);
+    for (const auto& output : topology.outputs) {
+        if (!output.active || !output.attached ||
+            output.virtualLikelihood !=
+                display::VirtualDisplayLikelihood::PhysicalLikely ||
+            output.gdiDeviceName.empty()) {
+            continue;
         }
-        deviceNum++;
+
+        const auto stableKey = output.identity.stableKey();
+        DeviceInfo info;
+        info.id.assign(stableKey.begin(), stableKey.end());
+        info.name = !output.friendlyName.empty()
+            ? output.friendlyName
+            : (!output.dxgiAdapterDescription.empty()
+                   ? output.dxgiAdapterDescription
+                   : output.gdiDeviceName);
+        info.devicePath = output.gdiDeviceName;
+        info.type = DeviceType::Display;
+        result.push_back(std::move(info));
     }
+
+    std::sort(
+        result.begin(), result.end(),
+        [](const DeviceInfo& lhs, const DeviceInfo& rhs) {
+            return lhs.id < rhs.id;
+        });
 #endif
 
     return result;
 }
 
 std::vector<DeviceInfo> HardwareDetector::detectKeyboards() {
-    std::vector<DeviceInfo> result;
-
 #ifdef _WIN32
-    UINT numDevices = 0;
-    if (GetRawInputDeviceList(NULL, &numDevices, sizeof(RAWINPUTDEVICELIST)) != 0 || numDevices == 0) {
-        return result;
-    }
-
-    std::vector<RAWINPUTDEVICELIST> rawList(numDevices);
-    if (GetRawInputDeviceList(rawList.data(), &numDevices, sizeof(RAWINPUTDEVICELIST)) == (UINT)-1) {
-        return result;
-    }
-
-    std::unordered_set<std::wstring> seenBaseIDs;
-
-    // First pass: collect base IDs of all MOUSE/HID devices to detect combo devices
-    std::unordered_set<std::wstring> mouseBaseIDs;
-    for (const auto& dev : rawList) {
-        if (dev.dwType == RIM_TYPEMOUSE || dev.dwType == RIM_TYPEHID) {
-            std::wstring devPath;
-            UINT nameSize = 0;
-            GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
-            if (nameSize > 0) {
-                std::wstring nameBuf(nameSize, L'\0');
-                if (GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, nameBuf.data(), &nameSize) != (UINT)-1) {
-                    devPath = nameBuf;
-                }
-            }
-            std::wstring baseID = getHardwareDeviceKey(devPath);
-            if (!baseID.empty()) {
-                mouseBaseIDs.insert(baseID);
-            }
-        }
-    }
-
-    for (const auto& dev : rawList) {
-        if (dev.dwType == RIM_TYPEKEYBOARD) {
-            std::wstring devPath;
-            UINT nameSize = 0;
-            GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
-            if (nameSize > 0) {
-                std::wstring nameBuf(nameSize, L'\0');
-                if (GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, nameBuf.data(), &nameSize) != (UINT)-1) {
-                    devPath = nameBuf;
-                }
-            }
-
-            std::wstring pathUpper = devPath;
-            for (auto& c : pathUpper) c = ::towupper(c);
-
-            // Filter virtual RDP keyboards
-            if (pathUpper.find(L"RDP_KBD") != std::wstring::npos || pathUpper.find(L"ROOT\\RDP") != std::wstring::npos) {
-                continue;
-            }
-
-            // Filter synthetic "Microsoft Keyboard RID" virtual keyboard
-            if (pathUpper.find(L"MICROSOFT KEYBOARD") != std::wstring::npos) {
-                continue;
-            }
-
-            // Deduplicate sub-collections of the same physical USB keyboard
-            std::wstring baseID = getHardwareDeviceKey(devPath);
-            if (!baseID.empty() && seenBaseIDs.count(baseID) > 0) {
-                continue; // Skip duplicate child HID collection
-            }
-            if (!baseID.empty()) {
-                seenBaseIDs.insert(baseID);
-            }
-
-            // Filter keyboard sub-collections of USB combo devices that are primarily mice
-            // (e.g., USB mouse with media buttons registers a keyboard HID interface)
-            if (!baseID.empty() && mouseBaseIDs.count(baseID) > 0) {
-                // This device also has mouse sub-collections → it's a mouse with extra keys, not a keyboard
-                continue;
-            }
-
-            DeviceInfo info;
-            info.type = DeviceType::Keyboard;
-            info.nativeHandle = reinterpret_cast<uintptr_t>(dev.hDevice);
-            info.devicePath = devPath;
-
-            if (pathUpper.find(L"ACPI") != std::wstring::npos || pathUpper.find(L"MSFT0001") != std::wstring::npos || pathUpper.find(L"I8042PRT") != std::wstring::npos) {
-                info.name = L"Laptop Internal Keyboard";
-            } else if (pathUpper.find(L"HID") != std::wstring::npos || pathUpper.find(L"USB") != std::wstring::npos) {
-                info.name = L"USB External Keyboard";
-            } else {
-                info.name = L"Keyboard";
-            }
-
-            info.id = L"Keyboard_unsorted";
-            result.push_back(info);
-        }
-    }
-
-    // Sort: Laptop Internal Keyboard always first, USB External keyboards after
-    std::sort(result.begin(), result.end(), [](const DeviceInfo& a, const DeviceInfo& b) {
-        bool aIsLaptop = (a.name.find(L"Laptop") != std::wstring::npos);
-        bool bIsLaptop = (b.name.find(L"Laptop") != std::wstring::npos);
-        if (aIsLaptop != bIsLaptop) return aIsLaptop; // Laptop first
-        return false; // Preserve relative order otherwise
-    });
-
-    // Re-number after sorting
-    int kbdCount = 0;
-    for (auto& info : result) {
-        kbdCount++;
-        if (info.name.find(L"Laptop") != std::wstring::npos) {
-            info.name = L"Laptop Internal Keyboard";
-        } else if (info.name.find(L"USB") != std::wstring::npos) {
-            info.name = L"USB External Keyboard #" + std::to_wstring(kbdCount);
-        } else {
-            info.name = L"Keyboard #" + std::to_wstring(kbdCount);
-        }
-        info.id = L"Keyboard_" + std::to_wstring(kbdCount);
-    }
+    const auto groups = enumeratePhysicalInputGroups();
+    return devicesForRole(groups, PhysicalInputRole::Keyboard);
+#else
+    return {};
 #endif
-
-    return result;
 }
 
 std::vector<DeviceInfo> HardwareDetector::detectMice() {
-    std::vector<DeviceInfo> result;
-
 #ifdef _WIN32
-    UINT numDevices = 0;
-    if (GetRawInputDeviceList(NULL, &numDevices, sizeof(RAWINPUTDEVICELIST)) != 0 || numDevices == 0) {
-        return result;
-    }
-
-    std::vector<RAWINPUTDEVICELIST> rawList(numDevices);
-    if (GetRawInputDeviceList(rawList.data(), &numDevices, sizeof(RAWINPUTDEVICELIST)) == (UINT)-1) {
-        return result;
-    }
-
-    std::unordered_set<std::wstring> seenBaseIDs;
-    int padCount = 0;
-
-    for (const auto& dev : rawList) {
-        if (dev.dwType == RIM_TYPEMOUSE || dev.dwType == RIM_TYPEHID) {
-            std::wstring devPath;
-            UINT nameSize = 0;
-            GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
-            if (nameSize > 0) {
-                std::wstring nameBuf(nameSize, L'\0');
-                if (GetRawInputDeviceInfoW(dev.hDevice, RIDI_DEVICENAME, nameBuf.data(), &nameSize) != (UINT)-1) {
-                    devPath = nameBuf;
-                }
-            }
-
-            std::wstring pathUpper = devPath;
-            for (auto& c : pathUpper) c = ::towupper(c);
-
-            // Filter virtual RDP mice
-            if (pathUpper.find(L"RDP_MOU") != std::wstring::npos || pathUpper.find(L"ROOT\\RDP") != std::wstring::npos) {
-                continue;
-            }
-
-            // Deduplicate sub-collections of the same physical USB mouse or touchpad controller
-            std::wstring baseID = getHardwareDeviceKey(devPath);
-            if (!baseID.empty() && seenBaseIDs.count(baseID) > 0) {
-                continue;
-            }
-            if (!baseID.empty()) {
-                seenBaseIDs.insert(baseID);
-            }
-
-            bool isTouchpad = (pathUpper.find(L"ELAN") != std::wstring::npos ||
-                               pathUpper.find(L"SYN") != std::wstring::npos ||
-                               pathUpper.find(L"MSFT0001") != std::wstring::npos ||
-                               pathUpper.find(L"PNP0C50") != std::wstring::npos ||
-                               pathUpper.find(L"ITE5570") != std::wstring::npos ||
-                               pathUpper.find(L"TOUCHPAD") != std::wstring::npos);
-
-            // Keep only ONE touchpad tile for the whole system
-            if (isTouchpad && padCount > 0) {
-                continue; // Skip creating a second touchpad tile
-            }
-            if (isTouchpad) padCount++;
-
-            DeviceInfo info;
-            info.type = DeviceType::Mouse;
-            info.nativeHandle = reinterpret_cast<uintptr_t>(dev.hDevice);
-            info.devicePath = devPath;
-
-            if (isTouchpad) {
-                info.name = L"Laptop Touchpad";
-                info.id = L"Touchpad_unsorted";
-            } else {
-                info.name = L"USB External Mouse";
-                info.id = L"Mouse_unsorted";
-            }
-
-            result.push_back(info);
-        }
-    }
-
-    // Sort: USB External Mice first, Laptop Touchpads last
-    std::sort(result.begin(), result.end(), [](const DeviceInfo& a, const DeviceInfo& b) {
-        bool aIsTouchpad = (a.name.find(L"Touchpad") != std::wstring::npos);
-        bool bIsTouchpad = (b.name.find(L"Touchpad") != std::wstring::npos);
-        if (aIsTouchpad != bIsTouchpad) return !aIsTouchpad; // USB mice first
-        return false;
-    });
-
-    // Re-number after sorting
-    int mouseCount = 0;
-    padCount = 0;
-    for (auto& info : result) {
-        if (info.name.find(L"Touchpad") != std::wstring::npos) {
-            padCount++;
-            info.name = L"Laptop Touchpad";
-            info.id = L"Touchpad_" + std::to_wstring(padCount);
-        } else {
-            mouseCount++;
-            info.name = L"USB External Mouse #" + std::to_wstring(mouseCount);
-            info.id = L"Mouse_" + std::to_wstring(mouseCount);
-        }
-    }
+    const auto groups = enumeratePhysicalInputGroups();
+    return devicesForRole(groups, PhysicalInputRole::Mouse);
+#else
+    return {};
 #endif
-
-    return result;
 }
 
 std::vector<DeviceInfo> HardwareDetector::detectControllers() {

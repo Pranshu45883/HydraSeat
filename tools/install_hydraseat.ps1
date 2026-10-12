@@ -21,27 +21,37 @@ if (-not [Environment]::Is64BitOperatingSystem) {
     throw "HydraSeat v1 release installer requires x64 Windows"
 }
 $Architecture = "x64"
-$OwnedFiles = @(
+$CoreOwnedFiles = @(
     "HydraSeat.exe",
     "hydra_host.exe",
-    "hydra_seat_ui.exe",
+    "hydra_xinput_adapter.dll",
+    "hydra_gate_c_adapter.dll",
+    "hydra_gate_c_shim.dll",
+    "hydra_gate_c_external_bridge.dll",
     "hydra_watchdog.exe",
     "hydra_reset.exe",
     "hydraseat_profilectl.exe",
     "hydraseat_community_validate.exe",
     "install_hydraseat.ps1"
 )
+# The verified package/install state may append bounded third-party runtime files
+# (for example Qt platform plugins). Core product files remain mandatory.
+$OwnedFiles = @($CoreOwnedFiles)
+$MaximumOwnedFiles = 64
 $OwnedArtifactIds = @{
     "HydraSeat.exe" = "main-ui"
     "hydra_host.exe" = "host"
-    "hydra_seat_ui.exe" = "seat-ui"
+    "hydra_xinput_adapter.dll" = "xinput-adapter"
+    "hydra_gate_c_adapter.dll" = "gate-c-adapter"
+    "hydra_gate_c_shim.dll" = "gate-c-shim"
+    "hydra_gate_c_external_bridge.dll" = "gate-c-external-bridge"
     "hydra_watchdog.exe" = "watchdog"
     "hydra_reset.exe" = "reset"
     "hydraseat_profilectl.exe" = "profile-cli"
     "hydraseat_community_validate.exe" = "community-validator"
     "install_hydraseat.ps1" = "installer-script"
 }
-$ProcessesThatMustBeStopped = @($OwnedFiles | Where-Object {
+$ProcessesThatMustBeStopped = @($CoreOwnedFiles | Where-Object {
     $_.EndsWith(".exe", [StringComparison]::OrdinalIgnoreCase)
 } | ForEach-Object {
     [IO.Path]::GetFileNameWithoutExtension($_)
@@ -51,15 +61,82 @@ $MaximumInstallerTransactions = 8
 $MaximumTransactionStateBytes = 4096
 $MaximumSigningProvenanceBytes = 262144
 $MaximumDetachedProvenanceSignatureBytes = 262144
+$QtRuntimeProvider = "Qt Project"
+$QtRuntimeVersion = "6.8.3"
+$QtRuntimeDeploymentTool = "windeployqt"
+$VcRuntimeProvider = "Microsoft"
+$VcRuntimeVersion = "VS2022"
+$VcRuntimeDeploymentTool = "visual-studio-redist"
+$VcRuntimeInstallerFile = "vc_redist.x64.exe"
+$RequiredQtRuntimeFiles = @(
+    "Qt6Core.dll",
+    "Qt6Gui.dll",
+    "Qt6Widgets.dll",
+    "platforms\qwindows.dll"
+)
+
+function Assert-SafeOwnedRelativePath {
+    param([string]$Child)
+    if ([string]::IsNullOrWhiteSpace($Child) -or
+        [IO.Path]::IsPathRooted($Child) -or
+        $Child.Length -gt 240 -or
+        $Child.Contains("..") -or
+        $Child.Contains(":") -or
+        $Child.Contains("*") -or
+        $Child.Contains("?") -or
+        $Child.StartsWith("\") -or
+        $Child.StartsWith("/")) {
+        throw "Owned file path is not a safe bounded relative path"
+    }
+}
 
 function Resolve-UnderRoot {
     param([string]$Root, [string]$Child)
+    Assert-SafeOwnedRelativePath -Child $Child
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
     $candidate = [IO.Path]::GetFullPath((Join-Path $Root $Child))
     if (-not $candidate.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Path escapes the owned root"
     }
     return $candidate
+}
+
+function Ensure-OwnedParentDirectories {
+    param([string]$Root, [string]$Child)
+    Assert-SafeOwnedRelativePath -Child $Child
+    $normalized = $Child.Replace('/', '\')
+    $parts = @($normalized.Split('\') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($parts.Count -le 1) { return }
+
+    $relative = ""
+    for ($index = 0; $index -lt ($parts.Count - 1); ++$index) {
+        $relative = if ([string]::IsNullOrEmpty($relative)) {
+            $parts[$index]
+        } else {
+            Join-Path $relative $parts[$index]
+        }
+        $directory = Resolve-UnderRoot -Root $Root -Child $relative
+        if (Test-Path -LiteralPath $directory) {
+            Assert-OwnedDirectoryNotReparsePoint -Path $directory -Label "HydraSeat owned parent directory $relative"
+        } else {
+            New-Item -ItemType Directory -Path $directory | Out-Null
+            Assert-OwnedDirectoryNotReparsePoint -Path $directory -Label "HydraSeat owned parent directory $relative"
+        }
+    }
+}
+
+function Remove-EmptyOwnedParentDirectories {
+    param([string]$Root, [string]$Child)
+    $normalized = $Child.Replace('/', '\')
+    $parts = @($normalized.Split('\') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    for ($index = $parts.Count - 2; $index -ge 0; --$index) {
+        $relative = ($parts[0..$index] -join '\')
+        $directory = Resolve-UnderRoot -Root $Root -Child $relative
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
+        Assert-OwnedDirectoryNotReparsePoint -Path $directory -Label "HydraSeat owned parent directory $relative"
+        if (@(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0) { break }
+        Remove-Item -LiteralPath $directory -Force
+    }
 }
 
 function Assert-OwnedDirectoryNotReparsePoint {
@@ -83,6 +160,74 @@ function Assert-OwnedLeafNotReparsePoint {
         ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "$Label must be a normal file and not a reparse point"
     }
+}
+
+function Set-ActiveOwnedFiles {
+    param([string[]]$Paths)
+    $pathsArray = @($Paths)
+    if ($pathsArray.Count -lt $CoreOwnedFiles.Count -or
+        $pathsArray.Count -gt $MaximumOwnedFiles) {
+        throw "Owned file set has an invalid bounded count"
+    }
+
+    $seen = @{}
+    foreach ($path in $pathsArray) {
+        Assert-SafeOwnedRelativePath -Child $path
+        $folded = ([string]$path).ToUpperInvariant()
+        if ($seen.ContainsKey($folded)) {
+            throw "Owned file set contains a duplicate/case-fold collision"
+        }
+        $seen[$folded] = $true
+    }
+    foreach ($core in $CoreOwnedFiles) {
+        if (-not $seen.ContainsKey($core.ToUpperInvariant())) {
+            throw "Owned file set is missing a mandatory HydraSeat core file"
+        }
+    }
+    $script:OwnedFiles = @($pathsArray)
+}
+
+function Get-SafeRelativeFileInventory {
+    param([string]$Root, [int]$MaximumFiles = $MaximumOwnedFiles)
+    Assert-OwnedDirectoryNotReparsePoint -Path $Root -Label "HydraSeat owned inventory root"
+
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $pending = New-Object 'System.Collections.Generic.Queue[string]'
+    $pending.Enqueue($rootFull)
+    $files = New-Object 'System.Collections.Generic.List[string]'
+    $directoryCount = 0
+
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Dequeue()
+        foreach ($entry in @(Get-ChildItem -LiteralPath $directory -Force)) {
+            if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Owned file inventory contains a reparse point"
+            }
+            if ($entry.PSIsContainer) {
+                ++$directoryCount
+                if ($directoryCount -gt $MaximumFiles) {
+                    throw "Owned file inventory contains too many directories"
+                }
+                $pending.Enqueue([string]$entry.FullName)
+                continue
+            }
+
+            $relative = [string]$entry.FullName
+            if (-not $relative.StartsWith(
+                    $rootFull + '\',
+                    [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Owned file inventory escaped its root"
+            }
+            $relative = $relative.Substring($rootFull.Length + 1)
+            Assert-SafeOwnedRelativePath -Child $relative
+            $files.Add($relative)
+            if ($files.Count -gt $MaximumFiles) {
+                throw "Owned file inventory exceeds its bounded file count"
+            }
+        }
+    }
+
+    return @($files | Sort-Object)
 }
 
 function Assert-Administrator {
@@ -165,7 +310,8 @@ function Get-ValidatedPackage {
     $provenance = Get-Content -LiteralPath $provenancePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $expectedProvenanceFields = @(
         "schemaVersion", "releaseVersion", "releaseRevision", "commitSha",
-        "signingManifest", "timestampUrl", "artifacts"
+        "signingManifest", "timestampUrl", "artifacts",
+        "thirdPartyRedistributables"
     )
     $actualProvenanceFields = @($provenance.PSObject.Properties.Name)
     if ($actualProvenanceFields.Count -ne $expectedProvenanceFields.Count) {
@@ -176,7 +322,7 @@ function Get-ValidatedPackage {
             throw "Release signing provenance contains unknown or missing fields"
         }
     }
-    if ($provenance.schemaVersion -ne 1 -or
+    if ($provenance.schemaVersion -ne 2 -or
         [string]$provenance.releaseVersion -notmatch "^[A-Za-z0-9._+-]{1,64}$" -or
         [UInt64]$provenance.releaseRevision -eq 0 -or
         [string]$provenance.commitSha -notmatch "^[A-Fa-f0-9]{40}$" -or
@@ -186,8 +332,8 @@ function Get-ValidatedPackage {
     }
 
     $records = @($provenance.artifacts)
-    if ($records.Count -ne $OwnedFiles.Count) {
-        throw "Release package does not contain the exact owned file set for $Architecture"
+    if ($records.Count -ne $CoreOwnedFiles.Count) {
+        throw "Release provenance does not contain the exact HydraSeat core artifact set"
     }
     $expectedRecordFields = @(
         "id", "kind", "target", "architecture", "fileName", "unsignedSha256",
@@ -206,12 +352,16 @@ function Get-ValidatedPackage {
             }
         }
         $fileName = [string]$record.fileName
-        if ($OwnedFiles -notcontains $fileName -or $seen.ContainsKey($fileName)) {
-            throw "Unexpected or duplicate owned release file"
+        Assert-SafeOwnedRelativePath -Child $fileName
+        $folded = $fileName.ToUpperInvariant()
+        if ($CoreOwnedFiles -notcontains $fileName -or $seen.ContainsKey($folded)) {
+            throw "Unexpected or duplicate HydraSeat core release file"
         }
-        $seen[$fileName] = $true
+        $seen[$folded] = $true
         $expectedKind = if ($fileName.EndsWith(".ps1", [StringComparison]::OrdinalIgnoreCase)) {
             "powershell-script"
+        } elseif ($fileName.EndsWith(".dll", [StringComparison]::OrdinalIgnoreCase)) {
+            "cmake-shared-library"
         } else {
             "cmake-executable"
         }
@@ -239,19 +389,240 @@ function Get-ValidatedPackage {
             $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $ExpectedSigner) {
             throw "Release file publisher/signature mismatch: $fileName"
         }
-        $validated += [ordered]@{ fileName = $fileName; sourcePath = $filePath; sha256 = $hash }
-    }
-    foreach ($fileName in $OwnedFiles) {
-        if (-not $seen.ContainsKey($fileName)) {
-            throw "Release package missing owned file: $fileName"
+        $validated += [ordered]@{
+            fileName = $fileName
+            sourcePath = $filePath
+            sha256 = $hash
+            productSigned = $true
         }
     }
+    foreach ($fileName in $CoreOwnedFiles) {
+        if (-not $seen.ContainsKey($fileName.ToUpperInvariant())) {
+            throw "Release package missing core file: $fileName"
+        }
+    }
+
+    $thirdPartyRecords = @($provenance.thirdPartyRedistributables)
+    if ($thirdPartyRecords.Count -lt ($RequiredQtRuntimeFiles.Count + 1) -or
+        ($thirdPartyRecords.Count + $CoreOwnedFiles.Count) -gt $MaximumOwnedFiles) {
+        throw "Release package contains an invalid bounded third-party runtime file set"
+    }
+    $prerequisites = @()
+    $expectedThirdPartyFields = @(
+        "id", "provider", "version", "deploymentTool",
+        "relativePath", "sha256", "bytes"
+    )
+    foreach ($record in $thirdPartyRecords) {
+        $fields = @($record.PSObject.Properties.Name)
+        if ($fields.Count -ne $expectedThirdPartyFields.Count) {
+            throw "Third-party runtime provenance contains unknown or missing fields"
+        }
+        foreach ($field in $expectedThirdPartyFields) {
+            if ($fields -notcontains $field) {
+                throw "Third-party runtime provenance contains unknown or missing fields"
+            }
+        }
+        if ([UInt64]$record.bytes -eq 0 -or
+            [UInt64]$record.bytes -gt 1073741824 -or
+            [string]$record.sha256 -notmatch "^[0-9a-f]{64}$") {
+            throw "Third-party runtime provenance does not match the reviewed contract"
+        }
+
+        $relativePath = ([string]$record.relativePath).Replace('/', '\')
+        Assert-SafeOwnedRelativePath -Child $relativePath
+        $folded = $relativePath.ToUpperInvariant()
+        if ($seen.ContainsKey($folded)) {
+            throw "Release package contains a duplicate/colliding runtime path"
+        }
+        $seen[$folded] = $true
+
+        $filePath = Resolve-UnderRoot -Root $architectureRoot -Child $relativePath
+        Assert-OwnedLeafNotReparsePoint -Path $filePath -Label "Third-party runtime file $relativePath"
+        $file = Get-Item -LiteralPath $filePath -Force
+        if ([UInt64]$file.Length -ne [UInt64]$record.bytes) {
+            throw "Third-party runtime size mismatch: $relativePath"
+        }
+        $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -ne [string]$record.sha256) {
+            throw "Third-party runtime hash mismatch: $relativePath"
+        }
+
+        if ([string]$record.id -eq "qt-runtime") {
+            if ([string]$record.provider -ne $QtRuntimeProvider -or
+                [string]$record.version -ne $QtRuntimeVersion -or
+                [string]$record.deploymentTool -ne $QtRuntimeDeploymentTool -or
+                -not $relativePath.EndsWith(".dll", [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Third-party runtime provenance does not match the reviewed Qt contract"
+            }
+
+            $validated += [ordered]@{
+                fileName = $relativePath
+                sourcePath = $filePath
+                sha256 = $hash
+                productSigned = $false
+            }
+            continue
+        }
+
+        if ([string]$record.id -eq "msvc-runtime-installer") {
+            if ([string]$record.provider -ne $VcRuntimeProvider -or
+                [string]$record.version -ne $VcRuntimeVersion -or
+                [string]$record.deploymentTool -ne $VcRuntimeDeploymentTool -or
+                -not $relativePath.Equals($VcRuntimeInstallerFile, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Third-party runtime provenance does not match the reviewed Visual C++ prerequisite contract"
+            }
+
+            $signature = Get-AuthenticodeSignature -LiteralPath $filePath
+            if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
+                $null -eq $signature.SignerCertificate -or
+                [string]$signature.SignerCertificate.Subject -notmatch
+                    '(^|,\s*)CN=Microsoft Corporation(,|$)') {
+                throw "Visual C++ Redistributable prerequisite Authenticode signature is invalid"
+            }
+
+            $prerequisites += [ordered]@{
+                fileName = $relativePath
+                sourcePath = $filePath
+                sha256 = $hash
+            }
+            continue
+        }
+
+        throw "Release package contains an unreviewed third-party runtime identity"
+    }
+
+    foreach ($required in $RequiredQtRuntimeFiles) {
+        if (-not $seen.ContainsKey($required.ToUpperInvariant())) {
+            throw "Release package missing required Qt runtime file: $required"
+        }
+    }
+    if (-not $seen.ContainsKey($VcRuntimeInstallerFile.ToUpperInvariant()) -or
+        $prerequisites.Count -ne 1) {
+        throw "Release package is missing the reviewed Visual C++ Redistributable prerequisite"
+    }
+
+    $actualFiles = @(
+        Get-SafeRelativeFileInventory -Root $architectureRoot -MaximumFiles $MaximumOwnedFiles
+    )
+    if ($actualFiles.Count -ne $seen.Count) {
+        throw "Release architecture directory does not contain the exact provenance-bound file set"
+    }
+    foreach ($actual in $actualFiles) {
+        if (-not $seen.ContainsKey(([string]$actual).ToUpperInvariant())) {
+            throw "Release architecture directory contains an unexpected file: $actual"
+        }
+    }
+
     return [ordered]@{
         releaseVersion = [string]$provenance.releaseVersion
         releaseRevision = [UInt64]$provenance.releaseRevision
         commitSha = [string]$provenance.commitSha
         architecture = $Architecture
         files = $validated
+        prerequisites = $prerequisites
+    }
+}
+
+function Convert-ToRuntimeVersion {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $match = [regex]::Match(
+        $Value,
+        '(?<v>\d+\.\d+\.\d+(?:\.\d+)?)')
+    if (-not $match.Success) { return $null }
+    try {
+        return [version]$match.Groups["v"].Value
+    } catch {
+        return $null
+    }
+}
+
+function Get-InstalledVcRuntimeVersion {
+    $keys = @(
+        "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64",
+        "HKLM:\SOFTWARE\Wow6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+    )
+    $versions = @()
+    foreach ($key in $keys) {
+        if (-not (Test-Path -LiteralPath $key)) { continue }
+        try {
+            $runtime = Get-ItemProperty -LiteralPath $key -ErrorAction Stop
+        } catch {
+            continue
+        }
+        if ([int]$runtime.Installed -ne 1) { continue }
+        $version = Convert-ToRuntimeVersion -Value ([string]$runtime.Version)
+        if ($null -ne $version) {
+            $versions += $version
+        }
+    }
+    if ($versions.Count -eq 0) { return $null }
+    return @($versions | Sort-Object -Descending)[0]
+}
+
+function Get-VcRedistPackageVersion {
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Visual C++ Redistributable prerequisite must not be a reparse point"
+    }
+    $versionText =
+        [Diagnostics.FileVersionInfo]::GetVersionInfo($Path).FileVersion
+    $version = Convert-ToRuntimeVersion -Value ([string]$versionText)
+    if ($null -eq $version -or $version.Major -lt 14) {
+        throw "Visual C++ Redistributable prerequisite version is invalid"
+    }
+    return $version
+}
+
+function Ensure-VcRuntimePrerequisite {
+    param($Package, [string]$StageRoot)
+
+    $prerequisites = @($Package.prerequisites)
+    if ($prerequisites.Count -ne 1) {
+        throw "Release package must contain exactly one reviewed Visual C++ prerequisite"
+    }
+    $prerequisite = $prerequisites[0]
+    if ([string]$prerequisite.fileName -ne $VcRuntimeInstallerFile) {
+        throw "Release package Visual C++ prerequisite identity is invalid"
+    }
+
+    $stagedPath =
+        Resolve-UnderRoot -Root $StageRoot -Child $VcRuntimeInstallerFile
+    Copy-Item -LiteralPath ([string]$prerequisite.sourcePath) -Destination $stagedPath -Force
+    try {
+        Assert-OwnedLeafNotReparsePoint -Path $stagedPath -Label "Staged Visual C++ Redistributable prerequisite"
+        $stagedHash =
+            (Get-FileHash -LiteralPath $stagedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($stagedHash -ne [string]$prerequisite.sha256) {
+            throw "Staged Visual C++ Redistributable prerequisite hash verification failed"
+        }
+
+        $signature = Get-AuthenticodeSignature -LiteralPath $stagedPath
+        if ($signature.Status -ne
+                [Management.Automation.SignatureStatus]::Valid -or
+            $null -eq $signature.SignerCertificate -or
+            [string]$signature.SignerCertificate.Subject -notmatch
+                '(^|,\s*)CN=Microsoft Corporation(,|$)') {
+            throw "Staged Visual C++ Redistributable prerequisite is not validly signed by Microsoft"
+        }
+
+        $requiredVersion = Get-VcRedistPackageVersion -Path $stagedPath
+        $installedVersion = Get-InstalledVcRuntimeVersion
+        if ($null -ne $installedVersion -and
+            $installedVersion -ge $requiredVersion) {
+            return
+        }
+
+        $process = Start-Process -FilePath $stagedPath -ArgumentList @("/install", "/quiet", "/norestart") -Wait -PassThru
+        $after = Get-InstalledVcRuntimeVersion
+        if ($null -eq $after -or $after -lt $requiredVersion) {
+            throw "Visual C++ Redistributable prerequisite did not reach the required version (exit=$($process.ExitCode))"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $stagedPath) {
+            Remove-Item -LiteralPath $stagedPath -Force
+        }
     }
 }
 
@@ -285,7 +656,8 @@ function Read-InstallStateFile {
         [string]$state.architecture -ne $Architecture -or
         -not $stateInstallRoot.Equals($InstallRoot, [StringComparison]::OrdinalIgnoreCase) -or
         [string]$state.startupMode -ne "Manual" -or
-        @($state.ownedFiles).Count -ne $OwnedFiles.Count) {
+        @($state.ownedFiles).Count -lt $CoreOwnedFiles.Count -or
+        @($state.ownedFiles).Count -gt $MaximumOwnedFiles) {
         throw "Existing HydraSeat install state is invalid; do not guess repair ownership"
     }
 
@@ -293,17 +665,20 @@ function Read-InstallStateFile {
     foreach ($file in @($state.ownedFiles)) {
         $fileFields = @($file.PSObject.Properties.Name)
         $fileName = [string]$file.fileName
-        if ($fileFields.Count -ne 2 -or $fileFields -notcontains "fileName" -or
-            $fileFields -notcontains "sha256" -or $OwnedFiles -notcontains $fileName -or
-            $seenOwnedFiles.ContainsKey($fileName) -or
+        Assert-SafeOwnedRelativePath -Child $fileName
+        $folded = $fileName.ToUpperInvariant()
+        if ($fileFields.Count -ne 2 -or
+            $fileFields -notcontains "fileName" -or
+            $fileFields -notcontains "sha256" -or
+            $seenOwnedFiles.ContainsKey($folded) -or
             [string]$file.sha256 -notmatch "^[0-9a-f]{64}$") {
             throw "Existing install state contains unknown or duplicate owned file metadata"
         }
-        $seenOwnedFiles[$fileName] = $true
+        $seenOwnedFiles[$folded] = $true
     }
-    foreach ($fileName in $OwnedFiles) {
-        if (-not $seenOwnedFiles.ContainsKey($fileName)) {
-            throw "Existing install state is missing owned file metadata"
+    foreach ($fileName in $CoreOwnedFiles) {
+        if (-not $seenOwnedFiles.ContainsKey($fileName.ToUpperInvariant())) {
+            throw "Existing install state is missing a mandatory core file"
         }
     }
     return $state
@@ -381,7 +756,7 @@ function Write-TransactionState {
         [string]$SnapshotIdentity
     )
     if ($TransactionId -notmatch "^[0-9a-f]{32}$" -or
-        $Phase -notin @("snapshotting", "prepared", "committed") -or
+        $Phase -notin @("snapshotting", "prepared", "staged", "committed") -or
         $Operation -notin @("Install", "Repair", "Uninstall")) {
         throw "Installer transaction state arguments are invalid"
     }
@@ -452,7 +827,7 @@ function Read-TransactionState {
         }
     }
     if ($state.schemaVersion -ne 1 -or [string]$state.transactionId -ne $transactionId -or
-        [string]$state.phase -notin @("snapshotting", "prepared", "committed") -or
+        [string]$state.phase -notin @("snapshotting", "prepared", "staged", "committed") -or
         [string]$state.operation -notin @("Install", "Repair", "Uninstall") -or
         $state.previousStatePresent -isnot [bool]) {
         throw "Installer transaction state marker is invalid"
@@ -468,36 +843,20 @@ function Read-TransactionState {
 function Get-TransactionSnapshotIdentity {
     param([string]$Backup, [bool]$PreviousStatePresent)
     Assert-OwnedDirectoryNotReparsePoint -Path $Backup -Label "HydraSeat installer transaction backup"
-    $parts = @("HydraSeatInstallerSnapshotV1")
-    foreach ($fileName in $OwnedFiles) {
-        $backupFile = Resolve-UnderRoot -Root $Backup -Child $fileName
-        if (Test-Path -LiteralPath $backupFile -PathType Leaf) {
-            Assert-OwnedLeafNotReparsePoint -Path $backupFile -Label "HydraSeat transaction backup $fileName"
-            $hash = (Get-FileHash -LiteralPath $backupFile -Algorithm SHA256).Hash.ToLowerInvariant()
-            $parts += "$fileName|present|$hash"
-        } else {
-            $parts += "$fileName|absent|"
-        }
-    }
-    $backupState = Resolve-UnderRoot -Root $Backup -Child "install-state.json"
-    $statePresent = Test-Path -LiteralPath $backupState -PathType Leaf
+    $parts = @("HydraSeatInstallerSnapshotV2")
+    $inventory = @(
+        Get-SafeRelativeFileInventory -Root $Backup -MaximumFiles ($MaximumOwnedFiles + 1)
+    )
+    $statePresent = $inventory -contains "install-state.json"
     if ($statePresent -ne $PreviousStatePresent) {
         throw "Installer transaction backup state presence changed"
     }
-    if ($statePresent) {
-        Assert-OwnedLeafNotReparsePoint -Path $backupState -Label "HydraSeat transaction backup install state"
-        $stateHash = (Get-FileHash -LiteralPath $backupState -Algorithm SHA256).Hash.ToLowerInvariant()
-        $parts += "install-state.json|present|$stateHash"
-    } else {
-        $parts += "install-state.json|absent|"
-    }
-    $actualEntries = @(Get-ChildItem -LiteralPath $Backup -Force)
-    $allowedEntries = @($OwnedFiles) + @("install-state.json")
-    foreach ($entry in $actualEntries) {
-        if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            $allowedEntries -notcontains [string]$entry.Name) {
-            throw "Installer transaction backup contains an unexpected or unsafe entry"
-        }
+
+    foreach ($relativePath in $inventory) {
+        $backupFile = Resolve-UnderRoot -Root $Backup -Child $relativePath
+        Assert-OwnedLeafNotReparsePoint -Path $backupFile -Label "HydraSeat transaction backup $relativePath"
+        $hash = (Get-FileHash -LiteralPath $backupFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        $parts += "$relativePath|$hash"
     }
     $canonical = [Text.Encoding]::UTF8.GetBytes(($parts -join "`n"))
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -529,7 +888,9 @@ function New-TransactionSnapshot {
             $installed = Resolve-UnderRoot -Root $InstallRoot -Child $fileName
             if (Test-Path -LiteralPath $installed) {
                 Assert-OwnedLeafNotReparsePoint -Path $installed -Label "Installed HydraSeat owned file $fileName"
-                Copy-Item -LiteralPath $installed -Destination (Join-Path $backup $fileName) -Force
+                Ensure-OwnedParentDirectories -Root $backup -Child $fileName
+                $backupDestination = Resolve-UnderRoot -Root $backup -Child $fileName
+                Copy-Item -LiteralPath $installed -Destination $backupDestination -Force
             }
         }
         if (Test-Path -LiteralPath $StatePath) {
@@ -568,10 +929,12 @@ function Restore-TransactionSnapshot {
         if (Test-Path -LiteralPath $installed) {
             Assert-OwnedLeafNotReparsePoint -Path $installed -Label "Installed HydraSeat owned file $fileName"
             Remove-Item -LiteralPath $installed -Force
+            Remove-EmptyOwnedParentDirectories -Root $InstallRoot -Child $fileName
         }
         $backupFile = Resolve-UnderRoot -Root $Snapshot.backup -Child $fileName
         if (Test-Path -LiteralPath $backupFile) {
             Assert-OwnedLeafNotReparsePoint -Path $backupFile -Label "HydraSeat rollback backup file $fileName"
+            Ensure-OwnedParentDirectories -Root $InstallRoot -Child $fileName
             Copy-Item -LiteralPath $backupFile -Destination $installed -Force
         }
     }
@@ -712,13 +1075,28 @@ function Recover-InterruptedTransactions {
         if ($actualSnapshotIdentity -ne [string]$state.snapshotIdentity) {
             throw "Interrupted installer transaction backup changed after its prepared snapshot was journaled"
         }
-        if ([string]$state.phase -eq "committed") {
+        if ([string]$state.phase -in @("prepared", "committed")) {
+            // "prepared" means Program Files mutation never began. "committed"
+            // means it already completed. In both cases the verified recovery
+            // snapshot can simply be discarded.
             Remove-Item -LiteralPath $root -Recurse -Force
             if (Test-Path -LiteralPath $root) {
-                throw "Installer could not remove committed transaction recovery state after snapshot-integrity verification"
+                throw "Installer could not remove non-mutating/completed transaction recovery state"
             }
             continue
         }
+
+        if ($null -ne $previousState) {
+            Set-ActiveOwnedFiles -Paths @(
+                $previousState.ownedFiles | ForEach-Object { [string]$_.fileName }
+            )
+        } else {
+            $stagedFiles = @(
+                Get-SafeRelativeFileInventory -Root $stage -MaximumFiles $MaximumOwnedFiles
+            )
+            Set-ActiveOwnedFiles -Paths $stagedFiles
+        }
+
         Restore-TransactionSnapshot -Snapshot $snapshot
         Verify-RestoredTransactionSnapshot -Snapshot $snapshot
         Remove-Item -LiteralPath $root -Recurse -Force
@@ -754,10 +1132,11 @@ function Verify-StagedPackage {
     $expected = @{}
     foreach ($file in @($Package.files)) {
         $fileName = [string]$file.fileName
-        if ($expected.ContainsKey($fileName)) {
+        $folded = $fileName.ToUpperInvariant()
+        if ($expected.ContainsKey($folded)) {
             throw "Staged release package contains duplicate owned file metadata"
         }
-        $expected[$fileName] = $true
+        $expected[$folded] = $true
         $staged = Resolve-UnderRoot -Root $StageRoot -Child $fileName
         if (-not (Test-Path -LiteralPath $staged -PathType Leaf)) {
             throw "Staged release file is missing: $fileName"
@@ -770,22 +1149,24 @@ function Verify-StagedPackage {
         if ($hash -ne [string]$file.sha256) {
             throw "Staged release file hash verification failed: $fileName"
         }
-        $signature = Get-AuthenticodeSignature -LiteralPath $staged
-        if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
-            $null -eq $signature.SignerCertificate -or
-            $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $ExpectedSigner) {
-            throw "Staged release file Authenticode verification failed: $fileName"
+        if ([bool]$file.productSigned) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $staged
+            if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
+                $null -eq $signature.SignerCertificate -or
+                $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $ExpectedSigner) {
+                throw "Staged HydraSeat core file Authenticode verification failed: $fileName"
+            }
         }
     }
-    $entries = @(Get-ChildItem -LiteralPath $StageRoot -Force)
+    $entries = @(
+        Get-SafeRelativeFileInventory -Root $StageRoot -MaximumFiles $MaximumOwnedFiles
+    )
     if ($entries.Count -ne $expected.Count) {
         throw "Installer staging root does not contain the exact verified owned file set"
     }
     foreach ($entry in $entries) {
-        if ($entry.PSIsContainer -or
-            ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            -not $expected.ContainsKey([string]$entry.Name)) {
-            throw "Installer staging root contains an unexpected or unsafe entry"
+        if (-not $expected.ContainsKey(([string]$entry).ToUpperInvariant())) {
+            throw "Installer staging root contains an unexpected file: $entry"
         }
     }
 }
@@ -801,11 +1182,13 @@ function Verify-InstalledPackage {
         if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$file.sha256) {
             throw "Installed file hash verification failed"
         }
-        $signature = Get-AuthenticodeSignature -LiteralPath $destination
-        if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
-            $null -eq $signature.SignerCertificate -or
-            $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $ExpectedSigner) {
-            throw "Installed file Authenticode verification failed"
+        if ([bool]$file.productSigned) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $destination
+            if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
+                $null -eq $signature.SignerCertificate -or
+                $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $ExpectedSigner) {
+                throw "Installed HydraSeat core file Authenticode verification failed"
+            }
         }
     }
     if (-not (Test-Path -LiteralPath $StatePath -PathType Leaf) -or -not (Test-Path -LiteralPath $UninstallKey)) {
@@ -886,9 +1269,15 @@ if ($Mode -eq "Uninstall") {
     if ($null -eq $previous) {
         throw "HydraSeat install state not found; refusing broad cleanup"
     }
+    Set-ActiveOwnedFiles -Paths @(
+        $previous.ownedFiles | ForEach-Object { [string]$_.fileName }
+    )
     $snapshot = New-TransactionSnapshot -PreviousState $previous -Operation "Uninstall"
     $cleanupSnapshot = $false
     try {
+        Write-TransactionState -Root $snapshot.root -TransactionId $snapshot.id -Phase "staged" `
+            -Operation $snapshot.operation -PreviousStatePresent $true `
+            -SnapshotIdentity $snapshot.snapshotIdentity
         Remove-UninstallRegistration
         Assert-OwnedDirectoryNotReparsePoint -Path $InstallRoot -Label "HydraSeat install root"
         foreach ($fileName in $OwnedFiles) {
@@ -896,6 +1285,7 @@ if ($Mode -eq "Uninstall") {
             if (Test-Path -LiteralPath $installed) {
                 Assert-OwnedLeafNotReparsePoint -Path $installed -Label "HydraSeat uninstall owned file $fileName"
                 Remove-Item -LiteralPath $installed -Force
+                Remove-EmptyOwnedParentDirectories -Root $InstallRoot -Child $fileName
             }
         }
         if (Test-Path -LiteralPath $StatePath) {
@@ -954,6 +1344,9 @@ if ($Mode -eq "Uninstall") {
 }
 
 $package = Get-ValidatedPackage -Root $PackageRoot -ExpectedSigner $OwnSigner
+Set-ActiveOwnedFiles -Paths @(
+    $package.files | ForEach-Object { [string]$_.fileName }
+)
 $previous = Read-InstallState
 if ($Mode -eq "Install" -and $null -ne $previous) {
     throw "HydraSeat is already installed; use Repair or the approved update flow"
@@ -967,20 +1360,50 @@ if ($Mode -eq "Repair" -and
      -not ([string]$package.commitSha).Equals([string]$previous.commitSha, [StringComparison]::OrdinalIgnoreCase))) {
     throw "Repair requires the exact installed release identity; use the approved update/rollback flow for a different release"
 }
+if ($Mode -eq "Repair") {
+    $previousPaths = @(
+        $previous.ownedFiles |
+            ForEach-Object { ([string]$_.fileName).ToUpperInvariant() } |
+            Sort-Object
+    )
+    $packagePaths = @(
+        $OwnedFiles |
+            ForEach-Object { ([string]$_).ToUpperInvariant() } |
+            Sort-Object
+    )
+    if ($previousPaths.Count -ne $packagePaths.Count -or
+        @(Compare-Object -ReferenceObject $previousPaths -DifferenceObject $packagePaths).Count -ne 0) {
+        throw "Repair package file ownership differs from the installed exact release"
+    }
+}
 
 $snapshot = New-TransactionSnapshot -PreviousState $previous -Operation $Mode
 $cleanupSnapshot = $false
 try {
+    # The Microsoft runtime is a prerequisite, not HydraSeat-owned state. It is
+    # verified and installed before Program Files mutation and is intentionally
+    # not removed on HydraSeat uninstall.
+    Ensure-VcRuntimePrerequisite -Package $package -StageRoot $snapshot.stage
+
     foreach ($file in @($package.files)) {
-        Copy-Item -LiteralPath ([string]$file.sourcePath) -Destination (Join-Path $snapshot.stage ([string]$file.fileName)) -Force
+        $relativePath = [string]$file.fileName
+        Ensure-OwnedParentDirectories -Root $snapshot.stage -Child $relativePath
+        $stagedDestination =
+            Resolve-UnderRoot -Root $snapshot.stage -Child $relativePath
+        Copy-Item -LiteralPath ([string]$file.sourcePath) -Destination $stagedDestination -Force
     }
     Verify-StagedPackage -Package $package -StageRoot $snapshot.stage -ExpectedSigner $OwnSigner
+    Write-TransactionState -Root $snapshot.root -TransactionId $snapshot.id -Phase "staged" `
+        -Operation $snapshot.operation -PreviousStatePresent ($null -ne $snapshot.previousState) `
+        -SnapshotIdentity $snapshot.snapshotIdentity
     New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
     Assert-OwnedDirectoryNotReparsePoint -Path $InstallRoot -Label "HydraSeat install root"
     foreach ($file in @($package.files)) {
         $source = Resolve-UnderRoot -Root $snapshot.stage -Child ([string]$file.fileName)
         Assert-OwnedLeafNotReparsePoint -Path $source -Label "HydraSeat staged release file $($file.fileName)"
-        $destination = Resolve-UnderRoot -Root $InstallRoot -Child ([string]$file.fileName)
+        $relativePath = [string]$file.fileName
+        Ensure-OwnedParentDirectories -Root $InstallRoot -Child $relativePath
+        $destination = Resolve-UnderRoot -Root $InstallRoot -Child $relativePath
         if (Test-Path -LiteralPath $destination) {
             Assert-OwnedLeafNotReparsePoint -Path $destination -Label "HydraSeat install destination $($file.fileName)"
         }

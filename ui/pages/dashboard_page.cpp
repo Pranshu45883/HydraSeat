@@ -143,8 +143,12 @@ void DashboardPage::updateSeat(
     }
 
     if (snapshot->gameLeaseActive) {
-        stateLbl->setText("● RUNNING");
-        stateLbl->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none;");
+        stateLbl->setText(
+            snapshot->processOwned ? "● RUNNING" : "● BUSY");
+        stateLbl->setStyleSheet(
+            snapshot->processOwned
+                ? "font-size: 13px; font-weight: bold; color: #E10600; border: none;"
+                : "font-size: 13px; font-weight: bold; color: #B5B5B5; border: none;");
     } else if (snapshot->uiLeaseActive) {
         stateLbl->setText("● CONFIGURING");
         stateLbl->setStyleSheet("font-size: 13px; font-weight: bold; color: #E10600; border: none;");
@@ -157,12 +161,32 @@ void DashboardPage::updateSeat(
         snapshot->processOwned
             ? "Game assigned"
             : "No application assigned");
-    audioLbl->setText(snapshot->processOwned ? "Assigned" : "No audio assigned");
-    ctrlLbl->setText(snapshot->controllerBound ? "Assigned" : "No controller assigned");
+    // The host snapshot owns process identity but does not persist an "audio is
+    // assigned" bit. Do not claim a route merely because a game is running.
+    audioLbl->setText(
+        snapshot->processOwned
+            ? "Manage on Audio page"
+            : "No active application");
+    ctrlLbl->setText(
+        snapshot->controllerBound
+            ? "Paired for current session"
+            : "No runtime controller pairing");
 }
 
 void DashboardPage::updateState(const EngineStatePayload& payload) {
-    m_valSeats->setText("02");
+    int configuredSeats = 0;
+    for (const auto& assignment : payload.seatHardware) {
+        if (assignment &&
+            !assignment->displayIdUtf8.empty() &&
+            !assignment->keyboardIdUtf8.empty() &&
+            !assignment->mouseIdUtf8.empty()) {
+            ++configuredSeats;
+        }
+    }
+    m_valSeats->setText(
+        payload.hardwareError
+            ? "--"
+            : QString("%1").arg(configuredSeats, 2, 10, QChar('0')));
 
     int activeSeats = 0;
     const hydra::hostipc::SeatSnapshot* seat1 = nullptr;
@@ -173,16 +197,36 @@ void DashboardPage::updateState(const EngineStatePayload& payload) {
         if (seat1->active) ++activeSeats;
         if (seat2->active) ++activeSeats;
     }
-    m_valActive->setText(QString("%1").arg(activeSeats, 2, 10, QChar('0')));
+    m_valActive->setText(
+        payload.hostSnapshot
+            ? QString("%1").arg(activeSeats, 2, 10, QChar('0'))
+            : QStringLiteral("--"));
 
-    m_valDisplays->setText(QString("%1").arg(payload.displays.size(), 2, 10, QChar('0')));
+    m_valDisplays->setText(
+        payload.hardwareError
+            ? "--"
+            : QString("%1").arg(
+                  payload.displays.size(), 2, 10, QChar('0')));
 
     const size_t inputCount =
-        payload.keyboards.size() + payload.mice.size() + payload.controllers.size();
-    m_valInputs->setText(QString("%1").arg(inputCount, 2, 10, QChar('0')));
+        payload.keyboards.size() +
+        payload.mice.size() +
+        payload.controllers.size();
+    m_valInputs->setText(
+        payload.hardwareError || payload.controllerInventoryError
+            ? "--"
+            : QString("%1").arg(inputCount, 2, 10, QChar('0')));
 
-    m_valAudioEndpoints->setText(QString("%1").arg(payload.audioEndpoints.size(), 2, 10, QChar('0')));
-    m_valAudioSessions->setText(QString("%1").arg(payload.audioSessions.size(), 2, 10, QChar('0')));
+    m_valAudioEndpoints->setText(
+        payload.audioEndpointError
+            ? "--"
+            : QString("%1").arg(
+                  payload.audioEndpoints.size(), 2, 10, QChar('0')));
+    m_valAudioSessions->setText(
+        payload.audioSessionError
+            ? "--"
+            : QString("%1").arg(
+                  payload.audioSessions.size(), 2, 10, QChar('0')));
 
     updateSeat(seat1, m_seat1State, m_seat1App, m_seat1Audio, m_seat1Controller);
     updateSeat(seat2, m_seat2State, m_seat2App, m_seat2Audio, m_seat2Controller);

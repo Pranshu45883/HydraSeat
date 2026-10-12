@@ -11,7 +11,7 @@
   "limits": {
     "maximumArtifactBytes": 1073741824,
     "maximumManifestBytes": 1048576,
-    "maximumPackagedFiles": 16
+    "maximumPackagedFiles": 64
   },
   "artifacts": [
     {
@@ -25,9 +25,24 @@
       "packagePath": "x64/hydra_host.exe"
     },
     {
-      "id": "seat-ui",
-      "componentRole": "SeatUI",
-      "packagePath": "x64/hydra_seat_ui.exe"
+      "id": "xinput-adapter",
+      "componentRole": "RuntimeComponent",
+      "packagePath": "x64/hydra_xinput_adapter.dll"
+    },
+    {
+      "id": "gate-c-adapter",
+      "componentRole": "RuntimeComponent",
+      "packagePath": "x64/hydra_gate_c_adapter.dll"
+    },
+    {
+      "id": "gate-c-shim",
+      "componentRole": "RuntimeComponent",
+      "packagePath": "x64/hydra_gate_c_shim.dll"
+    },
+    {
+      "id": "gate-c-external-bridge",
+      "componentRole": "RuntimeComponent",
+      "packagePath": "x64/hydra_gate_c_external_bridge.dll"
     },
     {
       "id": "watchdog",
@@ -55,5 +70,27 @@
       "packagePath": "x64/install_hydraseat.ps1"
     }
   ],
-  "thirdPartyRedistributables": []
+  "thirdPartyRedistributables": [
+    {
+      "id": "qt-runtime",
+      "provider": "Qt Project",
+      "version": "6.8.3",
+      "deploymentTool": "windeployqt",
+      "requiredPaths": [
+        "x64/Qt6Core.dll",
+        "x64/Qt6Gui.dll",
+        "x64/Qt6Widgets.dll",
+        "x64/platforms/qwindows.dll"
+      ]
+    },
+    {
+      "id": "msvc-runtime-installer",
+      "provider": "Microsoft",
+      "version": "VS2022",
+      "deploymentTool": "visual-studio-redist",
+      "requiredPaths": [
+        "x64/vc_redist.x64.exe"
+      ]
+    }
+  ]
 }

@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QThread>
 #include <QTimer>
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,9 +26,13 @@ struct EngineStatePayload {
     std::vector<hydra::windows::AudioSessionObservation> audioSessions;
     hydra::controller::InventorySnapshot controllerInventory;
     std::optional<hydra::hostipc::HostSnapshot> hostSnapshot;
+    std::array<
+        std::optional<hydra::hostipc::SeatHardwareAssignment>,
+        hydra::hostipc::kHostSeatCount> seatHardware{};
     std::string hostError;
     bool hostConnected{false};
     bool hardwareError{false};
+    bool controllerInventoryError{false};
     bool audioEndpointError{false};
     bool audioSessionError{false};
 };
@@ -35,7 +40,7 @@ struct EngineStatePayload {
 class EnginePollerWorker : public QObject {
     Q_OBJECT
 public:
-    explicit EnginePollerWorker(std::shared_ptr<hydra::HardwareDetector> hardwareDetector);
+    EnginePollerWorker() = default;
     ~EnginePollerWorker() override = default;
 
 public slots:
@@ -45,7 +50,6 @@ signals:
     void pollCompleted(hydra::ui::EngineStatePayload payload);
 
 private:
-    std::shared_ptr<hydra::HardwareDetector> m_hardwareDetector;
     hydra::controller::ControllerInventory m_controllerInventory;
     hydra::hostipc::HostPipeClient m_hostClient;
 };
@@ -54,7 +58,7 @@ class EnginePoller : public QObject {
     Q_OBJECT
 
 public:
-    explicit EnginePoller(std::shared_ptr<hydra::HardwareDetector> hardwareDetector, QObject* parent = nullptr);
+    explicit EnginePoller(QObject* parent = nullptr);
     ~EnginePoller() override;
 
     void startPolling(int intervalMs = 2000);
@@ -64,10 +68,15 @@ signals:
     void stateUpdated(hydra::ui::EngineStatePayload payload);
     void triggerPoll();
 
+private slots:
+    void requestPoll();
+    void onPollCompleted(hydra::ui::EngineStatePayload payload);
+
 private:
     QThread m_workerThread;
     EnginePollerWorker* m_worker{nullptr};
     QTimer* m_triggerTimer{nullptr};
+    bool m_pollInFlight{false};
 };
 
 } // namespace hydra::ui

@@ -1,7 +1,19 @@
 #include "ui/routing_controller.hpp"
 
+#include <QByteArray>
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrentRun>
+
+#include <optional>
+#include <string>
+
 namespace hydra::ui {
 namespace {
+
+struct AudioTaskResult {
+    std::optional<hydra::hostipc::AudioMutationStatus> status;
+    std::string error;
+};
 
 QString audioStatusMessage(hydra::hostipc::AudioMutationStatus status) {
     using Status = hydra::hostipc::AudioMutationStatus;
@@ -43,36 +55,63 @@ void RoutingController::requestRoute(
     if (!m_hostControl || pid == 0 || creationIdentity == 0) {
         emit routingCompleted(
             pid,
+            creationIdentity,
             RouteVerificationResult::ProcessIdentityValidationFailure,
             "A valid host-owned process identity is required.");
         return;
     }
 
-    std::string error;
-    const auto status = m_hostControl->routeAudio(
-        pid,
-        creationIdentity,
-        endpointId.toStdString(),
-        &error);
-    if (!status) {
-        emit routingCompleted(
-            pid,
-            RouteVerificationResult::ProcessIdentityValidationFailure,
-            error.empty()
-                ? "Could not reach the canonical HydraSeat host."
-                : QString::fromStdString(error));
-        return;
-    }
+    const QByteArray endpointUtf8 = endpointId.toUtf8();
+    const std::string endpoint(
+        endpointUtf8.constData(),
+        static_cast<std::size_t>(endpointUtf8.size()));
+    auto hostControl = m_hostControl;
 
-    if (*status == hydra::hostipc::AudioMutationStatus::Success) {
-        emit routingCompleted(pid, RouteVerificationResult::Success, {});
-        return;
-    }
+    auto* watcher = new QFutureWatcher<AudioTaskResult>(this);
+    connect(
+        watcher,
+        &QFutureWatcher<AudioTaskResult>::finished,
+        this,
+        [this, watcher, pid, creationIdentity]() {
+            const auto result = watcher->result();
+            watcher->deleteLater();
 
-    emit routingCompleted(
-        pid,
-        RouteVerificationResult::FailedRollbackFailed,
-        audioStatusMessage(*status));
+            if (!result.status) {
+                emit routingCompleted(
+                    pid,
+                    creationIdentity,
+                    RouteVerificationResult::ProcessIdentityValidationFailure,
+                    result.error.empty()
+                        ? "Could not reach the canonical HydraSeat host."
+                        : QString::fromStdString(result.error));
+                return;
+            }
+            if (*result.status ==
+                hydra::hostipc::AudioMutationStatus::Success) {
+                emit routingCompleted(
+                    pid,
+                    creationIdentity,
+                    RouteVerificationResult::Success,
+                    {});
+                return;
+            }
+            emit routingCompleted(
+                pid,
+                creationIdentity,
+                RouteVerificationResult::FailedRollbackFailed,
+                audioStatusMessage(*result.status));
+        });
+
+    watcher->setFuture(QtConcurrent::run(
+        [hostControl, pid, creationIdentity, endpoint]() {
+            AudioTaskResult result;
+            result.status = hostControl->routeAudio(
+                pid,
+                creationIdentity,
+                endpoint,
+                &result.error);
+            return result;
+        }));
 }
 
 void RoutingController::requestReset(
@@ -81,30 +120,53 @@ void RoutingController::requestReset(
     if (!m_hostControl || pid == 0 || creationIdentity == 0) {
         emit resetCompleted(
             pid,
+            creationIdentity,
             false,
             "A valid host-owned process identity is required.");
         return;
     }
 
-    std::string error;
-    const auto status =
-        m_hostControl->resetAudio(pid, creationIdentity, &error);
-    if (!status) {
-        emit resetCompleted(
-            pid,
-            false,
-            error.empty()
-                ? "Could not reach the canonical HydraSeat host."
-                : QString::fromStdString(error));
-        return;
-    }
+    auto hostControl = m_hostControl;
+    auto* watcher = new QFutureWatcher<AudioTaskResult>(this);
+    connect(
+        watcher,
+        &QFutureWatcher<AudioTaskResult>::finished,
+        this,
+        [this, watcher, pid, creationIdentity]() {
+            const auto result = watcher->result();
+            watcher->deleteLater();
 
-    if (*status == hydra::hostipc::AudioMutationStatus::Success) {
-        emit resetCompleted(pid, true, {});
-        return;
-    }
+            if (!result.status) {
+                emit resetCompleted(
+                    pid,
+                    creationIdentity,
+                    false,
+                    result.error.empty()
+                        ? "Could not reach the canonical HydraSeat host."
+                        : QString::fromStdString(result.error));
+                return;
+            }
+            if (*result.status ==
+                hydra::hostipc::AudioMutationStatus::Success) {
+                emit resetCompleted(pid, creationIdentity, true, {});
+                return;
+            }
+            emit resetCompleted(
+                pid,
+                creationIdentity,
+                false,
+                audioStatusMessage(*result.status));
+        });
 
-    emit resetCompleted(pid, false, audioStatusMessage(*status));
+    watcher->setFuture(QtConcurrent::run(
+        [hostControl, pid, creationIdentity]() {
+            AudioTaskResult result;
+            result.status = hostControl->resetAudio(
+                pid,
+                creationIdentity,
+                &result.error);
+            return result;
+        }));
 }
 
 } // namespace hydra::ui

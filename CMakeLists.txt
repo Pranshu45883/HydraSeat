@@ -16,7 +16,15 @@ endif()
 # Windows system libraries for Win32 Raw Input, SetupAPI, DXGI, and Comctl32 GUI
 if(WIN32)
     add_compile_definitions(_UNICODE UNICODE WIN32_LEAN_AND_MEAN)
-    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput.lib Comctl32.lib Ole32.lib Mmdevapi.lib runtimeobject.lib)
+    # XInput 9.1.0 ships with supported Windows releases and avoids requiring
+    # the legacy DirectX redistributable just to start HydraSeat on a clean PC.
+    # The native controller path only needs GetState/SetState.
+    set(WIN32_LIBS User32.lib Cfgmgr32.lib Dxgi.lib Setupapi.lib Hid.lib Xinput9_1_0.lib Comctl32.lib Comdlg32.lib Ole32.lib Mmdevapi.lib runtimeobject.lib)
+    if(MINGW)
+        # Release binaries/DLLs must run on a clean Windows machine without the
+        # developer's MinGW runtime directory on PATH.
+        add_link_options(-static -static-libgcc -static-libstdc++)
+    endif()
 
     # Check for PKEY_AudioEndpoint_StableId availability in the current SDK
     include(CheckCXXSourceCompiles)
@@ -35,8 +43,9 @@ if(WIN32)
     endif()
 endif()
 
-# Find Qt6 components if available
-find_package(Qt6 COMPONENTS Core Widgets QUIET)
+# Pranshu's Qt UI is the canonical HydraSeat UI. Never silently replace it
+# with a different fallback UI just because the build machine is missing Qt.
+find_package(Qt6 6.8.3 EXACT COMPONENTS Core Widgets Concurrent REQUIRED)
 
 if(Qt6_FOUND)
     set(CMAKE_AUTOMOC ON)
@@ -44,12 +53,15 @@ if(Qt6_FOUND)
     set(CMAKE_AUTORCC ON)
     set(UI_SOURCES
         ui/app_window.cpp
+        ui/application_library.cpp
         ui/engine_poller.cpp
+        ui/host_bootstrap.cpp
         ui/host_control_client.cpp
         ui/routing_controller.cpp
+        ui/ui_settings.cpp
         ui/pages/dashboard_page.cpp
         ui/pages/seats_page.cpp
-    ui/pages/settings_page.cpp
+        ui/pages/settings_page.cpp
         ui/pages/applications_page.cpp
         ui/pages/audio_page.cpp
         ui/pages/hardware_page.cpp
@@ -57,9 +69,12 @@ if(Qt6_FOUND)
     )
     set(UI_HEADERS
         ui/app_window.hpp
+        ui/application_library.hpp
         ui/engine_poller.hpp
+        ui/host_bootstrap.hpp
         ui/host_control_client.hpp
         ui/routing_controller.hpp
+        ui/ui_settings.hpp
         ui/pages/dashboard_page.hpp
         ui/pages/seats_page.hpp
         ui/pages/applications_page.hpp
@@ -72,6 +87,7 @@ endif()
 # Source files
 set(HYDRA_SOURCES
     src/hardware_detector.cpp
+    src/raw_input_utils.cpp
     src/input_router.cpp
     src/display_manager.cpp
     src/workspace_manager.cpp
@@ -146,7 +162,7 @@ if(WIN32)
 endif()
 
 if(Qt6_FOUND)
-    target_link_libraries(HydraSeat PRIVATE Qt6::Core Qt6::Widgets)
+    target_link_libraries(HydraSeat PRIVATE Qt6::Core Qt6::Widgets Qt6::Concurrent)
     target_compile_definitions(HydraSeat PRIVATE HYDRA_HAS_QT=1)
 endif()
 
@@ -165,6 +181,7 @@ if(WIN32)
         src/controller_io.cpp
         src/controller_inventory.cpp
         src/controller_identity.cpp
+        src/raw_input_utils.cpp
     )
     target_link_libraries(xinput_probe_game PRIVATE ${WIN32_LIBS})
     if(MINGW)
@@ -200,7 +217,9 @@ if(WIN32)
     target_compile_definitions(
         hydra_xinput_adapter PRIVATE HYDRA_VIRTUAL_XINPUT_CLIENT_ONLY=1)
     set_target_properties(
-        hydra_xinput_adapter PROPERTIES OUTPUT_NAME "hydra_xinput_adapter")
+        hydra_xinput_adapter PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "hydra_xinput_adapter")
     add_dependencies(xinput_adapter_exports hydra_xinput_adapter)
 endif()
 
@@ -244,6 +263,7 @@ if(WIN32)
         src/controller_io.cpp
         src/controller_inventory.cpp
         src/controller_identity.cpp
+        src/raw_input_utils.cpp
     )
     target_link_libraries(xinput_process_isolation PRIVATE ${WIN32_LIBS})
     add_dependencies(xinput_process_isolation xinput_probe_game)
@@ -257,6 +277,7 @@ if(WIN32)
         src/controller_io.cpp
         src/controller_inventory.cpp
         src/controller_identity.cpp
+        src/raw_input_utils.cpp
     )
     target_link_libraries(xinput_adapter_process_isolation PRIVATE ${WIN32_LIBS})
     add_dependencies(
@@ -265,13 +286,14 @@ if(WIN32)
         hydra_xinput_adapter)
 endif()
 if(Qt6_FOUND)
-    target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets)
+    target_link_libraries(hydra_tests PRIVATE Qt6::Core Qt6::Widgets Qt6::Concurrent)
 endif()
 add_test(NAME EngineUnitTests COMMAND hydra_tests)
 if(WIN32)
     add_executable(hydra_process_owner_child
         tests/process_owner_child.cpp
     )
+    target_link_libraries(hydra_process_owner_child PRIVATE Xinput9_1_0.lib)
     if(MINGW)
         target_link_options(hydra_process_owner_child PRIVATE -municode)
     endif()
@@ -408,6 +430,17 @@ add_executable(startup_policy_tests tests/test_startup_policy.cpp)
 target_link_libraries(startup_policy_tests PRIVATE hydra_recovery_core)
 add_test(NAME StartupPolicyTests COMMAND startup_policy_tests)
 
+# Canonical persisted Seat/profile schema is shared by the host configuration
+# store and the broader provider/profile foundation. Keep one implementation
+# target so schema validation/encoding cannot drift between those consumers.
+add_library(hydra_profile_schema STATIC
+    src/profile_schema.cpp
+)
+target_include_directories(hydra_profile_schema PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_profile_schema PUBLIC ${WIN32_LIBS})
+endif()
+
 # Canonical host authority boundary. This target owns SessionController behind a
 # pointer-free, bounded protocol model; transport and launch mutation land in
 # dependent backend PRs.
@@ -419,15 +452,22 @@ add_library(hydra_host_authority STATIC
     src/controller_inventory.cpp
     src/controller_io.cpp
     src/controller_virtual_xinput.cpp
+    src/hardware_detector.cpp
+    src/raw_input_utils.cpp
+    src/seat_hardware_store.cpp
 )
 target_include_directories(hydra_host_authority PUBLIC include)
+target_link_libraries(hydra_host_authority PUBLIC
+    hydra_profile_schema
+    hydra_process_display
+)
 if(WIN32)
     target_link_libraries(hydra_host_authority PUBLIC ${WIN32_LIBS})
 endif()
 
-add_executable(host_protocol_v2_tests tests/test_host_protocol_v2.cpp)
-target_link_libraries(host_protocol_v2_tests PRIVATE hydra_host_authority)
-add_test(NAME HostProtocolV2Tests COMMAND host_protocol_v2_tests)
+add_executable(host_protocol_v3_tests tests/test_host_protocol_v3.cpp)
+target_link_libraries(host_protocol_v3_tests PRIVATE hydra_host_authority)
+add_test(NAME HostProtocolV3Tests COMMAND host_protocol_v3_tests)
 
 add_executable(runtime_host_v1_tests tests/test_runtime_host_v1.cpp)
 target_link_libraries(runtime_host_v1_tests PRIVATE hydra_host_authority)
@@ -436,6 +476,10 @@ add_test(NAME RuntimeHostV1Tests COMMAND runtime_host_v1_tests)
 add_executable(runtime_lease_authority_tests tests/test_runtime_leases.cpp)
 target_link_libraries(runtime_lease_authority_tests PRIVATE hydra_host_authority)
 add_test(NAME RuntimeLeaseAuthorityTests COMMAND runtime_lease_authority_tests)
+
+add_executable(seat_hardware_store_tests tests/test_seat_hardware_store.cpp)
+target_link_libraries(seat_hardware_store_tests PRIVATE hydra_host_authority)
+add_test(NAME SeatHardwareStoreTests COMMAND seat_hardware_store_tests)
 
 # Host-owned process launch boundary. GameLauncher delegates every runtime
 # mutation to RuntimeHost in production, while retaining a narrow
@@ -447,7 +491,10 @@ add_library(hydra_game_launcher STATIC
     src/virtual_xinput_pipe.cpp
 )
 target_include_directories(hydra_game_launcher PUBLIC include)
-target_link_libraries(hydra_game_launcher PUBLIC hydra_host_authority)
+target_link_libraries(hydra_game_launcher PUBLIC
+    hydra_host_authority
+    hydra_process_display
+)
 if(WIN32)
     target_link_libraries(hydra_game_launcher PUBLIC ${WIN32_LIBS})
 endif()
@@ -471,6 +518,16 @@ if(WIN32)
         COMMAND game_launcher_process_ownership $<TARGET_FILE:hydra_process_owner_child>
     )
 
+    add_executable(game_launcher_display_assignment
+        tests/test_game_launcher_display_assignment.cpp
+    )
+    target_link_libraries(game_launcher_display_assignment PRIVATE hydra_game_launcher)
+    add_dependencies(game_launcher_display_assignment hydra_window_test_app)
+    add_test(
+        NAME GameLauncherDisplayAssignment
+        COMMAND game_launcher_display_assignment $<TARGET_FILE:hydra_window_test_app>
+    )
+
     add_executable(game_launcher_xinput_integration
         tests/test_game_launcher_xinput_integration.cpp
     )
@@ -483,6 +540,14 @@ if(WIN32)
         NAME GameLauncherXInputIntegration
         COMMAND game_launcher_xinput_integration $<TARGET_FILE:hydra_process_owner_child>
     )
+endif()
+
+add_library(hydra_raw_input_router STATIC
+    src/input_router.cpp
+)
+target_include_directories(hydra_raw_input_router PUBLIC include)
+if(WIN32)
+    target_link_libraries(hydra_raw_input_router PUBLIC User32.lib)
 endif()
 
 if(WIN32)
@@ -500,7 +565,7 @@ add_library(hydra_host_transport STATIC
 target_include_directories(hydra_host_transport PUBLIC include)
 target_link_libraries(hydra_host_transport
     PUBLIC hydra_host_authority
-    PRIVATE hydra_game_launcher
+    PRIVATE hydra_game_launcher hydra_raw_input_router
 )
 if(WIN32)
     target_link_libraries(hydra_host_transport PUBLIC
@@ -509,12 +574,10 @@ if(WIN32)
     )
 endif()
 
-if(Qt6_FOUND)
-    # The GUI is an IPC client of the canonical host. It does not construct
-    # SessionController/RuntimeHost authority in-process.
-    target_link_libraries(HydraSeat PRIVATE hydra_host_transport)
-    target_link_libraries(hydra_tests PRIVATE hydra_host_transport)
-endif()
+# Pranshu's canonical Qt GUI is an IPC client of the canonical host and never
+# constructs runtime authority in-process.
+target_link_libraries(HydraSeat PRIVATE hydra_host_transport)
+target_link_libraries(hydra_tests PRIVATE hydra_host_transport)
 
 add_executable(host_transport_session_tests
     tests/test_host_transport_session.cpp
@@ -567,13 +630,13 @@ add_test(NAME AudioRoutingContractTests COMMAND audio_routing_contract_tests)
 # Canonical Seat/profile/provider foundation. This activates the previously
 # preserved backend schema/provider code without changing the legacy UI model.
 add_library(hydra_profile_provider_foundation STATIC
-    src/profile_schema.cpp
     src/game_catalog.cpp
     src/provider_adapter.cpp
     src/custom_executable_provider.cpp
     src/steam_provider.cpp
 )
 target_include_directories(hydra_profile_provider_foundation PUBLIC include)
+target_link_libraries(hydra_profile_provider_foundation PUBLIC hydra_profile_schema)
 if(WIN32)
     target_link_libraries(hydra_profile_provider_foundation PUBLIC ${WIN32_LIBS})
 endif()
@@ -692,6 +755,10 @@ if(WIN32)
         HYDRA_GATE_C_ADAPTER_BUILD=1
     )
     target_include_directories(hydra_gate_c_adapter PUBLIC include)
+    set_target_properties(hydra_gate_c_adapter PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME hydra_gate_c_adapter
+    )
     target_link_libraries(hydra_gate_c_adapter PRIVATE
         hydra_virtual_input_core
     )
@@ -700,6 +767,7 @@ if(WIN32)
         src/gate_c_cursor_focus_shim.cpp
         src/gate_c_raw_input_shim.cpp
         src/gate_c_shim_iat.cpp
+        src/xinput_iat_redirect.cpp
     )
     target_include_directories(hydra_gate_c_shim_support PUBLIC include)
 
@@ -716,6 +784,7 @@ if(WIN32)
         User32.lib
     )
     set_target_properties(hydra_gate_c_shim PROPERTIES
+        PREFIX ""
         OUTPUT_NAME hydra_gate_c_shim
     )
 
@@ -751,9 +820,11 @@ if(WIN32)
         hydra_virtual_input_core
         hydra_gate_c_adapter
         hydra_gate_c_shim
+        hydra_gate_c_shim_support
         User32.lib
     )
     set_target_properties(hydra_gate_c_external_bridge PROPERTIES
+        PREFIX ""
         OUTPUT_NAME hydra_gate_c_external_bridge
     )
 
@@ -768,6 +839,25 @@ if(WIN32)
     if(MINGW)
         target_link_options(hydra_gate_c_external_harness PRIVATE -municode)
     endif()
+
+    add_library(hydra_gate_c_external_session STATIC
+        src/gate_c_external_session.cpp
+    )
+    target_include_directories(hydra_gate_c_external_session PUBLIC include)
+    target_link_libraries(hydra_gate_c_external_session PUBLIC
+        hydra_gate_c_architecture
+        hydra_virtual_input_core
+        User32.lib
+    )
+    target_link_libraries(hydra_game_launcher PUBLIC
+        hydra_gate_c_external_session
+    )
+    add_dependencies(hydra_host
+        hydra_xinput_adapter
+        hydra_gate_c_adapter
+        hydra_gate_c_shim
+        hydra_gate_c_external_bridge
+    )
 
     add_executable(gate_c_adapter_backend_tests
         tests/test_gate_c_adapter.cpp
@@ -807,6 +897,14 @@ if(WIN32)
         hydra_gate_c_shim_support
     )
 
+    add_executable(xinput_iat_redirect_backend_tests
+        tests/test_xinput_iat_redirect.cpp
+    )
+    target_link_libraries(xinput_iat_redirect_backend_tests PRIVATE
+        hydra_gate_c_shim_support
+        ${WIN32_LIBS}
+    )
+
     add_test(NAME GateCAdapterBackendTests
         COMMAND gate_c_adapter_backend_tests
     )
@@ -821,6 +919,9 @@ if(WIN32)
     )
     add_test(NAME GateCRawInputShimBackendTests
         COMMAND gate_c_raw_input_shim_backend_tests
+    )
+    add_test(NAME XInputIatRedirectBackendTests
+        COMMAND xinput_iat_redirect_backend_tests
     )
     add_test(NAME GateCTargetBackendSelfTest
         COMMAND hydra_gate_c_target --self-test
@@ -1108,7 +1209,6 @@ add_test(NAME SetupPackageBackendTests COMMAND setup_package_backend_tests)
 
 add_executable(hydra_hardware_detect
     src/hardware_detect_cli.cpp
-    src/hardware_detector.cpp
 )
 target_include_directories(hydra_hardware_detect PRIVATE include)
 target_link_libraries(hydra_hardware_detect PRIVATE
@@ -1254,6 +1354,14 @@ if(WIN32)
     target_link_libraries(hydra_game_runtime_requirement_resolver PRIVATE Bcrypt.lib)
 endif()
 
+# Production consumers must reach the trusted requirement authority through the
+# canonical resolver target; merely compiling the resolver for pipeline tests is
+# not sufficient release evidence.
+target_link_libraries(HydraSeat PRIVATE hydra_game_runtime_requirement_resolver)
+if(WIN32)
+    target_link_libraries(hydra_host PRIVATE hydra_game_runtime_requirement_resolver)
+endif()
+
 # Local evidence collection, persistence, and publication remain separate
 # authorities. Controlled/synthetic evidence is never promoted to Physical.
 add_library(hydra_local_compatibility_evidence STATIC
@@ -1308,23 +1416,20 @@ target_link_libraries(hydraseat_community_validate PRIVATE
     hydra_setup_package
 )
 
-foreach(test_name IN ITEMS
-    provider_launch_plan
-    plan_preflight
-    profile_migration
-    profile_cli
-    compatibility_aggregation
-    community_package
-    community_setup
-    compatibility_catalog
-    catalog_cache
-    community_submission
-    compatibility_share_model
-    compatibility_local_store
-    game_runtime_requirement_resolver
-)
-    add_executable(${test_name}_pipeline_tests tests/test_${test_name}.cpp)
-endforeach()
+add_executable(provider_launch_plan_pipeline_tests tests/test_provider_launch_plan.cpp)
+add_executable(plan_preflight_pipeline_tests tests/test_plan_preflight.cpp)
+add_executable(profile_migration_pipeline_tests tests/test_profile_migration.cpp)
+add_executable(profile_cli_pipeline_tests tests/test_profile_cli.cpp)
+add_executable(compatibility_aggregation_pipeline_tests tests/test_compatibility_aggregation.cpp)
+add_executable(community_package_pipeline_tests tests/test_community_package.cpp)
+add_executable(community_setup_pipeline_tests tests/test_community_setup.cpp)
+add_executable(compatibility_catalog_pipeline_tests tests/test_compatibility_catalog.cpp)
+add_executable(catalog_cache_pipeline_tests tests/test_catalog_cache.cpp)
+add_executable(community_submission_pipeline_tests tests/test_community_submission.cpp)
+add_executable(compatibility_share_model_pipeline_tests tests/test_compatibility_share_model.cpp)
+add_executable(compatibility_local_store_pipeline_tests tests/test_compatibility_local_store.cpp)
+add_executable(game_runtime_requirement_resolver_pipeline_tests
+    tests/test_game_runtime_requirement_resolver.cpp)
 
 target_link_libraries(provider_launch_plan_pipeline_tests PRIVATE hydra_provider_launch_plan)
 target_link_libraries(plan_preflight_pipeline_tests PRIVATE hydra_plan_preflight)

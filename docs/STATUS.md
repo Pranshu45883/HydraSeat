@@ -1,6 +1,6 @@
 # HydraSeat Current Status
 
-Snapshot date: **2026-10-01**
+Snapshot date: **2026-10-06**
 
 This is a dated engineering snapshot of the canonical HydraSeat integration. It distinguishes implemented/automated evidence from physical or real-game acceptance evidence.
 
@@ -31,10 +31,13 @@ Implemented integration includes:
 - provider/profile, compatibility, and community-pipeline foundations;
 - release acceptance and release-validation tooling;
 - signing/scope/schema fixed-input validation;
-- canonical host control authority and IPC protocol v2;
+- canonical host control authority and IPC protocol v3;
 - host-owned custom-executable launch/stop control with strict per-Seat Job ownership;
 - host-owned Windows audio routing integration;
-- signed installer bootstrap plus local compatibility evidence/runner and requirement-authority tooling activated in the build graph.
+- installer bootstrap/signing contract plus local compatibility evidence/runner and requirement-authority tooling activated in the build graph;
+- Pranshu's Qt UI wired to canonical host IPC for stable hardware assignment, explicit XInput pairing, and per-Seat launch/stop without changing the established page/layout design;
+- x64 Gate-C external session/bridge activation integrated into the real game launch path;
+- MinGW release binaries linked without external MinGW runtime DLL dependencies.
 
 Legacy fork modules are not automatically treated as authority. In particular, duplicate controller runtime, launcher authority, or UI-owned runtime state is not reintroduced when the canonical ControllerInventory, SessionController, RuntimeHost, and host transport already own that responsibility.
 
@@ -44,7 +47,7 @@ Production mutation authority is owned by hydra_host.exe.
 
 The host/control contract is now:
 
-- versioned host IPC **v2**;
+- versioned host IPC **v3**;
 - Control role required for mutation;
 - read-only clients may obtain snapshots without mutation authority;
 - UiConfiguration and GameProcess leases are distinct and may coexist inside the same Seat generation;
@@ -54,10 +57,11 @@ The host/control contract is now:
 - UI leases are scoped to the named-pipe control connection that acquired them;
 - disconnecting or killing that control client releases its UI leases automatically;
 - UI code does not receive or own a SessionController pointer;
-- launch/stop are bounded host IPC v2 commands and require the Control role plus that connection's UiConfiguration lease for the target Seat;
+- launch/stop are bounded host IPC v3 commands and require the Control role plus that connection's UiConfiguration lease for the target Seat;
 - the host-owned GameLauncher acquires the GameProcess lease, creates the process suspended inside a kill-on-close Seat Job, publishes exact PID + creation identity through RuntimeHost, then resumes it;
 - stopping waits for the exact owned Job/process to become safe before ending the GameProcess lease;
-- a configured controller binding is revalidated against the same persistent host ControllerInventory and its reconnect generation before the launch-time virtual XInput service is exposed.
+- a configured controller binding is revalidated against the same persistent host ControllerInventory and its reconnect generation before the launch-time virtual XInput service is exposed;
+- the v1 process-local XInput production path redirects only the reviewed static XInput imports of the main executable before resume; dependent/dynamic module XInput remains outside the automatic support claim and requires separate real-game evidence.
 
 This removes the earlier risk that the program UI or a separate launcher layer could become a second runtime authority.
 
@@ -90,7 +94,13 @@ The canonical backend stack has automated coverage for the authority boundary an
 - hydra_host.exe build;
 - hydraseat_hostctl.exe build;
 - HydraSeatSetup.exe build;
-- installer bootstrap, local compatibility evidence/runner, and runtime-requirement authority tests.
+- installer bootstrap, local compatibility evidence/runner, and runtime-requirement authority tests;
+- the current build graph registers **104 CTest targets**;
+- on 2026-10-06, local Windows MinGW validation passed the focused Gate-C set **12/12**, XInput set **7/7**, host/runtime/launcher set **7/7**, the corrected `HostPipeTests`, all five release-validator self-tests, the automated pre-merge gate **4/4**, and the controlled installer/recovery campaign **25/25**;
+- the current local machine does not have an MSVC/Visual Studio C++ toolchain and its available Qt 6.8.3 package is `msvc2022_64`, so a complete local Qt link or a truthful **104/104** claim is not possible from this environment; the updated branch therefore requires the repository's Windows/MSVC CI as the authoritative full build/CTest result;
+- the previous Windows host smoke returned `pong` and two idle Seats, but the current persistent/concurrent IPC and device-enumeration changes still require fresh physical/native acceptance beyond CI;
+- the old raw hardware smoke count (six keyboard endpoints/five mouse endpoints on one PC) is explicitly rejected as physical-device evidence; the current implementation collapses Windows HID top-level collections by physical identity and filters synthetic/remote devices;
+- Qt is now the canonical Pranshu UI, so clean-machine release qualification additionally requires deployment of the matching Qt runtime/plugins rather than relying on a build-machine Qt installation.
 
 The current integration also fixes issues found while auditing the old fork:
 
@@ -100,7 +110,11 @@ The current integration also fixes issues found while auditing the old fork:
 - stale old-fork production-launch/activation layers that depended on obsolete duplicate authority contracts were removed instead of reactivated;
 - the old input-observation implementation was rejected during audit because its RawInputEvent/WorkspaceManager contracts no longer match the canonical model;
 - every remaining src/*.cpp is now either registered in the build graph or intentionally removed;
-- missing signing/scope/schema fixed inputs in release tooling.
+- missing signing/scope/schema fixed inputs in release tooling;
+- stale HostPipe audio expectations after the host protocol began returning native routing status values instead of transport failure for valid requests;
+- a Qt `slots` macro collision in `XInputPairingSnapshot`, removed by using a non-keyword field name;
+- an XInput-only launch deadlock where the injected bridge rejected a target with no keyboard/mouse imports before it could complete the host handshake; XInput-only targets now remain fail-closed unless the reviewed IAT redirect is actually installed;
+- stale installer-validator self-test mutations plus a missing contract assertion for the Program Files destination reparse-point guard.
 
 Automated acceptance/release checks provide reproducible engineering evidence only. They do not upgrade simulated, synthetic, or software-only results into physical or commercial-game evidence.
 
@@ -131,6 +145,9 @@ The following remain unclaimed until the appropriate evidence is collected:
 - crash/reboot/watchdog/emergency recovery on a real Windows installation;
 - clean-machine install/update/uninstall;
 - production signing trust and verification on released artifacts;
+- MSVC/Visual Studio release-build qualification in addition to the currently validated MinGW-w64 build;
+- project license text confirmation/restoration: upstream has historically declared MIT in README, but no `LICENSE` file exists in repository history;
+- physical controller acceptance was not possible on the 2026-10-04 test machine because no gamepad was connected;
 - protected/anti-cheat scenarios refusing unsupported activation safely.
 
 ## Collaboration and repository state

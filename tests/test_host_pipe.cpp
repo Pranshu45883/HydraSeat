@@ -5,6 +5,7 @@
 #include "hydra/host_transport.hpp"
 
 #include <cassert>
+#include <iostream>
 #include <string>
 #include <thread>
 
@@ -21,12 +22,6 @@ int main(int argc, char** argv) {
     assert(argv[1] != nullptr);
     const std::string controlledChildPath = argv[1];
 
-    // Production default: the undocumented Windows AudioPolicyConfig path is
-    // unavailable until explicitly enabled for controlled physical validation.
-    assert(SetEnvironmentVariableW(
-        L"HYDRA_EXPERIMENTAL_AUDIO_POLICY", nullptr) != FALSE ||
-        GetLastError() == ERROR_ENVVAR_NOT_FOUND);
-
     RuntimeHost host;
     const auto activation = host.beginSeatActivation(1);
     assert(activation.valid());
@@ -37,7 +32,7 @@ int main(int argc, char** argv) {
     bool serverResult = false;
     std::string serverError;
     std::thread serverThread([&] {
-        serverResult = server.serveOne(5000, &serverError);
+        serverResult = server.serve(&serverError);
     });
 
     HostPipeClient client;
@@ -45,12 +40,31 @@ int main(int argc, char** argv) {
     assert(client.connect(ClientRole::Control, 5000, &clientError));
     assert(client.connected());
 
+    HostPipeClient observer;
+    std::string observerError;
+    assert(observer.connect(ClientRole::ReadOnly, 5000, &observerError));
+    assert(observer.connected());
+
     auto snapshot = client.getSnapshot(5000, &clientError);
+    if (!snapshot) {
+        std::cerr << "control snapshot failed: " << clientError << "\n";
+    }
     assert(snapshot.has_value());
     assert(snapshot->seats[0].active);
     assert(snapshot->seats[0].gameLeaseActive);
     assert(snapshot->seats[0].generation == activation.generation);
     assert(!snapshot->seats[1].active);
+
+    // Regression: the production server used to pass its 250 ms accept timeout
+    // into the connected client read loop. That silently disconnected an idle
+    // UI client between the 2-second poll intervals and made the UI alternate
+    // between "connected" and "unavailable". Two persistent clients must remain
+    // usable well beyond that listener timeout.
+    Sleep(750);
+    const auto observed = observer.getSnapshot(5000, &observerError);
+    assert(observed.has_value());
+    assert(observer.ping(0xA11CEu, 5000, &observerError));
+    assert(client.ping(0xC0117u, 5000, &clientError));
 
     snapshot = client.acquireUiLease(1, 5000, &clientError);
     assert(snapshot.has_value());
@@ -62,8 +76,9 @@ int main(int argc, char** argv) {
         process.pid, process.creationIdentity,
         "{0.0.0.00000000}.{00000000-0000-0000-0000-000000000000}",
         5000, &clientError);
-    assert(!audioStatus.has_value());
-    assert(!clientError.empty());
+    assert(audioStatus.has_value());
+    assert(*audioStatus != AudioMutationStatus::Success);
+    assert(clientError.empty());
 
     snapshot = client.releaseUiLease(1, 5000, &clientError);
     assert(snapshot.has_value());
@@ -91,6 +106,9 @@ int main(int argc, char** argv) {
         "--ready-event " + readyEventName + " --lifetime-ms 30000";
 
     snapshot = client.launchGame(launchRequest, 5000, &clientError);
+    if (!snapshot) {
+        std::cerr << "launch failed: " << clientError << "\n";
+    }
     assert(snapshot.has_value());
     assert(snapshot->seats[1].uiLeaseActive);
     assert(snapshot->seats[1].gameLeaseActive);
@@ -111,6 +129,8 @@ int main(int argc, char** argv) {
     // Closing the pipe destroys the server-side connection session. Its
     // connection-scoped UI lease must be released automatically.
     client.close();
+    observer.close();
+    server.requestStop();
     serverThread.join();
 
     assert(serverResult);

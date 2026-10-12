@@ -13,16 +13,24 @@ DEFAULT_MANIFEST = ROOT / "config" / "release-signing-manifest.json"
 ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
 TARGET_RE = re.compile(r"^[A-Za-z0-9_]{1,96}$")
 EXE_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.exe$")
+DLL_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.dll$")
 SCRIPT_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\.ps1$")
 ALLOWED_ARCHITECTURES = {"x64"}
 EXPECTED_TARGETS = {
     "HydraSeat": "HydraSeat.exe",
     "hydra_host": "hydra_host.exe",
-    "hydra_seat_ui": "hydra_seat_ui.exe",
+    "hydra_xinput_adapter": "hydra_xinput_adapter.dll",
+    "hydra_gate_c_adapter": "hydra_gate_c_adapter.dll",
+    "hydra_gate_c_shim": "hydra_gate_c_shim.dll",
+    "hydra_gate_c_external_bridge": "hydra_gate_c_external_bridge.dll",
     "hydra_watchdog": "hydra_watchdog.exe",
     "hydra_reset": "hydra_reset.exe",
     "hydraseat_profilectl": "hydraseat_profilectl.exe",
     "hydraseat_community_validate": "hydraseat_community_validate.exe",
+}
+EXPECTED_TARGET_KINDS = {
+    target: ("cmake-shared-library" if file_name.endswith(".dll") else "cmake-executable")
+    for target, file_name in EXPECTED_TARGETS.items()
 }
 EXPECTED_SCRIPT_ID = "installer-script"
 EXPECTED_SCRIPT_SOURCE = "tools/install_hydraseat.ps1"
@@ -89,9 +97,9 @@ def validate(path: pathlib.Path) -> None:
         seen_ids.add(artifact_id)
         validate_architectures(architectures)
 
-        if kind == "cmake-executable":
+        if kind in {"cmake-executable", "cmake-shared-library"}:
             if set(artifact) != {"id", "kind", "target", "fileName", "architectures"}:
-                fail("CMake executable entry contains unknown/missing fields")
+                fail("CMake release entry contains unknown/missing fields")
             target = artifact["target"]
             if not isinstance(target, str) or not TARGET_RE.fullmatch(target):
                 fail("target name is invalid")
@@ -100,7 +108,10 @@ def validate(path: pathlib.Path) -> None:
             seen_targets.add(target)
             if target not in EXPECTED_TARGETS:
                 fail(f"unreviewed release signing target: {target}")
-            file_name = safe_basename(artifact["fileName"], EXE_RE)
+            if kind != EXPECTED_TARGET_KINDS[target]:
+                fail(f"release artifact kind does not match reviewed target: {target}")
+            file_name = safe_basename(
+                artifact["fileName"], DLL_RE if kind == "cmake-shared-library" else EXE_RE)
             if EXPECTED_TARGETS[target] != file_name:
                 fail(f"file name does not match reviewed target: {target}")
         elif kind == "powershell-script":

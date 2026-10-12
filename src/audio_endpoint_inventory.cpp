@@ -101,8 +101,11 @@ AudioInventoryResult AudioEndpointInventory::enumerateRenderEndpoints() {
     }
 
     ComPtr<IMMDeviceCollection> pCollection;
-    // DEVICE_STATEMASK_ALL is intentional to expose availability rather than silently hiding endpoints.
-    hr = pEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATEMASK_ALL, &pCollection);
+    // User-facing routing inventory must contain endpoints that Windows says
+    // are currently usable. Disabled, unplugged, and not-present historical
+    // endpoints are control-panel metadata, not selectable HydraSeat outputs.
+    hr = pEnumerator->EnumAudioEndpoints(
+        eRender, DEVICE_STATE_ACTIVE, &pCollection);
     if (FAILED(hr) || !pCollection) {
         result.error = AudioEndpointInventoryError{AudioEndpointInventoryError::Code::EnumerationFailed, hr};
         return result;

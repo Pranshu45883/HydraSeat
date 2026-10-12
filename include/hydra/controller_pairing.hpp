@@ -18,7 +18,7 @@ struct XInputPairingSlot {
 
 struct XInputPairingSnapshot {
     bool authoritative{false};
-    std::array<XInputPairingSlot, kXInputSlotCount> slots{};
+    std::array<XInputPairingSlot, kXInputSlotCount> slotStates{};
 
     bool operator==(const XInputPairingSnapshot&) const = default;
 };

@@ -38,10 +38,12 @@ public:
 signals:
     void routingCompleted(
         std::uint32_t pid,
+        std::uint64_t creationIdentity,
         RouteVerificationResult result,
         const QString& errorMessage);
     void resetCompleted(
         std::uint32_t pid,
+        std::uint64_t creationIdentity,
         bool success,
         const QString& errorMessage);
 

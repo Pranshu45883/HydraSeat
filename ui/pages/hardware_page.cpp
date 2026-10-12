@@ -81,7 +81,7 @@ void HardwarePage::addSection(const QString& title, const std::vector<hydra::Dev
 }
 
 void HardwarePage::addControllerSection(const hydra::controller::InventorySnapshot& inventory) {
-    if (inventory.physicalControllers.empty() && inventory.sources.empty()) {
+    if (inventory.physicalControllers.empty()) {
         auto* emptyLbl = new QLabel("NO CONTROLLERS DETECTED\nConnect a controller and it will appear here.");
         emptyLbl->setStyleSheet("font-size: 13px; color: #777777; font-family: 'Segoe UI', sans-serif;");
         m_listLayout->insertWidget(m_listLayout->count() - 1, emptyLbl);
@@ -150,7 +150,19 @@ void HardwarePage::updateState(const EngineStatePayload& payload) {
     addSection("DISPLAYS", payload.displays);
     addSection("KEYBOARDS", payload.keyboards);
     addSection("MICE", payload.mice);
-    addControllerSection(payload.controllerInventory);
+    if (payload.controllerInventoryError) {
+        auto* err = new QLabel(
+            "CONTROLLER INVENTORY UNAVAILABLE\n" +
+            QString::fromStdString(
+                payload.controllerInventory.error.empty()
+                    ? "Windows controller discovery failed."
+                    : payload.controllerInventory.error));
+        err->setStyleSheet(
+            "color: #E10600; font-size: 13px; font-weight: bold;");
+        m_listLayout->insertWidget(m_listLayout->count() - 1, err);
+    } else {
+        addControllerSection(payload.controllerInventory);
+    }
 }
 
 } // namespace hydra::ui

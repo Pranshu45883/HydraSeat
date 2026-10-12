@@ -61,7 +61,9 @@ struct AudioInventoryResult {
 // Does NOT mutate default audio devices or perform session routing.
 class AudioEndpointInventory {
 public:
-    // Enumerates all render endpoints (Active, Disabled, Unplugged, NotPresent).
+    // Enumerates currently active render endpoints only. Disabled, unplugged,
+    // and not-present historical endpoints are intentionally excluded from the
+    // user-facing routing inventory.
     // The calling thread MUST have a valid COM apartment.
     static AudioInventoryResult enumerateRenderEndpoints();
 };

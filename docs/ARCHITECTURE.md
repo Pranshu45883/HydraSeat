@@ -19,7 +19,7 @@ Production mutation authority is centralized:
 
     HydraSeat UI / control clients
                 |
-                | bounded host IPC v2
+                | bounded host IPC v3
                 v
           hydra_host.exe
           RuntimeHost
@@ -32,7 +32,7 @@ hydra_host.exe is the sole production runtime authority. UI and diagnostic clien
 
 SessionController owns cross-Seat decisions and exactly two v1 SeatRuntime objects. A SeatRuntime owns only the mutable runtime state for its Seat.
 
-Host IPC v2 exposes read-only snapshots and bounded control commands. Mutation requires the Control role.
+Host IPC v3 exposes read-only snapshots and bounded control commands. Mutation requires the Control role. v3 extends the persisted Seat hardware wire contract with a stable physical controller ID while keeping the runtime XInput slot session-scoped.
 
 ## 3. Lease model
 
@@ -84,7 +84,7 @@ Controller identity has two layers:
 
 Controller inventory and pairing preserve reconnect/source generations. Controller pairing is a host mutation. UI clients submit the selected stable physical identity plus the current XInput runtime slot; RuntimeHost validates the current inventory before publishing the binding.
 
-Seat-local virtual/process-local XInput compatibility must preserve the same ownership and generation rules.
+Seat-local virtual/process-local XInput compatibility preserves the same ownership and generation rules. For the v1 production path, a controller-assigned target is created suspended, the HydraSeat XInput adapter is loaded into that process, and only the reviewed XInputGetState/XInputSetState/XInputGetCapabilities entries statically imported by the main executable are redirected before resume. Missing, ordinal, dynamic-only, or other XInput imports in that executable fail closed rather than falling through to machine-wide controller state. XInput imports made only by dependent or later-loaded game modules are outside this v1 redirect contract and must not be claimed as supported without separate real-game evidence and a reviewed compatibility capability. DirectInput has policy/probe foundations only and is deferred from the v1 release scope until an equivalent canonical production redirect exists.
 
 ## 7. Audio boundary
 

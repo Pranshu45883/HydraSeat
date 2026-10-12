@@ -46,6 +46,15 @@ int main() {
     assert(snapshot->process == process);
     assert(snapshot->targetHwnd == 0x100u);
 
+    // Recreated/destroyed windows may clear only the exact currently-owned HWND.
+    assert(!controller.clearTargetWindow(game, process, 0x101u));
+    snapshot = controller.snapshot(1);
+    assert(snapshot && snapshot->targetHwnd == 0x100u);
+    assert(controller.clearTargetWindow(game, process, 0x100u));
+    snapshot = controller.snapshot(1);
+    assert(snapshot && snapshot->targetHwnd == 0u);
+    assert(controller.bindTargetWindow(game, process, 0x102u));
+
     // Releasing the game lease must clear game-owned runtime state even while the
     // UI lease remains alive.
     assert(controller.releaseSeatLease(game));

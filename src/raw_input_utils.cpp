@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cwchar>
 #include <cfgmgr32.h>
 #include <initguid.h>
 #include <devpkey.h>
@@ -77,6 +78,136 @@ std::optional<std::wstring> configManagerInstanceId(DEVINST deviceInstance) {
     return hardware::trimTrailingNulls(std::wstring(buffer.data()));
 }
 
+std::optional<std::wstring> configManagerStringProperty(
+    DEVINST deviceInstance,
+    const DEVPROPKEY& key) {
+    DEVPROPTYPE propertyType = 0;
+    ULONG propertyBytes = 0;
+    CONFIGRET result = CM_Get_DevNode_PropertyW(
+        deviceInstance, &key, &propertyType, nullptr, &propertyBytes, 0);
+    if (result != CR_BUFFER_SMALL || propertyBytes < sizeof(wchar_t) ||
+        propertyBytes > kMaxDeviceNameCharacters * sizeof(wchar_t)) {
+        return std::nullopt;
+    }
+
+    const auto characterCapacity =
+        static_cast<std::size_t>(
+            (propertyBytes + sizeof(wchar_t) - 1u) / sizeof(wchar_t)) + 1u;
+    std::vector<wchar_t> buffer(characterCapacity, L'\0');
+    result = CM_Get_DevNode_PropertyW(
+        deviceInstance, &key, &propertyType,
+        reinterpret_cast<PBYTE>(buffer.data()), &propertyBytes, 0);
+    if (result != CR_SUCCESS ||
+        (propertyType != DEVPROP_TYPE_STRING &&
+         propertyType != DEVPROP_TYPE_STRING_INDIRECT)) {
+        return std::nullopt;
+    }
+
+    const auto terminator =
+        std::find(buffer.cbegin(), buffer.cend(), L'\0');
+    if (terminator == buffer.cend()) return std::nullopt;
+    auto value = hardware::trimTrailingNulls(
+        std::wstring(buffer.cbegin(), terminator));
+    return value.empty() ? std::nullopt
+                         : std::optional<std::wstring>{std::move(value)};
+}
+
+std::vector<std::wstring> configManagerStringListProperty(
+    DEVINST deviceInstance,
+    const DEVPROPKEY& key) {
+    DEVPROPTYPE propertyType = 0;
+    ULONG propertyBytes = 0;
+    CONFIGRET result = CM_Get_DevNode_PropertyW(
+        deviceInstance, &key, &propertyType, nullptr, &propertyBytes, 0);
+    if (result != CR_BUFFER_SMALL || propertyBytes < sizeof(wchar_t) * 2 ||
+        propertyBytes > kMaxDeviceNameCharacters * sizeof(wchar_t)) {
+        return {};
+    }
+
+    const auto characterCapacity =
+        static_cast<std::size_t>(
+            (propertyBytes + sizeof(wchar_t) - 1u) / sizeof(wchar_t)) + 1u;
+    std::vector<wchar_t> buffer(characterCapacity, L'\0');
+    result = CM_Get_DevNode_PropertyW(
+        deviceInstance, &key, &propertyType,
+        reinterpret_cast<PBYTE>(buffer.data()), &propertyBytes, 0);
+    if (result != CR_SUCCESS || propertyType != DEVPROP_TYPE_STRING_LIST) {
+        return {};
+    }
+
+    std::vector<std::wstring> values;
+    const auto propertyCharacters =
+        std::min<std::size_t>(
+            propertyBytes / sizeof(wchar_t), buffer.size());
+    auto current = buffer.cbegin();
+    const auto end = buffer.cbegin() +
+        static_cast<std::ptrdiff_t>(propertyCharacters);
+    while (current < end && *current != L'\0') {
+        const auto terminator = std::find(current, end, L'\0');
+        if (terminator == end) return {};
+        values.emplace_back(current, terminator);
+        current = terminator + 1;
+    }
+    return values;
+}
+
+std::optional<std::uint8_t> parseUsbInterfaceNumber(
+    std::wstring_view instanceId) {
+    const auto normalized = hardware::canonicalizeInstanceId(instanceId);
+    const auto marker = normalized.find(L"&MI_");
+    if (marker == std::wstring::npos || marker + 6 > normalized.size()) {
+        return std::nullopt;
+    }
+
+    const auto hexValue = [](wchar_t ch) -> int {
+        if (ch >= L'0' && ch <= L'9') return ch - L'0';
+        if (ch >= L'A' && ch <= L'F') return 10 + (ch - L'A');
+        return -1;
+    };
+    const int high = hexValue(normalized[marker + 4]);
+    const int low = hexValue(normalized[marker + 5]);
+    if (high < 0 || low < 0) return std::nullopt;
+    return static_cast<std::uint8_t>((high << 4) | low);
+}
+
+std::optional<std::uint8_t> usbHidBootProtocol(DEVINST deviceInstance) {
+    const auto compatibleIds = configManagerStringListProperty(
+        deviceInstance, DEVPKEY_Device_CompatibleIds);
+    for (const auto& compatibleId : compatibleIds) {
+        const auto normalized = hardware::canonicalizeInstanceId(compatibleId);
+        if (!hardware::containsToken(normalized, L"CLASS_03") ||
+            !hardware::containsToken(normalized, L"SUBCLASS_01")) {
+            continue;
+        }
+        if (hardware::containsToken(normalized, L"PROT_01")) {
+            return static_cast<std::uint8_t>(1);
+        }
+        if (hardware::containsToken(normalized, L"PROT_02")) {
+            return static_cast<std::uint8_t>(2);
+        }
+    }
+    return std::nullopt;
+}
+
+bool hasPhysicalTransportPrefix(std::wstring_view instanceId) {
+    const auto normalized = hardware::canonicalizeInstanceId(instanceId);
+    return normalized.starts_with(L"USB\\") ||
+           normalized.starts_with(L"ACPI\\") ||
+           normalized.starts_with(L"BTHENUM\\") ||
+           normalized.starts_with(L"BTHLEDEVICE\\") ||
+           normalized.starts_with(L"I2C\\");
+}
+
+bool isSyntheticTransportIdentity(std::wstring_view instanceId) {
+    const auto normalized = hardware::canonicalizeInstanceId(instanceId);
+    return hardware::isObviousRemoteOrSyntheticInputPath(normalized) ||
+           normalized.starts_with(L"ROOT\\") ||
+           normalized.starts_with(L"SWD\\") ||
+           hardware::containsToken(normalized, L"VIGEM") ||
+           hardware::containsToken(normalized, L"VJOY") ||
+           hardware::containsToken(normalized, L"FEIZHI_VIRTUAL");
+}
+
 bool isNullGuid(const GUID& value) noexcept {
     if (value.Data1 != 0 || value.Data2 != 0 || value.Data3 != 0) {
         return false;
@@ -131,6 +262,7 @@ bool isPhysicalUsbDeviceInstance(std::wstring_view instanceId) {
 struct PhysicalAncestorIdentity {
     std::optional<std::wstring> instanceId;
     std::optional<std::wstring> containerId;
+    DEVINST deviceInstance{0};
 };
 
 PhysicalAncestorIdentity resolvePhysicalAncestor(DEVINST deviceInstance) {
@@ -139,7 +271,7 @@ PhysicalAncestorIdentity resolvePhysicalAncestor(DEVINST deviceInstance) {
     for (int depth = 0; depth < kMaxAncestorDepth; ++depth) {
         const auto instanceId = configManagerInstanceId(current);
         if (instanceId && isPhysicalUsbDeviceInstance(*instanceId)) {
-            return {*instanceId, configManagerContainerId(current)};
+            return {*instanceId, configManagerContainerId(current), current};
         }
 
         DEVINST parent = 0;
@@ -289,21 +421,83 @@ DeviceInterfaceIdentity resolveDeviceInterfaceIdentity(std::wstring_view interfa
     }
 
     result.deviceInstanceId = setupApiInstanceId(deviceInfoSet.get(), deviceInfoData);
+    result.syntheticOrRemote =
+        hardware::isObviousRemoteOrSyntheticInputPath(result.interfacePath);
+
+    // Keep the complete devnode ancestry. Raw Input exposes HID top-level
+    // collections, while the user cares about the physical transport device
+    // behind those collections. Walking ancestry also lets us reject virtual
+    // ROOT/SWD devices even when their child HID path looks ordinary.
+    DEVINST current = deviceInfoData.DevInst;
+    constexpr int kMaxAncestorDepth = 16;
+    for (int depth = 0; depth < kMaxAncestorDepth; ++depth) {
+        const auto currentId = configManagerInstanceId(current);
+        if (currentId) {
+            result.ancestorInstanceIds.push_back(*currentId);
+
+            // Once the chain has reached a proven local transport (USB, ACPI,
+            // Bluetooth or I2C), higher system/root-bus devnodes no longer
+            // describe whether the input peripheral itself is virtual.
+            if (!result.physicalTransportProven) {
+                result.syntheticOrRemote =
+                    result.syntheticOrRemote ||
+                    isSyntheticTransportIdentity(*currentId);
+            }
+            result.physicalTransportProven =
+                result.physicalTransportProven ||
+                hasPhysicalTransportPrefix(*currentId);
+        }
+
+        DEVINST parent = 0;
+        if (CM_Get_Parent(&parent, current, 0) != CR_SUCCESS ||
+            parent == current) {
+            break;
+        }
+        current = parent;
+    }
 
     const auto physicalAncestor = resolvePhysicalAncestor(deviceInfoData.DevInst);
     result.physicalAncestorInstanceId = physicalAncestor.instanceId;
     result.physicalContainerId = physicalAncestor.containerId;
+    if (physicalAncestor.deviceInstance != 0) {
+        result.physicalTransportProven = true;
+        result.physicalDisplayName = configManagerStringProperty(
+            physicalAncestor.deviceInstance, DEVPKEY_Device_BusReportedDeviceDesc);
+        if (!result.physicalDisplayName) {
+            result.physicalDisplayName = configManagerStringProperty(
+                physicalAncestor.deviceInstance, DEVPKEY_Device_DeviceDesc);
+        }
+    }
 
     DEVINST parentInstance = 0;
     if (CM_Get_Parent(&parentInstance, deviceInfoData.DevInst, 0) == CR_SUCCESS) {
         result.parentDeviceInstanceId = configManagerInstanceId(parentInstance);
+        if (result.parentDeviceInstanceId) {
+            result.usbInterfaceNumber =
+                parseUsbInterfaceNumber(*result.parentDeviceInstanceId);
+        }
+        result.usbInterfaceProtocol = usbHidBootProtocol(parentInstance);
+
         if (!result.physicalContainerId) {
             result.physicalContainerId = configManagerContainerId(parentInstance);
+        }
+        if (!result.physicalDisplayName) {
+            result.physicalDisplayName = configManagerStringProperty(
+                parentInstance, DEVPKEY_Device_BusReportedDeviceDesc);
         }
     }
     if (!result.physicalContainerId) {
         result.physicalContainerId = configManagerContainerId(deviceInfoData.DevInst);
     }
+    if (!result.physicalDisplayName) {
+        result.physicalDisplayName = configManagerStringProperty(
+            deviceInfoData.DevInst, DEVPKEY_Device_FriendlyName);
+    }
+    if (!result.physicalDisplayName) {
+        result.physicalDisplayName = configManagerStringProperty(
+            deviceInfoData.DevInst, DEVPKEY_Device_DeviceDesc);
+    }
+
     return result;
 }
 

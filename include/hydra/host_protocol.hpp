@@ -12,7 +12,7 @@
 namespace hydra::hostipc {
 
 constexpr std::uint32_t kHostProtocolMagic = 0x31505348u; // "HSP1"
-constexpr std::uint16_t kHostProtocolVersion = 2u;
+constexpr std::uint16_t kHostProtocolVersion = 3u;
 constexpr std::size_t kHostProtocolHeaderBytes = 24u;
 constexpr std::size_t kHostProtocolMaxPayloadBytes = 64u * 1024u;
 constexpr std::size_t kHostProtocolMaxDiagnosticBytes = 2048u;
@@ -21,6 +21,9 @@ constexpr std::size_t kHostProtocolMaxAudioEndpointIdBytes = 2048u;
 constexpr std::size_t kHostProtocolMaxLaunchTitleBytes = 512u;
 constexpr std::size_t kHostProtocolMaxLaunchPathBytes = 32768u;
 constexpr std::size_t kHostProtocolMaxLaunchArgumentsBytes = 16384u;
+constexpr std::size_t kHostProtocolMaxHardwareDeviceIdBytes = 4096u;
+constexpr std::size_t kHostProtocolMaxHardwareDeviceNameBytes = 1024u;
+constexpr std::size_t kHostProtocolMaxHardwareDevices = 64u;
 constexpr std::size_t kHostSeatCount = 2u;
 
 enum class MessageType : std::uint16_t {
@@ -45,6 +48,12 @@ enum class MessageType : std::uint16_t {
     LaunchGameResult = 19,
     StopGame = 20,
     StopGameResult = 21,
+    GetHardwareInventory = 22,
+    HardwareInventory = 23,
+    GetSeatHardware = 24,
+    SeatHardware = 25,
+    AssignSeatHardware = 26,
+    AssignSeatHardwareResult = 27,
 };
 
 enum class ClientRole : std::uint8_t {
@@ -60,6 +69,13 @@ enum class ErrorCode : std::uint16_t {
     Unsupported = 4,
     InternalError = 5,
     InvalidState = 6,
+};
+
+enum class HardwareDeviceKind : std::uint8_t {
+    Display = 1,
+    Keyboard = 2,
+    Mouse = 3,
+    Controller = 4,
 };
 
 enum class AudioMutationStatus : std::uint16_t {
@@ -121,6 +137,30 @@ struct SeatRequest {
     std::uint32_t seatId{0};
 
     bool operator==(const SeatRequest&) const = default;
+};
+
+struct HardwareDeviceRecord {
+    HardwareDeviceKind kind{HardwareDeviceKind::Keyboard};
+    std::string stableIdUtf8;
+    std::string displayNameUtf8;
+
+    bool operator==(const HardwareDeviceRecord&) const = default;
+};
+
+struct HardwareInventory {
+    std::vector<HardwareDeviceRecord> devices;
+
+    bool operator==(const HardwareInventory&) const = default;
+};
+
+struct SeatHardwareAssignment {
+    std::uint32_t seatId{0};
+    std::string displayIdUtf8;
+    std::string keyboardIdUtf8;
+    std::string mouseIdUtf8;
+    std::string controllerIdUtf8;
+
+    bool operator==(const SeatHardwareAssignment&) const = default;
 };
 
 struct ControllerPairRequest {
@@ -192,6 +232,15 @@ std::optional<HostSnapshot> decodeSnapshot(std::span<const std::byte> payload);
 
 std::vector<std::byte> encodeSeatRequest(const SeatRequest& request);
 std::optional<SeatRequest> decodeSeatRequest(std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeHardwareInventory(const HardwareInventory& inventory);
+std::optional<HardwareInventory> decodeHardwareInventory(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeSeatHardwareAssignment(
+    const SeatHardwareAssignment& assignment);
+std::optional<SeatHardwareAssignment> decodeSeatHardwareAssignment(
+    std::span<const std::byte> payload);
 
 std::vector<std::byte> encodeControllerPairRequest(
     const ControllerPairRequest& request);

@@ -28,10 +28,21 @@ inline constexpr std::uint32_t kP3EGlfwRequiredApiMask = 0x0000b93au;
 inline constexpr std::uint32_t kExternalBridgeConfigMagic = 0x31453350u; // P3E1
 inline constexpr std::uint32_t kExternalBridgeConfigVersion = 1u;
 inline constexpr std::size_t kExternalBridgePipeNameChars = 256u;
+// The all-bits value is reserved as an external-bridge request to discover the
+// target executable's actually imported supported APIs before installing the
+// process-local shim. Explicit measured profiles continue to pass an exact mask.
+inline constexpr std::uint32_t kExternalBridgeAutoDetectApiMask =
+    HYDRA_GATE_C_SHIM_ALL_API_MASK;
 
 constexpr bool validProfiledShimMask(std::uint32_t mask) noexcept {
+    // A real game may consume keyboard/mouse solely through Raw Input and have
+    // no GetAsyncKeyState/GetKeyState imports at all. Requiring a polling API
+    // made those otherwise supported targets fail during auto-detection.
+    constexpr std::uint32_t kInputApiMask =
+        HYDRA_GATE_C_SHIM_POLLING_API_MASK |
+        HYDRA_GATE_C_SHIM_RAW_INPUT_API_MASK;
     return mask != 0u &&
-           (mask & HYDRA_GATE_C_SHIM_POLLING_API_MASK) != 0u &&
+           (mask & kInputApiMask) != 0u &&
            (mask & ~HYDRA_GATE_C_SHIM_ALL_API_MASK) == 0u;
 }
 

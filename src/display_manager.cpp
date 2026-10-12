@@ -70,12 +70,18 @@ bool DisplayManager::isVirtualDisplayDriverPresent() {
     return false;
 }
 
-bool DisplayManager::createVirtualDisplay(uint32_t width, uint32_t height, uint32_t refreshRate) {
+bool DisplayManager::createVirtualDisplay(
+    uint32_t width,
+    uint32_t height,
+    uint32_t refreshRate) {
     (void)width;
     (void)height;
     (void)refreshRate;
-    // IDD Virtual Display Driver creation interface
-    return true;
+    // HydraSeat v1 has no reviewed IDD creation backend. Never report success
+    // for a mutation that did not happen; callers must use the canonical
+    // DisplayConfig/Seat display path or treat virtual-display creation as
+    // unsupported.
+    return false;
 }
 
 bool DisplayManager::configureDisplay(const std::wstring& deviceName, uint32_t width, uint32_t height, uint32_t refreshRate) {

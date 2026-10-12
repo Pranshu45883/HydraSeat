@@ -1654,6 +1654,7 @@ std::string_view trustedPlanRequirementCodeName(TrustedPlanRequirementCode code)
     case TrustedPlanRequirementCode::UntrustedEvidenceOrigin: return "UntrustedEvidenceOrigin";
     case TrustedPlanRequirementCode::StaleEvidence: return "StaleEvidence";
     case TrustedPlanRequirementCode::ProtectedApprovalRequired: return "ProtectedApprovalRequired";
+    case TrustedPlanRequirementCode::ValidationSeatScopeExceeded: return "ValidationSeatScopeExceeded";
     }
     return "Unknown";
 }

@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include <windows.h>
+#include <Xinput.h>
 
 #include <cstdint>
 #include <cwchar>
@@ -137,6 +138,9 @@ int wmain(int argc, wchar_t* argv[]) {
             activationGeneration == 0) {
             return 10;
         }
+
+        XINPUT_STATE state{};
+        (void)XInputGetState(0, &state);
     }
 
     if (!descendantReadyEvent.empty() &&

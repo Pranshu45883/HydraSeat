@@ -427,8 +427,8 @@ def real_components() -> tuple[ProductionComponent, ...]:
             required_by_targets=("HydraSeat", "hydra_host"),
             allowed_owner_targets=("hydra_game_runtime_requirement_resolver",),
             required_owner_dependencies=(
-                "hydra_steam_provider",
-                "hydra_custom_executable_provider",
+                "hydra_profile_provider_foundation",
+                "hydra_provider_launch_plan",
                 "hydra_community_submission",
             ),
             required_owner_link_tokens=("Bcrypt.lib",),
@@ -438,8 +438,8 @@ def real_components() -> tuple[ProductionComponent, ...]:
             ),
             suggested_owner="hydra_game_runtime_requirement_resolver",
             suggested_insertion=(
-                "link hydra_game_runtime_requirement_resolver to hydra_steam_provider, "
-                "hydra_custom_executable_provider, and hydra_community_submission; then link "
+                "link hydra_game_runtime_requirement_resolver to hydra_profile_provider_foundation, "
+                "hydra_provider_launch_plan, and hydra_community_submission; then link "
                 "HydraSeat and hydra_host to hydra_game_runtime_requirement_resolver"
             ),
         ),
@@ -515,10 +515,10 @@ def real_components() -> tuple[ProductionComponent, ...]:
             name="recovery-process-attachment-authority",
             implementation_sources=("src/watchdog_protocol.cpp",),
             required_by_targets=("hydra_watchdog", "hydra_reset", "hydra_gate_c_recovery"),
-            allowed_owner_targets=("hydra_watchdog_core",),
+            allowed_owner_targets=("hydra_recovery_core",),
             activate_if_paths_exist=("include/hydra/recovery_process_attachment.hpp",),
-            suggested_owner="hydra_watchdog_core",
-            suggested_insertion="keep recovery attachment implementation owned by hydra_watchdog_core and linked by recovery consumers",
+            suggested_owner="hydra_recovery_core",
+            suggested_insertion="keep recovery attachment implementation owned by hydra_recovery_core and linked by recovery consumers",
         ),
         ProductionComponent(
             name="acceptance-campaign-core",

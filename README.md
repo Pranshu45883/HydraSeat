@@ -1,12 +1,12 @@
 # HydraSeat
 
-HydraSeat is an open-source Windows local gaming multiseat project focused on running **two independent local gaming Seats in one interactive Windows session**.
+HydraSeat is a Windows local gaming multiseat project focused on running **two independent local gaming Seats in one interactive Windows session**.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+> **Licensing note:** the upstream README has declared MIT since the initial project commit, but the repository currently contains no `LICENSE` file. Release packaging therefore keeps project licensing as an explicit unresolved blocker until the upstream maintainer confirms or restores the intended license text.
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](https://isocpp.org/)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4?logo=windows)](https://www.microsoft.com/windows/)
 
-> **Project status:** active prototype / architecture convergence. HydraSeat is not yet production-ready. Controlled tests do not replace physical two-Seat hardware, real-game, clean-machine, reboot, recovery, or signing evidence.
+> **Project status:** v1 release-candidate engineering branch, not a GA release. The current code builds and passes the automated suite, and the canonical host IPC has been smoke-tested on real Windows hardware. That does not replace two-Seat physical isolation, representative real-game, clean-machine, reboot/recovery, production-signing, or licensing evidence.
 
 ## Product model
 
@@ -46,7 +46,7 @@ HydraSeat UI / control surface
       +-- rollback   +-- rollback
 ```
 
-`hydra_host.exe` is the intended sole runtime authority. Each `SeatRuntime` owns only its Seat-local mutable state. The current repository is migrating incrementally toward this host/client split; current `main` still builds the existing `HydraSeat` application while the authority contracts are introduced and verified in smaller changes.
+`hydra_host.exe` is the sole runtime authority on the reviewed v1 path. Each `SeatRuntime` owns only its Seat-local mutable state. `HydraSeat.exe` is an IPC client: Pranshu's Qt UI commits stable hardware assignments, performs explicit controller pairing, and launches/stops each Seat through the canonical host instead of constructing process-local runtime authority.
 
 Core rules:
 
@@ -61,9 +61,9 @@ See [Architecture](docs/ARCHITECTURE.md) and the stricter [Collaboration Contrac
 
 ## Current implementation snapshot
 
-Merged `main` already contains the two-Seat configuration model, stable controller identity/inventory, UI selection by stable controller ID, activation-token-scoped `SessionController` / `SeatRuntime` ownership, exact process/window claims, and Seat-owned controller bindings.
+The current release-candidate branch contains the two-Seat configuration model, stable display/keyboard/mouse/controller identity, connection-scoped UI leases, generation-scoped `SessionController` / `SeatRuntime` ownership, exact process/window claims, host-owned launch/stop, Windows audio routing, and the x64 Gate-C external session/bridge path.
 
-Additional controller virtualization, process-isolation, XInput compatibility, launch/process ownership, and Windows audio work is being validated incrementally before it enters the production path.
+Pranshu's Qt Widgets UI is the canonical HydraSeat UI. The build therefore requires exact Qt 6.8.3 instead of silently replacing that interface with a fallback UI when Qt is absent. Release tooling now stages the provenance-bound Qt runtime/plugins beside `HydraSeat.exe` and packages the Microsoft-signed x64 Visual C++ Redistributable as an installer prerequisite. This packaging path remains unverified until the current hardening pass completes its Windows-native validation.
 
 The dated breakdown is maintained in [Current Status](docs/STATUS.md). Future sequencing is in [Roadmap](docs/ROADMAP.md).
 
@@ -80,11 +80,12 @@ Unsupported or ambiguous scenarios should be reported as unsupported rather than
 
 ## Build prerequisites
 
-- **OS:** Windows 10 / Windows 11, x64 development target;
-- **Compiler:** Visual Studio 2022 with C++20 support;
+- **OS:** Windows 11 x64 is the v1 release target; Windows 10 remains experimental in the release-scope contract;
+- **Target process architecture:** x64 only for the reviewed v1 Gate-C path;
+- **Compiler:** a C++20-capable Windows toolchain. The current local RC evidence was produced with MinGW-w64; an MSVC release build should still be qualified before GA;
 - **Build system:** CMake 3.20+;
-- **Windows SDK:** Win32 Raw Input, SetupAPI, DXGI, HID/XInput and related APIs;
-- **Qt 6:** optional in the current build. When Qt Widgets/Core is unavailable, the Win32 UI path is used.
+- **Windows SDK/APIs:** Win32 Raw Input, SetupAPI, DXGI, HID/XInput and related APIs;
+- **Qt 6.8+:** required for the canonical Pranshu UI. Source builds must provide Qt Core/Widgets; release packaging must also deploy the required Qt runtime/plugins for clean-machine startup.
 
 Typical MSVC configuration:
 

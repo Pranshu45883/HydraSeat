@@ -96,6 +96,58 @@ int main() {
     assert(decodeSeatRequest(seatRequestBytes) == seatRequest);
     assert(encodeSeatRequest(SeatRequest{3}).empty());
 
+    const HardwareInventory hardwareInventory{
+        {
+            {HardwareDeviceKind::Display, "display:stable-a", "Display A"},
+            {HardwareDeviceKind::Keyboard, "keyboard:stable-b", "Keyboard B"},
+            {HardwareDeviceKind::Mouse, "mouse:stable-c", "Mouse C"},
+        }};
+    const auto hardwareInventoryBytes =
+        encodeHardwareInventory(hardwareInventory);
+    assert(!hardwareInventoryBytes.empty());
+    assert(decodeHardwareInventory(hardwareInventoryBytes) == hardwareInventory);
+
+    auto invalidHardwareInventory = hardwareInventory;
+    invalidHardwareInventory.devices[0].stableIdUtf8 =
+        std::string(kHostProtocolMaxHardwareDeviceIdBytes + 1, 'x');
+    assert(encodeHardwareInventory(invalidHardwareInventory).empty());
+
+    invalidHardwareInventory = hardwareInventory;
+    invalidHardwareInventory.devices.resize(
+        kHostProtocolMaxHardwareDevices + 1);
+    assert(encodeHardwareInventory(invalidHardwareInventory).empty());
+
+    const SeatHardwareAssignment seatHardware{
+        1,
+        "display:stable-a",
+        "keyboard:stable-b",
+        "mouse:stable-c",
+        "container:{12345678-1234-1234-1234-1234567890AB}"};
+    const auto seatHardwareBytes =
+        encodeSeatHardwareAssignment(seatHardware);
+    assert(!seatHardwareBytes.empty());
+    assert(decodeSeatHardwareAssignment(seatHardwareBytes) == seatHardware);
+
+    // Protocol v3 requires the controller-id field, even when its value is
+    // empty. A v2-shaped payload must fail closed rather than being interpreted
+    // as a v3 hardware mutation with an implicit controller clear.
+    SeatHardwareAssignment withoutController = seatHardware;
+    withoutController.controllerIdUtf8.clear();
+    auto legacySeatHardwareBytes =
+        encodeSeatHardwareAssignment(withoutController);
+    assert(legacySeatHardwareBytes.size() >= sizeof(std::uint32_t));
+    legacySeatHardwareBytes.resize(
+        legacySeatHardwareBytes.size() - sizeof(std::uint32_t));
+    assert(!decodeSeatHardwareAssignment(legacySeatHardwareBytes).has_value());
+
+    auto invalidSeatHardware = seatHardware;
+    invalidSeatHardware.seatId = 3;
+    assert(encodeSeatHardwareAssignment(invalidSeatHardware).empty());
+
+    invalidSeatHardware = seatHardware;
+    invalidSeatHardware.keyboardIdUtf8 = std::string("\xC0\xAF", 2);
+    assert(encodeSeatHardwareAssignment(invalidSeatHardware).empty());
+
     const ControllerPairRequest pairRequest{
         1, 2, "container:{12345678-1234-1234-1234-1234567890AB}"};
     const auto pairBytes = encodeControllerPairRequest(pairRequest);
@@ -182,7 +234,10 @@ int main() {
     assert(isMutatingRequest(MessageType::ResetAudio));
     assert(isMutatingRequest(MessageType::LaunchGame));
     assert(isMutatingRequest(MessageType::StopGame));
+    assert(isMutatingRequest(MessageType::AssignSeatHardware));
     assert(!isMutatingRequest(MessageType::GetSnapshot));
+    assert(!isMutatingRequest(MessageType::GetHardwareInventory));
+    assert(!isMutatingRequest(MessageType::GetSeatHardware));
 
     assert(responseTypeFor(MessageType::Hello) == MessageType::HelloAck);
     assert(responseTypeFor(MessageType::GetSnapshot) == MessageType::Snapshot);
@@ -201,6 +256,12 @@ int main() {
            MessageType::LaunchGameResult);
     assert(responseTypeFor(MessageType::StopGame) ==
            MessageType::StopGameResult);
+    assert(responseTypeFor(MessageType::GetHardwareInventory) ==
+           MessageType::HardwareInventory);
+    assert(responseTypeFor(MessageType::GetSeatHardware) ==
+           MessageType::SeatHardware);
+    assert(responseTypeFor(MessageType::AssignSeatHardware) ==
+           MessageType::AssignSeatHardwareResult);
     assert(responseTypeFor(MessageType::Snapshot) == MessageType::Error);
 
     return 0;

@@ -70,6 +70,37 @@ int main() {
         const auto deniedError = decodeError(denied.payload);
         assert(deniedError);
         assert(deniedError->code == ErrorCode::PermissionDenied);
+
+        const auto seatHardware = readOnly.handle(Frame{
+            MessageType::GetSeatHardware,
+            22,
+            encodeSeatRequest(SeatRequest{1})});
+        assert(seatHardware.type == MessageType::SeatHardware);
+        const auto decodedSeatHardware =
+            decodeSeatHardwareAssignment(seatHardware.payload);
+        assert(decodedSeatHardware);
+        assert(decodedSeatHardware->seatId == 1);
+        assert(decodedSeatHardware->displayIdUtf8.empty());
+        assert(decodedSeatHardware->keyboardIdUtf8.empty());
+        assert(decodedSeatHardware->mouseIdUtf8.empty());
+        assert(decodedSeatHardware->controllerIdUtf8.empty());
+
+        const auto inventory = readOnly.handle(Frame{
+            MessageType::GetHardwareInventory, 23, {}});
+        assert(inventory.type == MessageType::HardwareInventory);
+        assert(decodeHardwareInventory(inventory.payload).has_value());
+
+        const auto deniedAssignment = readOnly.handle(Frame{
+            MessageType::AssignSeatHardware,
+            24,
+            encodeSeatHardwareAssignment(
+                SeatHardwareAssignment{1, "", "", "", ""})});
+        assert(deniedAssignment.type == MessageType::Error);
+        const auto deniedAssignmentError =
+            decodeError(deniedAssignment.payload);
+        assert(deniedAssignmentError);
+        assert(deniedAssignmentError->code == ErrorCode::PermissionDenied);
+
         assert(!host.snapshot().seats[0].active);
     }
 
@@ -110,6 +141,18 @@ int main() {
         assert(snapshot->seats[0].active);
         assert(snapshot->seats[0].uiLeaseActive);
         assert(!snapshot->seats[0].gameLeaseActive);
+
+        const auto assignedHardware = session.handle(Frame{
+            MessageType::AssignSeatHardware,
+            701,
+            encodeSeatHardwareAssignment(
+                SeatHardwareAssignment{1, "", "", "", ""})});
+        assert(assignedHardware.type ==
+               MessageType::AssignSeatHardwareResult);
+        const auto assignedHardwareValue =
+            decodeSeatHardwareAssignment(assignedHardware.payload);
+        assert(assignedHardwareValue);
+        assert(assignedHardwareValue->seatId == 1);
 
         const auto duplicate = session.handle(Frame{
             MessageType::AcquireUiLease,

@@ -34,7 +34,10 @@ MAX_OWNED_FILE_BYTES = 1024 * 1024
 OWNED_FILES = (
     "HydraSeat.exe",
     "hydra_host.exe",
-    "hydra_seat_ui.exe",
+    "hydra_xinput_adapter.dll",
+    "hydra_gate_c_adapter.dll",
+    "hydra_gate_c_shim.dll",
+    "hydra_gate_c_external_bridge.dll",
     "hydra_watchdog.exe",
     "hydra_reset.exe",
     "hydraseat_profilectl.exe",

@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -24,6 +25,12 @@ struct DeviceInterfaceIdentity {
     std::optional<std::wstring> parentDeviceInstanceId;
     std::optional<std::wstring> physicalAncestorInstanceId;
     std::optional<std::wstring> physicalContainerId;
+    std::vector<std::wstring> ancestorInstanceIds;
+    std::optional<std::wstring> physicalDisplayName;
+    std::optional<std::uint8_t> usbInterfaceNumber;
+    std::optional<std::uint8_t> usbInterfaceProtocol;
+    bool syntheticOrRemote{false};
+    bool physicalTransportProven{false};
 };
 
 RawInputDeviceListResult enumerateRawInputDevices();

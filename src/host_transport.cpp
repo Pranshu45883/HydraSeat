@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -214,7 +215,7 @@ std::optional<GameCatalog> discoverSteamGameCatalog(std::string* error = nullptr
     }
 
     GameCatalog catalog;
-    catalog.games.reserve(std::min(
+    catalog.games.reserve((std::min)(
         candidates.size(),
         static_cast<std::size_t>(kHostProtocolMaxGameCatalogEntries)));
     for (const auto& candidate : candidates) {
@@ -254,16 +255,44 @@ std::optional<GameCatalog> discoverSteamGameCatalog(std::string* error = nullptr
     return catalog;
 }
 
-std::string providerForExecutable(
+bool equivalentExecutablePath(
+    std::string_view leftUtf8,
+    std::string_view rightUtf8) {
+#if defined(_WIN32)
+    const auto leftWide = utf8ToWide(leftUtf8);
+    const auto rightWide = utf8ToWide(rightUtf8);
+    if (!leftWide || !rightWide) return false;
+
+    const auto normalize = [](const std::wstring& value) {
+        std::wstring normalized =
+            std::filesystem::path(value).lexically_normal().native();
+        std::replace(normalized.begin(), normalized.end(), L'/', L'\\');
+        while (normalized.size() > 3u && normalized.back() == L'\\') {
+            normalized.pop_back();
+        }
+        return normalized;
+    };
+    const auto left = normalize(*leftWide);
+    const auto right = normalize(*rightWide);
+    return _wcsicmp(left.c_str(), right.c_str()) == 0;
+#else
+    return leftUtf8 == rightUtf8;
+#endif
+}
+
+const GameCatalogEntry* steamGameForExecutable(
     const GameCatalog& catalog,
     std::string_view executablePathUtf8) {
     const auto found = std::find_if(
         catalog.games.cbegin(),
         catalog.games.cend(),
         [&](const GameCatalogEntry& entry) {
-            return entry.executablePathUtf8 == executablePathUtf8;
+            return entry.providerIdUtf8 == "steam" &&
+                   equivalentExecutablePath(
+                       entry.executablePathUtf8,
+                       executablePathUtf8);
         });
-    return found == catalog.games.cend() ? "custom" : found->providerIdUtf8;
+    return found == catalog.games.cend() ? nullptr : &*found;
 }
 
 } // namespace
@@ -775,10 +804,32 @@ Frame HostConnectionSession::handle(const Frame& request) {
                 "host game launcher is unavailable");
         }
 #if defined(_WIN32)
-        const auto title = utf8ToWide(launch->titleUtf8);
-        const auto executable = utf8ToWide(launch->executablePathUtf8);
+        // Provider identity is resolved again by the canonical host. The UI may
+        // request a path from its cached catalog, but it cannot promote an
+        // arbitrary executable to a Steam game. When the path matches a current
+        // host-owned discovery record, use the canonical discovered title/path.
+        std::string launchTitleUtf8 = launch->titleUtf8;
+        std::string launchExecutableUtf8 = launch->executablePathUtf8;
+        std::string launchWorkingDirectoryUtf8 = launch->workingDirectoryUtf8;
+        std::string providerId = "custom";
+        if (const auto catalog = discoverSteamGameCatalog()) {
+            if (const auto* steamGame =
+                    steamGameForExecutable(*catalog, launch->executablePathUtf8)) {
+                providerId = "steam";
+                launchTitleUtf8 = steamGame->titleUtf8;
+                launchExecutableUtf8 = steamGame->executablePathUtf8;
+                if (!steamGame->workingDirectoryUtf8.empty()) {
+                    launchWorkingDirectoryUtf8 =
+                        steamGame->workingDirectoryUtf8;
+                }
+            }
+        }
+
+        const auto title = utf8ToWide(launchTitleUtf8);
+        const auto executable = utf8ToWide(launchExecutableUtf8);
         const auto arguments = utf8ToWide(launch->launchArgumentsUtf8);
-        const auto workingDirectory = utf8ToWide(launch->workingDirectoryUtf8);
+        const auto workingDirectory =
+            utf8ToWide(launchWorkingDirectoryUtf8);
         if (!title || !executable || !arguments || !workingDirectory) {
             return error(
                 request.correlationId, ErrorCode::Malformed,
@@ -787,6 +838,9 @@ Frame HostConnectionSession::handle(const Frame& request) {
 
         GameProfile profile;
         profile.title = *title;
+        // Steam discovery remains a read-only provider boundary. The actual
+        // process is intentionally launched as the validated local executable so
+        // HydraSeat can preserve strict Job Object/process ownership.
         profile.platform = GamePlatform::CustomExecutable;
         profile.executablePath = *executable;
         profile.launchArguments = *arguments;
@@ -804,12 +858,10 @@ Frame HostConnectionSession::handle(const Frame& request) {
                     : diagnostic);
         }
 
-        std::string providerId = "custom";
-        if (const auto catalog = discoverSteamGameCatalog()) {
-            providerId = providerForExecutable(*catalog, launch->executablePathUtf8);
-        }
         (void)host_.setSeatGamePresentation(
-            launch->seatId, launch->titleUtf8, std::move(providerId));
+            launch->seatId,
+            launchTitleUtf8.empty() ? std::string{"Application"} : launchTitleUtf8,
+            std::move(providerId));
 
         Frame response;
         response.type = MessageType::LaunchGameResult;

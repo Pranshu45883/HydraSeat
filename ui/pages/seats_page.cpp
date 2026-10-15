@@ -35,6 +35,10 @@ QString seatPreferredAudioKey(std::uint32_t seatId) {
     return QStringLiteral("seats/%1/preferredAudioEndpoint").arg(seatId);
 }
 
+QString systemDefaultAudioAttemptSentinel() {
+    return QStringLiteral("hydraseat://audio-system-default");
+}
+
 QString shortStableId(const QString& id) {
     if (id.size() <= 10) return id;
     return QStringLiteral("…%1").arg(id.right(9));
@@ -57,6 +61,7 @@ struct SeatHostTaskResult {
 
 struct SeatAudioTaskResult {
     std::optional<hydra::hostipc::AudioMutationStatus> status;
+    bool resetToSystemDefault{false};
     std::string error;
 };
 
@@ -671,6 +676,23 @@ void SeatsPage::onIdentifyInput(std::uint32_t seatId, bool keyboard) {
         keyboard ? w.keyboardIdentifyBaseline : w.mouseIdentifyBaseline;
     baseline = activity ? activity->sequence : 0u;
 
+    // Only one Seat may wait for a given input kind at a time. Otherwise one
+    // physical event can satisfy both armed Seats and select the same device.
+    SeatWidgets& other = (seatId == 1u) ? m_seat2 : m_seat1;
+    auto& otherBaseline = keyboard
+        ? other.keyboardIdentifyBaseline
+        : other.mouseIdentifyBaseline;
+    if (otherBaseline) {
+        otherBaseline.reset();
+        auto* otherButton = keyboard
+            ? other.keyboardIdentifyBtn
+            : other.mouseIdentifyBtn;
+        if (otherButton) {
+            otherButton->setText(
+                keyboard ? "Identify by key press" : "Identify by movement");
+        }
+    }
+
     button->setText("Waiting for input...");
     w.feedbackLabel->setText(
         keyboard
@@ -761,7 +783,7 @@ void SeatsPage::maybeAutoRouteAudio(
     auto settings = settingsStore();
     const QString preferred =
         settings.value(seatPreferredAudioKey(seatId)).toString();
-    if (preferred.isEmpty()) return;
+    const bool resetToSystemDefault = preferred.isEmpty();
 
     const bool endpointAvailable = std::any_of(
         m_lastPayload.audioEndpoints.cbegin(),
@@ -769,7 +791,7 @@ void SeatsPage::maybeAutoRouteAudio(
         [&](const hydra::windows::AudioRenderEndpoint& endpoint) {
             return QString::fromStdWString(endpoint.endpointId) == preferred;
         });
-    if (!endpointAvailable) return;
+    if (!resetToSystemDefault && !endpointAvailable) return;
 
     const auto session = std::find_if(
         m_lastPayload.audioSessions.cbegin(),
@@ -782,16 +804,23 @@ void SeatsPage::maybeAutoRouteAudio(
         });
     if (session == m_lastPayload.audioSessions.cend()) return;
 
-    if (QString::fromStdWString(session->endpointId) == preferred) {
+    if (!resetToSystemDefault &&
+        QString::fromStdWString(session->endpointId) == preferred) {
         w.audioRouteAttemptPid = snapshot->processId;
         w.audioRouteAttemptCreation = snapshot->processCreationIdentity;
-        w.audioRouteAttemptEndpoint = preferred;
+        w.audioRouteAttemptEndpoint = resetToSystemDefault
+            ? systemDefaultAudioAttemptSentinel()
+            : preferred;
         return;
     }
 
+    const QString attemptEndpoint = resetToSystemDefault
+        ? systemDefaultAudioAttemptSentinel()
+        : preferred;
+
     if (w.audioRouteAttemptPid == snapshot->processId &&
         w.audioRouteAttemptCreation == snapshot->processCreationIdentity &&
-        w.audioRouteAttemptEndpoint == preferred) {
+        w.audioRouteAttemptEndpoint == attemptEndpoint) {
         return;
     }
 
@@ -801,7 +830,9 @@ void SeatsPage::maybeAutoRouteAudio(
     const std::string endpointUtf8 = toUtf8String(preferred);
     w.audioRouteAttemptPid = pid;
     w.audioRouteAttemptCreation = creation;
-    w.audioRouteAttemptEndpoint = preferred;
+    w.audioRouteAttemptEndpoint = resetToSystemDefault
+            ? systemDefaultAudioAttemptSentinel()
+            : preferred;
     w.audioRouteInFlight = true;
 
     auto* watcher = new QFutureWatcher<SeatAudioTaskResult>(this);
@@ -821,10 +852,17 @@ void SeatsPage::maybeAutoRouteAudio(
                 task.status &&
                 *task.status == hydra::hostipc::AudioMutationStatus::Success;
             if (!succeeded) {
+                // Do not permanently latch a transient Core Audio/session race.
+                // A later authoritative poll may retry the exact request.
+                current.audioRouteAttemptPid = 0;
+                current.audioRouteAttemptCreation = 0;
+                current.audioRouteAttemptEndpoint.clear();
                 if (current.feedbackLabel) {
                     current.feedbackLabel->setText(
                         task.error.empty()
-                            ? "Preferred audio output could not be applied automatically."
+                            ? (task.resetToSystemDefault
+                                   ? "The audio output could not be returned to System Default."
+                                   : "Preferred audio output could not be applied automatically.")
                             : QString::fromStdString(task.error));
                     current.feedbackLabel->setStyleSheet(
                         "font-size: 12px; color: #E10600; border: none;");
@@ -835,7 +873,9 @@ void SeatsPage::maybeAutoRouteAudio(
 
             if (current.feedbackLabel) {
                 current.feedbackLabel->setText(
-                    "Preferred audio output applied automatically.");
+                    task.resetToSystemDefault
+                        ? "Audio output returned to System Default."
+                        : "Preferred audio output applied automatically.");
                 current.feedbackLabel->setStyleSheet(
                     "font-size: 12px; color: #B5B5B5; border: none;");
                 current.feedbackLabel->setVisible(true);
@@ -843,9 +883,12 @@ void SeatsPage::maybeAutoRouteAudio(
         });
 
     watcher->setFuture(QtConcurrent::run(
-        [hostControl, pid, creation, endpointUtf8]() mutable {
+        [hostControl, pid, creation, endpointUtf8, resetToSystemDefault]() mutable {
             SeatAudioTaskResult task;
-            task.status = hostControl->routeAudio(
+            task.resetToSystemDefault = resetToSystemDefault;
+            task.status = resetToSystemDefault
+                ? hostControl->resetAudio(pid, creation, &task.error)
+                : hostControl->routeAudio(
                 pid, creation, endpointUtf8, &task.error);
             return task;
         }));

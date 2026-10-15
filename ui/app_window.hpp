@@ -1,9 +1,11 @@
 #pragma once
 
+#include <QDialog>
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
 #include <QStackedWidget>
+#include <QPushButton>
 #include <memory>
 
 #include "ui/engine_poller.hpp"
@@ -37,6 +39,14 @@ private:
     QStackedWidget* m_workspaceStack{nullptr};
     QLabel* m_connectionLabel{nullptr};
     QLabel* m_statusLabel{nullptr};
+    QDialog* m_firstRunWizard{nullptr};
+    QLabel* m_firstRunSeat1Status{nullptr};
+    QLabel* m_firstRunSeat2Status{nullptr};
+    QLabel* m_firstRunGamesStatus{nullptr};
+    QLabel* m_firstRunAudioStatus{nullptr};
+    QPushButton* m_firstRunSeat1Button{nullptr};
+    QPushButton* m_firstRunSeat2Button{nullptr};
+    QPushButton* m_firstRunGamesButton{nullptr};
     bool m_firstRunWizardHandled{false};
 };
 

@@ -1101,6 +1101,9 @@ target_link_libraries(hydra_support_bundle PUBLIC
     hydra_session_metrics
 )
 target_link_libraries(HydraSeat PRIVATE hydra_support_bundle)
+# hydra_tests compiles the canonical UI sources as part of EngineUnitTests, so
+# Diagnostics support-bundle symbols must be linked there as well.
+target_link_libraries(hydra_tests PRIVATE hydra_support_bundle)
 
 add_library(hydra_privilege_broker STATIC
     src/privilege_broker.cpp

@@ -3,8 +3,11 @@
 #include "ui/ui_settings.hpp"
 
 #include <QByteArray>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QFrame>
 #include <QFutureWatcher>
 #include <QHBoxLayout>
@@ -12,6 +15,7 @@
 #include <QMessageBox>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <algorithm>
 #include <utility>
 
 namespace hydra::ui {
@@ -43,6 +47,22 @@ struct HostSnapshotTaskResult {
     std::optional<hydra::hostipc::HostSnapshot> snapshot;
     std::string error;
 };
+
+void clearDynamicLayout(QVBoxLayout* layout) {
+    if (!layout) return;
+    while (QLayoutItem* item = layout->takeAt(0)) {
+        if (item->widget()) item->widget()->deleteLater();
+        delete item;
+    }
+}
+
+QString providerLabel(const std::string& providerId) {
+    if (providerId == "steam") return QStringLiteral("Steam");
+    if (providerId == "custom") return QStringLiteral("Custom");
+    return providerId.empty()
+        ? QStringLiteral("Unknown")
+        : QString::fromUtf8(providerId.c_str());
+}
 
 } // namespace
 
@@ -148,8 +168,28 @@ ApplicationsPage::ApplicationsPage(
 
     layout->addWidget(launchFrame);
 
+    auto* runningTitle = new QLabel("RUNNING SEAT APPLICATIONS", this);
+    runningTitle->setStyleSheet(
+        "font-size: 12px; font-weight: bold; color: #777777; margin-top: 4px;");
+    layout->addWidget(runningTitle);
+    auto* runningContainer = new QWidget(this);
+    m_runningLayout = new QVBoxLayout(runningContainer);
+    m_runningLayout->setContentsMargins(0, 0, 0, 0);
+    m_runningLayout->setSpacing(8);
+    layout->addWidget(runningContainer);
+
+    auto* savedTitle = new QLabel("SAVED CUSTOM APPLICATIONS", this);
+    savedTitle->setStyleSheet(
+        "font-size: 12px; font-weight: bold; color: #777777; margin-top: 4px;");
+    layout->addWidget(savedTitle);
+    auto* savedContainer = new QWidget(this);
+    m_savedLayout = new QVBoxLayout(savedContainer);
+    m_savedLayout->setContentsMargins(0, 0, 0, 0);
+    m_savedLayout->setSpacing(8);
+    layout->addWidget(savedContainer);
+
     auto* listHeaderLayout = new QHBoxLayout();
-    auto* listTitle = new QLabel("OBSERVED APPLICATION SESSIONS", this);
+    auto* listTitle = new QLabel("AUDIO APPLICATION SESSIONS", this);
     listTitle->setStyleSheet(
         "font-size: 12px; font-weight: bold; color: #777777; "
         "margin-top: 4px;");
@@ -157,7 +197,7 @@ ApplicationsPage::ApplicationsPage(
     listHeaderLayout->addStretch();
     
     m_searchBox = new QLineEdit(this);
-    m_searchBox->setPlaceholderText("Search applications...");
+    m_searchBox->setPlaceholderText("Search audio sessions...");
     m_searchBox->setFixedWidth(200);
     m_searchBox->setStyleSheet("padding: 4px; background-color: #101010; color: #F5F5F5; border: 1px solid #333333; border-radius: 4px;");
     listHeaderLayout->addWidget(m_searchBox);
@@ -217,6 +257,8 @@ ApplicationsPage::ApplicationsPage(
     connect(m_searchBox, &QLineEdit::textChanged, this, [this](const QString&) { updateState(m_lastPayload); });
     connect(m_filterCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) { updateState(m_lastPayload); });
 
+    refreshSavedApplications();
+    refreshRunningApplications(m_lastPayload);
     refreshLaunchControls();
 }
 
@@ -306,6 +348,7 @@ void ApplicationsPage::onBrowseExecutable() {
             m_argumentsEdit ? m_argumentsEdit->text() : QString{},
             file.absolutePath(),
         });
+        refreshSavedApplications();
         emit applicationLibraryChanged();
     }
 }
@@ -376,6 +419,7 @@ void ApplicationsPage::onLaunchRequested() {
                 arguments,
                 workingDirectory,
             });
+            refreshSavedApplications();
             emit applicationLibraryChanged();
             setLaunchFeedback(
                 QString("Seat %1 launch accepted by hydra_host.").arg(seatId),
@@ -470,6 +514,193 @@ void ApplicationsPage::onStopRequested() {
         }));
 }
 
+
+void ApplicationsPage::refreshRunningApplications(
+    const EngineStatePayload& payload) {
+    clearDynamicLayout(m_runningLayout);
+    if (!m_runningLayout) return;
+
+    bool anyRunning = false;
+    if (payload.hostSnapshot) {
+        for (std::size_t index = 0;
+             index < payload.hostSnapshot->seats.size();
+             ++index) {
+            const auto& seat = payload.hostSnapshot->seats[index];
+            if (!seat.processOwned) continue;
+            anyRunning = true;
+
+            const hydra::hostipc::SeatRuntimeInfo* info = nullptr;
+            if (index < payload.seatRuntimeInfo.size() &&
+                payload.seatRuntimeInfo[index]) {
+                info = &*payload.seatRuntimeInfo[index];
+            }
+
+            auto* frame = new QFrame();
+            frame->setMaximumWidth(900);
+            frame->setStyleSheet(
+                "background-color: #151515; border-radius: 6px; "
+                "border: 1px solid #292929; padding: 10px 14px;");
+            auto* row = new QHBoxLayout(frame);
+            row->setContentsMargins(0, 0, 0, 0);
+
+            auto* infoLayout = new QVBoxLayout();
+            const QString title =
+                info && !info->titleUtf8.empty()
+                    ? QString::fromUtf8(info->titleUtf8.c_str())
+                    : QString("Seat %1 application").arg(seat.seatId);
+            auto* titleLabel = new QLabel(title, frame);
+            titleLabel->setStyleSheet(
+                "font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
+            infoLayout->addWidget(titleLabel);
+
+            const QString provider =
+                info ? providerLabel(info->providerIdUtf8)
+                     : QStringLiteral("Unknown");
+            auto* detailLabel = new QLabel(
+                QString("Seat %1 · %2 · PID %3")
+                    .arg(seat.seatId)
+                    .arg(provider)
+                    .arg(seat.processId),
+                frame);
+            detailLabel->setStyleSheet(
+                "font-size: 12px; color: #B5B5B5; border: none;");
+            infoLayout->addWidget(detailLabel);
+            row->addLayout(infoLayout, 1);
+
+            auto* running = new QLabel("● RUNNING", frame);
+            running->setStyleSheet(
+                "font-size: 12px; font-weight: bold; color: #E10600; border: none;");
+            row->addWidget(running);
+            m_runningLayout->addWidget(frame);
+        }
+    }
+
+    if (!anyRunning) {
+        auto* empty = new QLabel("No Seat application is currently running.");
+        empty->setStyleSheet("font-size: 12px; color: #777777;");
+        m_runningLayout->addWidget(empty);
+    }
+}
+
+void ApplicationsPage::refreshSavedApplications() {
+    clearDynamicLayout(m_savedLayout);
+    if (!m_savedLayout) return;
+
+    const auto entries = ApplicationLibrary::load();
+    if (entries.empty()) {
+        auto* empty = new QLabel(
+            "No custom applications saved yet. Browse to an .exe to add one.");
+        empty->setStyleSheet("font-size: 12px; color: #777777;");
+        m_savedLayout->addWidget(empty);
+        return;
+    }
+
+    for (const auto& entry : entries) {
+        auto* frame = new QFrame();
+        frame->setMaximumWidth(900);
+        frame->setStyleSheet(
+            "background-color: #151515; border-radius: 6px; "
+            "border: 1px solid #292929; padding: 10px 14px;");
+        auto* row = new QHBoxLayout(frame);
+        row->setContentsMargins(0, 0, 0, 0);
+
+        auto* infoLayout = new QVBoxLayout();
+        auto* title = new QLabel(entry.title, frame);
+        title->setStyleSheet(
+            "font-size: 14px; font-weight: bold; color: #F5F5F5; border: none;");
+        infoLayout->addWidget(title);
+        auto* path = new QLabel(entry.executablePath, frame);
+        path->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        path->setStyleSheet(
+            "font-size: 11px; color: #777777; border: none;");
+        infoLayout->addWidget(path);
+        row->addLayout(infoLayout, 1);
+
+        auto* edit = new QPushButton("Edit", frame);
+        edit->setStyleSheet(secondaryButtonStyle());
+        auto* remove = new QPushButton("Remove", frame);
+        remove->setStyleSheet(secondaryButtonStyle());
+        row->addWidget(edit);
+        row->addWidget(remove);
+
+        const QString executablePath = entry.executablePath;
+        connect(edit, &QPushButton::clicked, this, [this, executablePath]() {
+            editSavedApplication(executablePath);
+        });
+        connect(remove, &QPushButton::clicked, this, [this, executablePath]() {
+            removeSavedApplication(executablePath);
+        });
+
+        m_savedLayout->addWidget(frame);
+    }
+}
+
+void ApplicationsPage::editSavedApplication(const QString& executablePath) {
+    const auto entries = ApplicationLibrary::load();
+    const auto found = std::find_if(
+        entries.cbegin(),
+        entries.cend(),
+        [&](const ApplicationLaunchEntry& entry) {
+            return QFileInfo(entry.executablePath).absoluteFilePath().compare(
+                       QFileInfo(executablePath).absoluteFilePath(),
+                       Qt::CaseInsensitive) == 0;
+        });
+    if (found == entries.cend()) return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle("Edit saved application");
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout();
+
+    auto* titleEdit = new QLineEdit(found->title, &dialog);
+    auto* pathLabel = new QLabel(found->executablePath, &dialog);
+    pathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    pathLabel->setWordWrap(true);
+    auto* argumentsEdit = new QLineEdit(found->arguments, &dialog);
+    auto* workingDirectoryEdit =
+        new QLineEdit(found->workingDirectory, &dialog);
+
+    form->addRow("Name", titleEdit);
+    form->addRow("Executable", pathLabel);
+    form->addRow("Arguments", argumentsEdit);
+    form->addRow("Working directory", workingDirectoryEdit);
+    layout->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Save | QDialogButtonBox::Cancel,
+        &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    ApplicationLibrary::remember(ApplicationLaunchEntry{
+        titleEdit->text().trimmed(),
+        found->executablePath,
+        argumentsEdit->text(),
+        workingDirectoryEdit->text().trimmed(),
+    });
+    refreshSavedApplications();
+    emit applicationLibraryChanged();
+}
+
+void ApplicationsPage::removeSavedApplication(const QString& executablePath) {
+    const auto answer = QMessageBox::question(
+        this,
+        "Remove saved application",
+        QString("Remove this application from HydraSeat's saved list?\n\n%1")
+            .arg(executablePath),
+        QMessageBox::Yes | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes) return;
+
+    if (ApplicationLibrary::remove(executablePath)) {
+        refreshSavedApplications();
+        emit applicationLibraryChanged();
+    }
+}
+
 QString ApplicationsPage::getAssignedSeat(
     const std::optional<hydra::runtime::ProcessIdentity>& identity,
     const std::optional<hydra::hostipc::HostSnapshot>& hostSnapshot) {
@@ -487,6 +718,7 @@ QString ApplicationsPage::getAssignedSeat(
 
 void ApplicationsPage::updateState(const EngineStatePayload& payload) {
     m_lastPayload = payload;
+    refreshRunningApplications(payload);
     refreshLaunchControls();
 
     while (QLayoutItem* item = m_listLayout->takeAt(0)) {

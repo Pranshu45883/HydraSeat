@@ -26,6 +26,8 @@ private:
     void setupUi();
     void setupSidebar();
     void setupStatusbar();
+    void navigateToPage(int targetIndex);
+    void maybeShowFirstRunWizard(const EngineStatePayload& payload);
 
     std::shared_ptr<HostControlClient> m_hostControl;
     std::unique_ptr<EnginePoller> m_enginePoller;
@@ -35,6 +37,7 @@ private:
     QStackedWidget* m_workspaceStack{nullptr};
     QLabel* m_connectionLabel{nullptr};
     QLabel* m_statusLabel{nullptr};
+    bool m_firstRunWizardHandled{false};
 };
 
 } // namespace hydra::ui

@@ -9,11 +9,22 @@
 #include "ui/pages/hardware_page.hpp"
 #include "ui/pages/diagnostics_page.hpp"
 #include "ui/pages/settings_page.hpp"
+#include "ui/application_library.hpp"
 #include "ui/ui_settings.hpp"
 
-#include <QHBoxLayout>
-#include <QVBoxLayout>
+#include <QApplication>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QFrame>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QSettings>
+#include <QVBoxLayout>
 
 namespace hydra::ui {
 
@@ -134,6 +145,13 @@ void AppWindow::setupUi() {
         &SeatsPage::refreshApplications);
 
     connect(
+        dashboardPage, &DashboardPage::manageSeatsRequested,
+        this, [this]() { navigateToPage(1); });
+    connect(
+        dashboardPage, &DashboardPage::applicationsRequested,
+        this, [this]() { navigateToPage(2); });
+
+    connect(
         settingsPageNode,
         &SettingsPage::preferencesChanged,
         this,
@@ -150,6 +168,9 @@ void AppWindow::setupUi() {
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, audioPage, &AudioPage::updateState);
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, hardwarePage, &HardwarePage::updateState);
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, diagnosticsPage, &DiagnosticsPage::updateState);
+    connect(
+        m_enginePoller.get(), &EnginePoller::stateUpdated,
+        this, &AppWindow::maybeShowFirstRunWizard);
 
     mainLayout->addWidget(m_workspaceStack, 1);
 
@@ -167,6 +188,7 @@ void AppWindow::setupUi() {
                 m_connectionLabel->setText("Canonical host connected");
                 const bool subsystemDegraded =
                     payload.hardwareError ||
+                    payload.gameCatalogError ||
                     payload.controllerInventoryError ||
                     payload.audioEndpointError ||
                     payload.audioSessionError;
@@ -266,6 +288,151 @@ void AppWindow::onNavigationChanged(int index) {
     int targetIndex = item->data(Qt::UserRole).toInt(&ok);
     if (ok && targetIndex >= 0 && targetIndex < m_workspaceStack->count()) {
         m_workspaceStack->setCurrentIndex(targetIndex);
+    }
+}
+
+void AppWindow::navigateToPage(int targetIndex) {
+    if (!m_sidebar || !m_workspaceStack || targetIndex < 0 ||
+        targetIndex >= m_workspaceStack->count()) {
+        return;
+    }
+    for (int row = 0; row < m_sidebar->count(); ++row) {
+        auto* item = m_sidebar->item(row);
+        if (!item) continue;
+        bool ok = false;
+        const int itemTarget = item->data(Qt::UserRole).toInt(&ok);
+        if (ok && itemTarget == targetIndex) {
+            m_sidebar->setCurrentRow(row);
+            return;
+        }
+    }
+    m_workspaceStack->setCurrentIndex(targetIndex);
+}
+
+void AppWindow::maybeShowFirstRunWizard(const EngineStatePayload& payload) {
+    if (m_firstRunWizardHandled || !payload.hostConnected || payload.hardwareError) {
+        return;
+    }
+
+    QSettings settings(
+        QSettings::NativeFormat,
+        QSettings::UserScope,
+        QStringLiteral("HydraSeat"),
+        QStringLiteral("HydraSeat"));
+    if (settings.value(QStringLiteral("ui/firstRunGuideDismissed"), false).toBool()) {
+        m_firstRunWizardHandled = true;
+        return;
+    }
+
+    const auto configured = [&](std::size_t index) {
+        if (index >= payload.seatHardware.size() || !payload.seatHardware[index]) {
+            return false;
+        }
+        const auto& seat = *payload.seatHardware[index];
+        return !seat.displayIdUtf8.empty() && !seat.keyboardIdUtf8.empty() &&
+               !seat.mouseIdUtf8.empty();
+    };
+    const bool seat1Ready = configured(0);
+    const bool seat2Ready = configured(1);
+    const qsizetype savedApplications = ApplicationLibrary::load().size();
+    const std::size_t gameCount = payload.gameCatalog.games.size() +
+        static_cast<std::size_t>(savedApplications);
+
+    if (seat1Ready && seat2Ready && gameCount > 0u) {
+        settings.setValue(QStringLiteral("ui/firstRunGuideDismissed"), true);
+        settings.sync();
+        m_firstRunWizardHandled = true;
+        return;
+    }
+
+    m_firstRunWizardHandled = true;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Welcome to HydraSeat"));
+    dialog.setMinimumWidth(560);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setSpacing(14);
+
+    auto* heading = new QLabel(QStringLiteral("Finish your two-Seat setup"), &dialog);
+    heading->setStyleSheet(
+        "font-size: 22px; font-weight: bold; color: #F5F5F5;");
+    layout->addWidget(heading);
+
+    auto* intro = new QLabel(
+        QStringLiteral(
+            "HydraSeat is ready to guide the initial setup. Configure both physical Seats, "
+            "choose a detected or custom game, then launch from the Seats page."),
+        &dialog);
+    intro->setWordWrap(true);
+    intro->setStyleSheet("font-size: 13px; color: #B5B5B5;");
+    layout->addWidget(intro);
+
+    auto* checklist = new QGroupBox(QStringLiteral("Setup readiness"), &dialog);
+    auto* grid = new QGridLayout(checklist);
+    const auto addStatus = [&](int row, const QString& name, bool ready,
+                               const QString& readyText, const QString& missingText) {
+        auto* nameLabel = new QLabel(name, checklist);
+        auto* statusLabel = new QLabel(ready ? readyText : missingText, checklist);
+        statusLabel->setStyleSheet(
+            ready ? "font-weight: bold; color: #B5B5B5;"
+                  : "font-weight: bold; color: #E10600;");
+        grid->addWidget(nameLabel, row, 0);
+        grid->addWidget(statusLabel, row, 1);
+    };
+    addStatus(0, QStringLiteral("Seat 1 hardware"), seat1Ready,
+              QStringLiteral("Ready"), QStringLiteral("Needs setup"));
+    addStatus(1, QStringLiteral("Seat 2 hardware"), seat2Ready,
+              QStringLiteral("Ready"), QStringLiteral("Needs setup"));
+    addStatus(2, QStringLiteral("Games"), gameCount > 0u,
+              QStringLiteral("%1 detected/saved").arg(gameCount),
+              QStringLiteral("Add or detect a game"));
+    addStatus(3, QStringLiteral("Audio outputs"), !payload.audioEndpoints.empty(),
+              QStringLiteral("%1 available").arg(payload.audioEndpoints.size()),
+              QStringLiteral("Optional; none detected"));
+    layout->addWidget(checklist);
+
+    auto* hint = new QLabel(
+        QStringLiteral(
+            "Tip: on the Seats page you can identify duplicate keyboards by pressing a key "
+            "and duplicate mice by moving them. Preferred audio can also be saved per Seat."),
+        &dialog);
+    hint->setWordWrap(true);
+    hint->setStyleSheet("font-size: 12px; color: #777777;");
+    layout->addWidget(hint);
+
+    auto* actions = new QHBoxLayout();
+    auto* seatsButton = new QPushButton(QStringLiteral("Set up Seats"), &dialog);
+    auto* gamesButton = new QPushButton(QStringLiteral("Review Games"), &dialog);
+    auto* laterButton = new QPushButton(QStringLiteral("Set up later"), &dialog);
+    actions->addWidget(seatsButton);
+    actions->addWidget(gamesButton);
+    actions->addStretch();
+    actions->addWidget(laterButton);
+    layout->addLayout(actions);
+
+    enum class WizardAction { None, Seats, Games, Later };
+    WizardAction action = WizardAction::None;
+    connect(seatsButton, &QPushButton::clicked, &dialog, [&]() {
+        action = WizardAction::Seats;
+        dialog.accept();
+    });
+    connect(gamesButton, &QPushButton::clicked, &dialog, [&]() {
+        action = WizardAction::Games;
+        dialog.accept();
+    });
+    connect(laterButton, &QPushButton::clicked, &dialog, [&]() {
+        action = WizardAction::Later;
+        dialog.accept();
+    });
+
+    dialog.exec();
+    if (action == WizardAction::Later) {
+        settings.setValue(QStringLiteral("ui/firstRunGuideDismissed"), true);
+        settings.sync();
+    } else if (action == WizardAction::Seats) {
+        navigateToPage(1);
+    } else if (action == WizardAction::Games) {
+        navigateToPage(2);
     }
 }
 

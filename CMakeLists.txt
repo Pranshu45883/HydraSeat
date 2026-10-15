@@ -640,6 +640,9 @@ target_link_libraries(hydra_profile_provider_foundation PUBLIC hydra_profile_sch
 if(WIN32)
     target_link_libraries(hydra_profile_provider_foundation PUBLIC ${WIN32_LIBS})
 endif()
+# The canonical host now exposes the provider discovery catalog through its
+# bounded read-only IPC surface.
+target_link_libraries(hydra_host_transport PRIVATE hydra_profile_provider_foundation)
 
 add_executable(profile_schema_tests tests/test_profile_schema.cpp)
 target_link_libraries(profile_schema_tests PRIVATE hydra_profile_provider_foundation)
@@ -1097,6 +1100,7 @@ target_link_libraries(hydra_support_bundle PUBLIC
     hydra_crash_journal
     hydra_session_metrics
 )
+target_link_libraries(HydraSeat PRIVATE hydra_support_bundle)
 
 add_library(hydra_privilege_broker STATIC
     src/privilege_broker.cpp

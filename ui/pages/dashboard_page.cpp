@@ -3,6 +3,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFrame>
+#include <QPushButton>
 
 namespace hydra::ui {
 
@@ -29,6 +30,23 @@ DashboardPage::DashboardPage(QWidget* parent)
     auto* subtitle = new QLabel("System overview and current HydraSeat runtime state", this);
     subtitle->setStyleSheet("font-size: 14px; color: #B5B5B5; font-family: 'Segoe UI', sans-serif; margin-bottom: 8px;");
     layout->addWidget(subtitle);
+
+    auto* quickActions = new QHBoxLayout();
+    quickActions->setSpacing(8);
+    auto* manageSeats = new QPushButton("Manage Seats", this);
+    auto* applications = new QPushButton("Applications", this);
+    const char* quickStyle =
+        "QPushButton { background-color: #202020; color: #F5F5F5; "
+        "border: 1px solid #333333; border-radius: 6px; padding: 7px 14px; "
+        "font-weight: bold; } QPushButton:hover { background-color: #292929; }";
+    manageSeats->setStyleSheet(quickStyle);
+    applications->setStyleSheet(quickStyle);
+    connect(manageSeats, &QPushButton::clicked, this, &DashboardPage::manageSeatsRequested);
+    connect(applications, &QPushButton::clicked, this, &DashboardPage::applicationsRequested);
+    quickActions->addWidget(manageSeats);
+    quickActions->addWidget(applications);
+    quickActions->addStretch();
+    layout->addLayout(quickActions);
 
     auto* metricsLayout = new QGridLayout();
     metricsLayout->setSpacing(16);
@@ -129,6 +147,7 @@ void DashboardPage::setupSeats(QGridLayout* layout) {
 
 void DashboardPage::updateSeat(
     const hydra::hostipc::SeatSnapshot* snapshot,
+    const hydra::hostipc::SeatRuntimeInfo* runtimeInfo,
     QLabel* stateLbl,
     QLabel* appLbl,
     QLabel* audioLbl,
@@ -157,10 +176,24 @@ void DashboardPage::updateSeat(
         stateLbl->setStyleSheet("font-size: 13px; font-weight: bold; color: #B5B5B5; border: none;");
     }
 
-    appLbl->setText(
-        snapshot->processOwned
-            ? "Game assigned"
-            : "No application assigned");
+    if (snapshot->processOwned && runtimeInfo &&
+        !runtimeInfo->titleUtf8.empty()) {
+        const QString provider =
+            runtimeInfo->providerIdUtf8 == "steam"
+                ? QStringLiteral("Steam")
+                : runtimeInfo->providerIdUtf8 == "custom"
+                    ? QStringLiteral("Custom")
+                    : QString::fromUtf8(runtimeInfo->providerIdUtf8.c_str());
+        appLbl->setText(
+            QStringLiteral("%1 · %2")
+                .arg(QString::fromUtf8(runtimeInfo->titleUtf8.c_str()))
+                .arg(provider));
+    } else {
+        appLbl->setText(
+            snapshot->processOwned
+                ? "Game assigned"
+                : "No application assigned");
+    }
     // The host snapshot owns process identity but does not persist an "audio is
     // assigned" bit. Do not claim a route merely because a game is running.
     audioLbl->setText(
@@ -228,8 +261,16 @@ void DashboardPage::updateState(const EngineStatePayload& payload) {
             : QString("%1").arg(
                   payload.audioSessions.size(), 2, 10, QChar('0')));
 
-    updateSeat(seat1, m_seat1State, m_seat1App, m_seat1Audio, m_seat1Controller);
-    updateSeat(seat2, m_seat2State, m_seat2App, m_seat2Audio, m_seat2Controller);
+    const hydra::hostipc::SeatRuntimeInfo* seat1Runtime =
+        payload.seatRuntimeInfo[0] ? &*payload.seatRuntimeInfo[0] : nullptr;
+    const hydra::hostipc::SeatRuntimeInfo* seat2Runtime =
+        payload.seatRuntimeInfo[1] ? &*payload.seatRuntimeInfo[1] : nullptr;
+    updateSeat(
+        seat1, seat1Runtime,
+        m_seat1State, m_seat1App, m_seat1Audio, m_seat1Controller);
+    updateSeat(
+        seat2, seat2Runtime,
+        m_seat2State, m_seat2App, m_seat2Audio, m_seat2Controller);
 }
 
 } // namespace hydra::ui

@@ -118,6 +118,53 @@ void EnginePollerWorker::doPoll() {
             payload.hostConnected = true;
             payload.hostSnapshot = std::move(snapshot);
 
+
+            const auto now = std::chrono::steady_clock::now();
+            if (!m_gameCatalogInitialized || now >= m_nextGameCatalogRefresh) {
+                std::string catalogError;
+                const auto catalog = m_hostClient.getGameCatalog(
+                    hydra::hostipc::kDefaultHostPipeTimeoutMs,
+                    &catalogError);
+                if (catalog) {
+                    m_gameCatalogCache = *catalog;
+                    m_gameCatalogInitialized = true;
+                    m_nextGameCatalogRefresh = now + std::chrono::seconds(30);
+                } else {
+                    payload.gameCatalogError = true;
+                    m_nextGameCatalogRefresh = now + std::chrono::seconds(5);
+                    if (payload.hostError.empty() && !catalogError.empty()) {
+                        payload.hostError = std::move(catalogError);
+                    }
+                }
+            }
+            payload.gameCatalog = m_gameCatalogCache;
+
+            for (std::uint32_t seatId = 1;
+                 seatId <= hydra::hostipc::kHostSeatCount;
+                 ++seatId) {
+                std::string runtimeInfoError;
+                payload.seatRuntimeInfo[seatId - 1u] =
+                    m_hostClient.getSeatRuntimeInfo(
+                        seatId,
+                        hydra::hostipc::kDefaultHostPipeTimeoutMs,
+                        &runtimeInfoError);
+                if (!payload.seatRuntimeInfo[seatId - 1u] &&
+                    payload.hostError.empty() && !runtimeInfoError.empty()) {
+                    payload.hostError = std::move(runtimeInfoError);
+                }
+            }
+
+            std::string activityError;
+            payload.keyboardActivity = m_hostClient.getInputActivity(
+                hydra::hostipc::HardwareDeviceKind::Keyboard,
+                hydra::hostipc::kDefaultHostPipeTimeoutMs,
+                &activityError);
+            activityError.clear();
+            payload.mouseActivity = m_hostClient.getInputActivity(
+                hydra::hostipc::HardwareDeviceKind::Mouse,
+                hydra::hostipc::kDefaultHostPipeTimeoutMs,
+                &activityError);
+
             std::string inventoryError;
             const auto inventory = m_hostClient.getHardwareInventory(
                 hydra::hostipc::kDefaultHostPipeTimeoutMs,

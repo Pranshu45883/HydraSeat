@@ -50,6 +50,8 @@ private:
     QLabel* m_launchFeedback{nullptr};
     QLineEdit* m_searchBox{nullptr};
     QComboBox* m_filterCombo{nullptr};
+    QVBoxLayout* m_runningLayout{nullptr};
+    QVBoxLayout* m_savedLayout{nullptr};
     QVBoxLayout* m_listLayout{nullptr};
     bool m_operationInFlight{false};
 
@@ -59,6 +61,10 @@ private:
     const hydra::hostipc::SeatSnapshot* selectedSeatSnapshot() const noexcept;
     std::uint32_t selectedSeatId() const noexcept;
     void setLaunchFeedback(const QString& text, bool error);
+    void refreshRunningApplications(const EngineStatePayload& payload);
+    void refreshSavedApplications();
+    void editSavedApplication(const QString& executablePath);
+    void removeSavedApplication(const QString& executablePath);
 };
 
 } // namespace hydra::ui

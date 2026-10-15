@@ -14,6 +14,8 @@
 #include <QHBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <algorithm>
+
 namespace hydra::ui {
 namespace {
 
@@ -29,12 +31,32 @@ QString seatApplicationKey(std::uint32_t seatId) {
     return QStringLiteral("seats/%1/applicationPath").arg(seatId);
 }
 
+QString seatPreferredAudioKey(std::uint32_t seatId) {
+    return QStringLiteral("seats/%1/preferredAudioEndpoint").arg(seatId);
+}
+
+QString shortStableId(const QString& id) {
+    if (id.size() <= 10) return id;
+    return QStringLiteral("…%1").arg(id.right(9));
+}
+
+QString providerDisplayName(const std::string& providerId) {
+    if (providerId == "steam") return QStringLiteral("Steam");
+    if (providerId == "custom") return QStringLiteral("Custom");
+    return QString::fromUtf8(providerId.c_str());
+}
+
 QString browseApplicationSentinel() {
     return QStringLiteral("hydraseat://browse-application");
 }
 
 struct SeatHostTaskResult {
     std::optional<hydra::hostipc::HostSnapshot> snapshot;
+    std::string error;
+};
+
+struct SeatAudioTaskResult {
+    std::optional<hydra::hostipc::AudioMutationStatus> status;
     std::string error;
 };
 
@@ -112,6 +134,13 @@ QWidget* SeatsPage::buildSeat(std::uint32_t seatId, SeatWidgets& w) {
     headerLayout->addStretch();
     layout->addLayout(headerLayout);
 
+    w.runtimeLabel = new QLabel(frame);
+    w.runtimeLabel->setStyleSheet(
+        "font-size: 12px; color: #B5B5B5; border: none; margin-top: -8px;");
+    w.runtimeLabel->setWordWrap(true);
+    w.runtimeLabel->setVisible(false);
+    layout->addWidget(w.runtimeLabel);
+
     auto createRow = [&](const QString& labelText, QComboBox*& combo) {
         auto* l = new QLabel(labelText, frame);
         l->setStyleSheet("font-size: 11px; font-weight: bold; color: #777777; margin-bottom: 2px; border: none; text-transform: uppercase;");
@@ -124,7 +153,19 @@ QWidget* SeatsPage::buildSeat(std::uint32_t seatId, SeatWidgets& w) {
     createRow("APPLICATION", w.appCombo);
     createRow("DISPLAY", w.displayCombo);
     createRow("KEYBOARD", w.keyboardCombo);
+    w.keyboardIdentifyBtn = new QPushButton("Identify by key press", frame);
+    w.keyboardIdentifyBtn->setStyleSheet(
+        "QPushButton { background-color: #202020; color: #B5B5B5; border: 1px solid #333333; "
+        "border-radius: 4px; padding: 5px 10px; font-size: 12px; } "
+        "QPushButton:hover { background-color: #292929; color: #F5F5F5; }");
+    layout->addWidget(w.keyboardIdentifyBtn);
     createRow("MOUSE", w.mouseCombo);
+    w.mouseIdentifyBtn = new QPushButton("Identify by movement", frame);
+    w.mouseIdentifyBtn->setStyleSheet(
+        "QPushButton { background-color: #202020; color: #B5B5B5; border: 1px solid #333333; "
+        "border-radius: 4px; padding: 5px 10px; font-size: 12px; } "
+        "QPushButton:hover { background-color: #292929; color: #F5F5F5; }");
+    layout->addWidget(w.mouseIdentifyBtn);
     
     auto* ctrlLabel = new QLabel("CONTROLLER", frame);
     ctrlLabel->setStyleSheet("font-size: 11px; font-weight: bold; color: #777777; margin-bottom: 2px; border: none; text-transform: uppercase;");
@@ -179,6 +220,17 @@ QWidget* SeatsPage::buildSeat(std::uint32_t seatId, SeatWidgets& w) {
         qOverload<int>(&QComboBox::currentIndexChanged),
         this,
         [this, seatId](int) { onControllerSelectionChanged(seatId); });
+    connect(w.keyboardIdentifyBtn, &QPushButton::clicked, this, [this, seatId]() {
+        onIdentifyInput(seatId, true);
+    });
+    connect(w.mouseIdentifyBtn, &QPushButton::clicked, this, [this, seatId]() {
+        onIdentifyInput(seatId, false);
+    });
+    connect(
+        w.audioCombo,
+        qOverload<int>(&QComboBox::currentIndexChanged),
+        this,
+        [this, seatId](int) { onAudioSelectionChanged(seatId); });
     connect(w.configureBtn, &QPushButton::clicked, this, [this, seatId]() { onConfigureRequested(seatId); });
     connect(w.launchBtn, &QPushButton::clicked, this, [this, seatId]() { onLaunchRequested(seatId); });
     connect(w.stopBtn, &QPushButton::clicked, this, [this, seatId]() { onStopRequested(seatId); });
@@ -202,8 +254,12 @@ void SeatsPage::updateState(const EngineStatePayload& payload) {
     // application in the same refresh cycle.
     populateCombos(1, m_seat1);
     populateCombos(2, m_seat2);
+    applyInputIdentification(1, m_seat1);
+    applyInputIdentification(2, m_seat2);
     updateSeatData(1, m_seat1);
     updateSeatData(2, m_seat2);
+    maybeAutoRouteAudio(1, m_seat1);
+    maybeAutoRouteAudio(2, m_seat2);
 }
 
 void SeatsPage::refreshApplications() {
@@ -217,6 +273,22 @@ void SeatsPage::updateSeatData(std::uint32_t seatId, SeatWidgets& w) {
     const auto* snapshot = seatSnapshot(seatId);
     const bool hasApplication =
         w.appCombo && !w.appCombo->currentData().toString().isEmpty();
+    const hydra::hostipc::SeatRuntimeInfo* runtimeInfo = nullptr;
+    if (seatId > 0 && seatId <= m_lastPayload.seatRuntimeInfo.size() &&
+        m_lastPayload.seatRuntimeInfo[seatId - 1u]) {
+        runtimeInfo = &*m_lastPayload.seatRuntimeInfo[seatId - 1u];
+    }
+    if (w.runtimeLabel) {
+        const bool hasRuntimePresentation =
+            runtimeInfo && !runtimeInfo->titleUtf8.empty();
+        w.runtimeLabel->setVisible(hasRuntimePresentation);
+        if (hasRuntimePresentation) {
+            w.runtimeLabel->setText(
+                QStringLiteral("%1 · %2")
+                    .arg(QString::fromUtf8(runtimeInfo->titleUtf8.c_str()))
+                    .arg(providerDisplayName(runtimeInfo->providerIdUtf8)));
+        }
+    }
 
     if (!snapshot) {
         w.stateBadge->setText("Host unavailable");
@@ -226,6 +298,9 @@ void SeatsPage::updateSeatData(std::uint32_t seatId, SeatWidgets& w) {
         w.stopBtn->setDisabled(true);
         w.reconfigureBtn->setDisabled(true);
         if (w.appCombo) w.appCombo->setDisabled(true);
+        if (w.keyboardIdentifyBtn) w.keyboardIdentifyBtn->setDisabled(true);
+        if (w.mouseIdentifyBtn) w.mouseIdentifyBtn->setDisabled(true);
+        if (w.audioCombo) w.audioCombo->setDisabled(true);
         return;
     }
 
@@ -244,6 +319,9 @@ void SeatsPage::updateSeatData(std::uint32_t seatId, SeatWidgets& w) {
         if (w.mouseCombo) w.mouseCombo->setDisabled(true);
         if (w.ctrlPhysCombo) w.ctrlPhysCombo->setDisabled(true);
         if (w.ctrlSrcCombo) w.ctrlSrcCombo->setDisabled(true);
+        if (w.keyboardIdentifyBtn) w.keyboardIdentifyBtn->setDisabled(true);
+        if (w.mouseIdentifyBtn) w.mouseIdentifyBtn->setDisabled(true);
+        if (w.audioCombo) w.audioCombo->setDisabled(true);
         return;
     }
 
@@ -272,8 +350,17 @@ void SeatsPage::updateSeatData(std::uint32_t seatId, SeatWidgets& w) {
         if (w.mouseCombo) w.mouseCombo->setDisabled(true);
         if (w.ctrlPhysCombo) w.ctrlPhysCombo->setDisabled(true);
         if (w.ctrlSrcCombo) w.ctrlSrcCombo->setDisabled(true);
+        if (w.keyboardIdentifyBtn) w.keyboardIdentifyBtn->setDisabled(true);
+        if (w.mouseIdentifyBtn) w.mouseIdentifyBtn->setDisabled(true);
+        if (w.audioCombo) {
+            w.audioCombo->setDisabled(m_lastPayload.audioEndpointError);
+        }
         return;
     }
+
+    w.audioRouteAttemptPid = 0;
+    w.audioRouteAttemptCreation = 0;
+    w.audioRouteAttemptEndpoint.clear();
 
     const bool leaseOwnedElsewhere =
         snapshot->uiLeaseActive &&
@@ -317,6 +404,17 @@ void SeatsPage::updateSeatData(std::uint32_t seatId, SeatWidgets& w) {
                 : QString{});
     }
     if (w.ctrlSrcCombo) w.ctrlSrcCombo->setDisabled(true);
+    if (w.keyboardIdentifyBtn) {
+        w.keyboardIdentifyBtn->setDisabled(
+            leaseOwnedElsewhere || m_lastPayload.keyboards.empty());
+    }
+    if (w.mouseIdentifyBtn) {
+        w.mouseIdentifyBtn->setDisabled(
+            leaseOwnedElsewhere || m_lastPayload.mice.empty());
+    }
+    if (w.audioCombo) {
+        w.audioCombo->setDisabled(m_lastPayload.audioEndpointError);
+    }
 }
 
 void SeatsPage::populateCombos(
@@ -338,12 +436,36 @@ void SeatsPage::populateCombos(
         w.appCombo->clear();
         w.appCombo->addItem("-- Select application --", QString());
 
+        for (const auto& game : m_lastPayload.gameCatalog.games) {
+            const QString executable =
+                QString::fromUtf8(game.executablePathUtf8.c_str());
+            if (executable.isEmpty()) continue;
+            const QString title = QString::fromUtf8(game.titleUtf8.c_str());
+            w.appCombo->addItem(
+                QStringLiteral("%1 · Steam").arg(title), executable);
+            const int index = w.appCombo->count() - 1;
+            w.appCombo->setItemData(index, QString(), Qt::UserRole + 1);
+            w.appCombo->setItemData(
+                index,
+                QString::fromUtf8(game.workingDirectoryUtf8.c_str()),
+                Qt::UserRole + 2);
+            w.appCombo->setItemData(
+                index, QStringLiteral("steam"), Qt::UserRole + 3);
+            w.appCombo->setItemData(
+                index,
+                QStringLiteral("Detected from Steam. HydraSeat launches the validated local executable through the host-owned Seat path."),
+                Qt::ToolTipRole);
+        }
+
         for (const auto& app : applications) {
+            if (w.appCombo->findData(app.executablePath) >= 0) continue;
             w.appCombo->addItem(app.title, app.executablePath);
             const int index = w.appCombo->count() - 1;
             w.appCombo->setItemData(index, app.arguments, Qt::UserRole + 1);
             w.appCombo->setItemData(
                 index, app.workingDirectory, Qt::UserRole + 2);
+            w.appCombo->setItemData(
+                index, QStringLiteral("custom"), Qt::UserRole + 3);
         }
 
         // Preserve the existing combo layout while making Seat setup
@@ -401,7 +523,24 @@ void SeatsPage::populateCombos(
             for (const auto& device : devices) {
                 const QString id = QString::fromStdWString(device.id);
                 const QString name = QString::fromStdWString(device.name);
-                combo->addItem(name, id);
+                const auto duplicateCount = std::count_if(
+                    devices.cbegin(),
+                    devices.cend(),
+                    [&](const hydra::DeviceInfo& candidate) {
+                        return QString::fromStdWString(candidate.name)
+                                   .compare(name, Qt::CaseInsensitive) == 0;
+                    });
+                const QString visibleName =
+                    duplicateCount > 1
+                        ? QStringLiteral("%1 · %2")
+                              .arg(name)
+                              .arg(shortStableId(id))
+                        : name;
+                combo->addItem(visibleName, id);
+                combo->setItemData(
+                    combo->count() - 1,
+                    QStringLiteral("%1\n%2").arg(name).arg(id),
+                    Qt::ToolTipRole);
             }
 
             QString wanted = previous;
@@ -428,13 +567,31 @@ void SeatsPage::populateCombos(
         assignedMouse,
         "No confirmed mouse detected");
 
-    // Per-process audio routing only becomes meaningful after a Seat game has
-    // launched. Do not present this field as if it were already part of the
-    // persistent Seat hardware assignment.
+    const QString previousAudio = w.audioCombo->currentData().toString();
+    auto settings = settingsStore();
+    const QString persistedAudio =
+        settings.value(seatPreferredAudioKey(seatId)).toString();
+
     w.audioCombo->blockSignals(true);
     w.audioCombo->clear();
-    w.audioCombo->addItem("Use Audio page after launch");
-    w.audioCombo->setEnabled(false);
+    w.audioCombo->addItem("System Default (no override)", QString());
+    for (const auto& endpoint : m_lastPayload.audioEndpoints) {
+        w.audioCombo->addItem(
+            QString::fromStdWString(endpoint.friendlyName),
+            QString::fromStdWString(endpoint.endpointId));
+    }
+
+    QString wantedAudio = previousAudio;
+    if (wantedAudio.isEmpty()) wantedAudio = persistedAudio;
+    int audioIndex = w.audioCombo->findData(wantedAudio);
+    if (!wantedAudio.isEmpty() && audioIndex < 0) {
+        w.audioCombo->addItem(
+            "Previously selected output (disconnected)",
+            wantedAudio);
+        audioIndex = w.audioCombo->count() - 1;
+    }
+    w.audioCombo->setCurrentIndex(audioIndex >= 0 ? audioIndex : 0);
+    w.audioCombo->setEnabled(!m_lastPayload.audioEndpointError);
     w.audioCombo->blockSignals(false);
 
     const QString previousPhysical = w.ctrlPhysCombo->currentData().toString();
@@ -500,6 +657,198 @@ void SeatsPage::populateCombos(
 
     w.ctrlPhysCombo->blockSignals(false);
     w.ctrlSrcCombo->blockSignals(false);
+}
+
+
+void SeatsPage::onIdentifyInput(std::uint32_t seatId, bool keyboard) {
+    SeatWidgets& w = (seatId == 1u) ? m_seat1 : m_seat2;
+    auto* button = keyboard ? w.keyboardIdentifyBtn : w.mouseIdentifyBtn;
+    if (!button || !w.feedbackLabel) return;
+
+    const auto& activity =
+        keyboard ? m_lastPayload.keyboardActivity : m_lastPayload.mouseActivity;
+    auto& baseline =
+        keyboard ? w.keyboardIdentifyBaseline : w.mouseIdentifyBaseline;
+    baseline = activity ? activity->sequence : 0u;
+
+    button->setText("Waiting for input...");
+    w.feedbackLabel->setText(
+        keyboard
+            ? QString("Press any key on the keyboard for Seat %1.").arg(seatId)
+            : QString("Move or click the mouse for Seat %1.").arg(seatId));
+    w.feedbackLabel->setStyleSheet(
+        "font-size: 12px; color: #B5B5B5; border: none;");
+    w.feedbackLabel->setVisible(true);
+}
+
+void SeatsPage::applyInputIdentification(
+    std::uint32_t seatId,
+    SeatWidgets& w) {
+    const auto apply = [&](bool keyboard) {
+        auto& baseline =
+            keyboard ? w.keyboardIdentifyBaseline : w.mouseIdentifyBaseline;
+        if (!baseline) return;
+
+        const auto& activity =
+            keyboard ? m_lastPayload.keyboardActivity : m_lastPayload.mouseActivity;
+        if (!activity || activity->sequence == *baseline ||
+            activity->stableIdUtf8.empty()) {
+            return;
+        }
+
+        QComboBox* combo = keyboard ? w.keyboardCombo : w.mouseCombo;
+        QPushButton* button =
+            keyboard ? w.keyboardIdentifyBtn : w.mouseIdentifyBtn;
+        if (!combo || !button) return;
+
+        const QString stableId =
+            QString::fromUtf8(activity->stableIdUtf8.c_str());
+        const int index = combo->findData(stableId);
+        if (index < 0) {
+            // Keep the identification armed. The same host poll may confirm the
+            // device before the next inventory refresh exposes it.
+            return;
+        }
+
+        combo->setCurrentIndex(index);
+        baseline.reset();
+        button->setText(
+            keyboard ? "Identify by key press" : "Identify by movement");
+        if (w.feedbackLabel) {
+            w.feedbackLabel->setText(
+                QString("%1 identified for Seat %2: %3")
+                    .arg(keyboard ? "Keyboard" : "Mouse")
+                    .arg(seatId)
+                    .arg(combo->currentText()));
+            w.feedbackLabel->setStyleSheet(
+                "font-size: 12px; color: #B5B5B5; border: none;");
+            w.feedbackLabel->setVisible(true);
+        }
+    };
+
+    apply(true);
+    apply(false);
+}
+
+void SeatsPage::onAudioSelectionChanged(std::uint32_t seatId) {
+    SeatWidgets& w = (seatId == 1u) ? m_seat1 : m_seat2;
+    if (!w.audioCombo) return;
+
+    auto settings = settingsStore();
+    settings.setValue(
+        seatPreferredAudioKey(seatId),
+        w.audioCombo->currentData().toString());
+    settings.sync();
+
+    if (!w.audioRouteInFlight) {
+        w.audioRouteAttemptPid = 0;
+        w.audioRouteAttemptCreation = 0;
+        w.audioRouteAttemptEndpoint.clear();
+    }
+    maybeAutoRouteAudio(seatId, w);
+}
+
+void SeatsPage::maybeAutoRouteAudio(
+    std::uint32_t seatId,
+    SeatWidgets& w) {
+    const auto* snapshot = seatSnapshot(seatId);
+    if (!m_hostControl || !snapshot || !snapshot->processOwned ||
+        !w.audioCombo || m_lastPayload.audioEndpointError ||
+        m_lastPayload.audioSessionError || w.audioRouteInFlight) {
+        return;
+    }
+
+    auto settings = settingsStore();
+    const QString preferred =
+        settings.value(seatPreferredAudioKey(seatId)).toString();
+    if (preferred.isEmpty()) return;
+
+    const bool endpointAvailable = std::any_of(
+        m_lastPayload.audioEndpoints.cbegin(),
+        m_lastPayload.audioEndpoints.cend(),
+        [&](const hydra::windows::AudioRenderEndpoint& endpoint) {
+            return QString::fromStdWString(endpoint.endpointId) == preferred;
+        });
+    if (!endpointAvailable) return;
+
+    const auto session = std::find_if(
+        m_lastPayload.audioSessions.cbegin(),
+        m_lastPayload.audioSessions.cend(),
+        [&](const hydra::windows::AudioSessionObservation& candidate) {
+            return candidate.processIdentity &&
+                   candidate.processIdentity->pid == snapshot->processId &&
+                   candidate.processIdentity->creationIdentity ==
+                       snapshot->processCreationIdentity;
+        });
+    if (session == m_lastPayload.audioSessions.cend()) return;
+
+    if (QString::fromStdWString(session->endpointId) == preferred) {
+        w.audioRouteAttemptPid = snapshot->processId;
+        w.audioRouteAttemptCreation = snapshot->processCreationIdentity;
+        w.audioRouteAttemptEndpoint = preferred;
+        return;
+    }
+
+    if (w.audioRouteAttemptPid == snapshot->processId &&
+        w.audioRouteAttemptCreation == snapshot->processCreationIdentity &&
+        w.audioRouteAttemptEndpoint == preferred) {
+        return;
+    }
+
+    const auto hostControl = m_hostControl;
+    const auto pid = snapshot->processId;
+    const auto creation = snapshot->processCreationIdentity;
+    const std::string endpointUtf8 = toUtf8String(preferred);
+    w.audioRouteAttemptPid = pid;
+    w.audioRouteAttemptCreation = creation;
+    w.audioRouteAttemptEndpoint = preferred;
+    w.audioRouteInFlight = true;
+
+    auto* watcher = new QFutureWatcher<SeatAudioTaskResult>(this);
+    connect(
+        watcher,
+        &QFutureWatcher<SeatAudioTaskResult>::finished,
+        this,
+        [this, watcher, seatId]() {
+            const auto task = watcher->result();
+            watcher->deleteLater();
+
+            SeatWidgets& current =
+                (seatId == 1u) ? m_seat1 : m_seat2;
+            current.audioRouteInFlight = false;
+
+            const bool succeeded =
+                task.status &&
+                *task.status == hydra::hostipc::AudioMutationStatus::Success;
+            if (!succeeded) {
+                if (current.feedbackLabel) {
+                    current.feedbackLabel->setText(
+                        task.error.empty()
+                            ? "Preferred audio output could not be applied automatically."
+                            : QString::fromStdString(task.error));
+                    current.feedbackLabel->setStyleSheet(
+                        "font-size: 12px; color: #E10600; border: none;");
+                    current.feedbackLabel->setVisible(true);
+                }
+                return;
+            }
+
+            if (current.feedbackLabel) {
+                current.feedbackLabel->setText(
+                    "Preferred audio output applied automatically.");
+                current.feedbackLabel->setStyleSheet(
+                    "font-size: 12px; color: #B5B5B5; border: none;");
+                current.feedbackLabel->setVisible(true);
+            }
+        });
+
+    watcher->setFuture(QtConcurrent::run(
+        [hostControl, pid, creation, endpointUtf8]() mutable {
+            SeatAudioTaskResult task;
+            task.status = hostControl->routeAudio(
+                pid, creation, endpointUtf8, &task.error);
+            return task;
+        }));
 }
 
 void SeatsPage::onControllerSelectionChanged(std::uint32_t seatId) {

@@ -24,6 +24,9 @@ constexpr std::size_t kHostProtocolMaxLaunchArgumentsBytes = 16384u;
 constexpr std::size_t kHostProtocolMaxHardwareDeviceIdBytes = 4096u;
 constexpr std::size_t kHostProtocolMaxHardwareDeviceNameBytes = 1024u;
 constexpr std::size_t kHostProtocolMaxHardwareDevices = 64u;
+constexpr std::size_t kHostProtocolMaxProviderIdBytes = 64u;
+constexpr std::size_t kHostProtocolMaxProviderAppIdBytes = 128u;
+constexpr std::size_t kHostProtocolMaxGameCatalogEntries = 128u;
 constexpr std::size_t kHostSeatCount = 2u;
 
 enum class MessageType : std::uint16_t {
@@ -54,6 +57,12 @@ enum class MessageType : std::uint16_t {
     SeatHardware = 25,
     AssignSeatHardware = 26,
     AssignSeatHardwareResult = 27,
+    GetGameCatalog = 28,
+    GameCatalog = 29,
+    GetSeatRuntimeInfo = 30,
+    SeatRuntimeInfo = 31,
+    GetInputActivity = 32,
+    InputActivity = 33,
 };
 
 enum class ClientRole : std::uint8_t {
@@ -171,6 +180,44 @@ struct ControllerPairRequest {
     bool operator==(const ControllerPairRequest&) const = default;
 };
 
+struct GameCatalogEntry {
+    std::string providerIdUtf8;
+    std::string providerAppIdUtf8;
+    std::string titleUtf8;
+    std::string executablePathUtf8;
+    std::string workingDirectoryUtf8;
+
+    bool operator==(const GameCatalogEntry&) const = default;
+};
+
+struct GameCatalog {
+    std::vector<GameCatalogEntry> games;
+
+    bool operator==(const GameCatalog&) const = default;
+};
+
+struct SeatRuntimeInfo {
+    std::uint32_t seatId{0};
+    std::string titleUtf8;
+    std::string providerIdUtf8;
+
+    bool operator==(const SeatRuntimeInfo&) const = default;
+};
+
+struct InputActivityRequest {
+    HardwareDeviceKind kind{HardwareDeviceKind::Keyboard};
+
+    bool operator==(const InputActivityRequest&) const = default;
+};
+
+struct InputActivitySnapshot {
+    HardwareDeviceKind kind{HardwareDeviceKind::Keyboard};
+    std::uint64_t sequence{0};
+    std::string stableIdUtf8;
+
+    bool operator==(const InputActivitySnapshot&) const = default;
+};
+
 struct LaunchGameRequest {
     std::uint32_t seatId{0};
     std::string titleUtf8;
@@ -245,6 +292,24 @@ std::optional<SeatHardwareAssignment> decodeSeatHardwareAssignment(
 std::vector<std::byte> encodeControllerPairRequest(
     const ControllerPairRequest& request);
 std::optional<ControllerPairRequest> decodeControllerPairRequest(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeGameCatalog(const GameCatalog& catalog);
+std::optional<GameCatalog> decodeGameCatalog(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeSeatRuntimeInfo(const SeatRuntimeInfo& info);
+std::optional<SeatRuntimeInfo> decodeSeatRuntimeInfo(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeInputActivityRequest(
+    const InputActivityRequest& request);
+std::optional<InputActivityRequest> decodeInputActivityRequest(
+    std::span<const std::byte> payload);
+
+std::vector<std::byte> encodeInputActivitySnapshot(
+    const InputActivitySnapshot& snapshot);
+std::optional<InputActivitySnapshot> decodeInputActivitySnapshot(
     std::span<const std::byte> payload);
 
 std::vector<std::byte> encodeLaunchGameRequest(

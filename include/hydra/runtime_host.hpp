@@ -39,6 +39,14 @@ public:
     void observePhysicalInput(
         DeviceType type,
         const std::wstring& devicePath);
+    std::optional<hostipc::InputActivitySnapshot> inputActivity(
+        hostipc::HardwareDeviceKind kind) const;
+    bool setSeatGamePresentation(
+        std::uint32_t seatId,
+        std::string titleUtf8,
+        std::string providerIdUtf8) noexcept;
+    std::optional<hostipc::SeatRuntimeInfo> seatRuntimeInfo(
+        std::uint32_t seatId) const noexcept;
     std::optional<SeatHardwareConfiguration> seatHardwareConfiguration(
         std::uint32_t seatId) const;
     bool configureSeatHardware(
@@ -96,6 +104,15 @@ private:
     HardwareDetector hardwareDetector_;
     std::unordered_set<std::wstring> confirmedKeyboardIds_;
     std::unordered_set<std::wstring> confirmedMouseIds_;
+    struct ObservedInputActivity {
+        std::uint64_t sequence{0};
+        std::wstring stableId;
+    };
+    ObservedInputActivity keyboardActivity_;
+    ObservedInputActivity mouseActivity_;
+    std::uint64_t nextInputActivitySequence_{1};
+    std::array<std::optional<hostipc::SeatRuntimeInfo>, hostipc::kHostSeatCount>
+        seatRuntimeInfo_{};
     SeatHardwareConfigurations hardwareConfigurations_{{
         SeatHardwareConfiguration{1},
         SeatHardwareConfiguration{2},

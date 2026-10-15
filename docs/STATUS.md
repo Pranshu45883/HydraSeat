@@ -1,6 +1,6 @@
 # HydraSeat Current Status
 
-Snapshot date: **2026-10-06**
+Snapshot date: **2026-10-15**
 
 This is a dated engineering snapshot of the canonical HydraSeat integration. It distinguishes implemented/automated evidence from physical or real-game acceptance evidence.
 
@@ -36,6 +36,9 @@ Implemented integration includes:
 - host-owned Windows audio routing integration;
 - installer bootstrap/signing contract plus local compatibility evidence/runner and requirement-authority tooling activated in the build graph;
 - Pranshu's Qt UI wired to canonical host IPC for stable hardware assignment, explicit XInput pairing, and per-Seat launch/stop without changing the established page/layout design;
+- host-owned read-only Steam library discovery surfaced through bounded IPC into the Seat application picker, with conservative executable-candidate preference and custom executable fallback;
+- first-run two-Seat guidance, physical keyboard/mouse identify-by-activity controls, saved custom application edit/remove, per-Seat preferred audio routing, and actual running title/provider presentation;
+- privacy-redacted support-bundle preview/export available from Diagnostics while preserving the existing support schema and approval boundary;
 - x64 Gate-C external session/bridge activation integrated into the real game launch path;
 - MinGW release binaries linked without external MinGW runtime DLL dependencies.
 
@@ -129,7 +132,10 @@ The UI/UX convergence is required to preserve the host authority boundary:
 - audio route/reset is submitted as a host command;
 - a game-active Seat may independently acquire/release a UI configuration lease;
 - the UI must never deactivate a game merely to enter configuration mode;
-- another control client's UI lease is displayed as busy rather than impersonated or released.
+- another control client's UI lease is displayed as busy rather than impersonated or released;
+- game discovery, Seat runtime presentation, and keyboard/mouse activity identification are read-only host IPC observations;
+- preferred audio is stored per Seat in the UI and applied only after the exact host-owned process identity becomes observable;
+- Steam discovery does not move launch authority into the UI: the canonical host still owns process creation, Job ownership, input routing, and stop authority.
 
 ## Still pending physical/manual evidence
 

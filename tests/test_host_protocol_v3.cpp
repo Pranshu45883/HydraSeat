@@ -162,6 +162,60 @@ int main() {
     invalidPair.persistentControllerId = "has space";
     assert(encodeControllerPairRequest(invalidPair).empty());
 
+    const GameCatalog gameCatalog{{
+        {"steam", "413150", "Stardew Valley",
+         "C:/Games/Stardew Valley/Stardew Valley.exe",
+         "C:/Games/Stardew Valley"},
+        {"steam", "292030", "The Witcher 3",
+         "D:/SteamLibrary/steamapps/common/The Witcher 3/bin/x64/witcher3.exe",
+         "D:/SteamLibrary/steamapps/common/The Witcher 3"},
+    }};
+    const auto catalogBytes = encodeGameCatalog(gameCatalog);
+    assert(!catalogBytes.empty());
+    assert(decodeGameCatalog(catalogBytes) == gameCatalog);
+
+    auto oversizedCatalog = gameCatalog;
+    oversizedCatalog.games.resize(kHostProtocolMaxGameCatalogEntries + 1);
+    assert(encodeGameCatalog(oversizedCatalog).empty());
+
+    auto invalidCatalog = gameCatalog;
+    invalidCatalog.games[0].titleUtf8 = std::string("\xC0\xAF", 2);
+    assert(encodeGameCatalog(invalidCatalog).empty());
+
+    const SeatRuntimeInfo runtimeInfo{2, "Stardew Valley", "steam"};
+    const auto runtimeInfoBytes = encodeSeatRuntimeInfo(runtimeInfo);
+    assert(!runtimeInfoBytes.empty());
+    assert(decodeSeatRuntimeInfo(runtimeInfoBytes) == runtimeInfo);
+
+    const SeatRuntimeInfo emptyRuntimeInfo{1, {}, {}};
+    const auto emptyRuntimeInfoBytes = encodeSeatRuntimeInfo(emptyRuntimeInfo);
+    assert(!emptyRuntimeInfoBytes.empty());
+    assert(decodeSeatRuntimeInfo(emptyRuntimeInfoBytes) == emptyRuntimeInfo);
+
+    const InputActivityRequest keyboardActivityRequest{
+        HardwareDeviceKind::Keyboard};
+    const auto keyboardActivityRequestBytes =
+        encodeInputActivityRequest(keyboardActivityRequest);
+    assert(decodeInputActivityRequest(keyboardActivityRequestBytes) ==
+           keyboardActivityRequest);
+    assert(encodeInputActivityRequest(
+               InputActivityRequest{HardwareDeviceKind::Display}).empty());
+
+    const InputActivitySnapshot idleKeyboard{
+        HardwareDeviceKind::Keyboard, 0, {}};
+    const auto idleKeyboardBytes = encodeInputActivitySnapshot(idleKeyboard);
+    assert(!idleKeyboardBytes.empty());
+    assert(decodeInputActivitySnapshot(idleKeyboardBytes) == idleKeyboard);
+
+    const InputActivitySnapshot activeMouse{
+        HardwareDeviceKind::Mouse, 7, "mouse:stable-a"};
+    const auto activeMouseBytes = encodeInputActivitySnapshot(activeMouse);
+    assert(!activeMouseBytes.empty());
+    assert(decodeInputActivitySnapshot(activeMouseBytes) == activeMouse);
+    assert(encodeInputActivitySnapshot(
+               InputActivitySnapshot{
+                   HardwareDeviceKind::Mouse, 0, "mouse:invalid"}).empty());
+
     const LaunchGameRequest launchRequest{
         1,
         "Controlled target",
@@ -238,6 +292,9 @@ int main() {
     assert(!isMutatingRequest(MessageType::GetSnapshot));
     assert(!isMutatingRequest(MessageType::GetHardwareInventory));
     assert(!isMutatingRequest(MessageType::GetSeatHardware));
+    assert(!isMutatingRequest(MessageType::GetGameCatalog));
+    assert(!isMutatingRequest(MessageType::GetSeatRuntimeInfo));
+    assert(!isMutatingRequest(MessageType::GetInputActivity));
 
     assert(responseTypeFor(MessageType::Hello) == MessageType::HelloAck);
     assert(responseTypeFor(MessageType::GetSnapshot) == MessageType::Snapshot);
@@ -262,6 +319,12 @@ int main() {
            MessageType::SeatHardware);
     assert(responseTypeFor(MessageType::AssignSeatHardware) ==
            MessageType::AssignSeatHardwareResult);
+    assert(responseTypeFor(MessageType::GetGameCatalog) ==
+           MessageType::GameCatalog);
+    assert(responseTypeFor(MessageType::GetSeatRuntimeInfo) ==
+           MessageType::SeatRuntimeInfo);
+    assert(responseTypeFor(MessageType::GetInputActivity) ==
+           MessageType::InputActivity);
     assert(responseTypeFor(MessageType::Snapshot) == MessageType::Error);
 
     return 0;

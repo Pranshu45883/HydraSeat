@@ -17,6 +17,10 @@ public:
 public slots:
     void updateState(const EngineStatePayload& payload);
 
+signals:
+    void manageSeatsRequested();
+    void applicationsRequested();
+
 private:
     QLabel* m_valSeats{nullptr};
     QLabel* m_valActive{nullptr};
@@ -39,6 +43,7 @@ private:
     void setupSeats(QGridLayout* layout);
     void updateSeat(
         const hydra::hostipc::SeatSnapshot* snapshot,
+        const hydra::hostipc::SeatRuntimeInfo* runtimeInfo,
         QLabel* stateLbl,
         QLabel* appLbl,
         QLabel* audioLbl,

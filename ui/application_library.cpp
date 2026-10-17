@@ -117,4 +117,18 @@ void ApplicationLibrary::remember(const ApplicationLaunchEntry& rawEntry) {
     saveEntries(entries);
 }
 
+bool ApplicationLibrary::remove(const QString& executablePath) {
+    const auto key = canonicalKey(executablePath);
+    auto entries = load();
+    const auto oldSize = entries.size();
+    for (qsizetype index = entries.size(); index-- > 0;) {
+        if (canonicalKey(entries[index].executablePath) == key) {
+            entries.removeAt(index);
+        }
+    }
+    if (entries.size() == oldSize) return false;
+    saveEntries(entries);
+    return true;
+}
+
 } // namespace hydra::ui

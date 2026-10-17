@@ -177,10 +177,6 @@ SettingsPage::SettingsPage(QWidget* parent)
             });
         });
 
-    addSectionTitle("APPEARANCE");
-    addSetting("Theme (Dark)", "Dark", false, {});
-    addSetting("Interface scaling (100%)", "100%", false, {});
-
     addSectionTitle("BEHAVIOR");
     m_refreshIntervalButton = addSetting(
         "Refresh interval",
@@ -193,10 +189,6 @@ SettingsPage::SettingsPage(QWidget* parent)
                 savePreferences();
             });
         });
-    addSetting("Notifications", "Off", false, {});
-
-    addSectionTitle("AUDIO");
-    addSetting("Default audio behavior", "System", false, {});
 
     layout->addStretch();
     scrollArea->setWidget(container);

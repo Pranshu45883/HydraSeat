@@ -27,6 +27,7 @@ int main(int argc, char** argv) {
     assert(activation.valid());
     const ProcessIdentity process{4321, 987654321};
     assert(host.publishProcess(activation, process));
+    assert(host.setSeatGamePresentation(1, "Existing Seat game", "custom"));
 
     HostPipeServer server(host);
     bool serverResult = false;
@@ -63,6 +64,27 @@ int main(int argc, char** argv) {
     Sleep(750);
     const auto observed = observer.getSnapshot(5000, &observerError);
     assert(observed.has_value());
+
+    const auto observedRuntime = observer.getSeatRuntimeInfo(
+        1, 5000, &observerError);
+    assert(observedRuntime.has_value());
+    assert(observedRuntime->titleUtf8 == "Existing Seat game");
+    assert(observedRuntime->providerIdUtf8 == "custom");
+
+    const auto idleKeyboard = observer.getInputActivity(
+        HardwareDeviceKind::Keyboard, 5000, &observerError);
+    assert(idleKeyboard.has_value());
+    assert(idleKeyboard->sequence == 0);
+    assert(idleKeyboard->stableIdUtf8.empty());
+
+    const auto gameCatalog = observer.getGameCatalog(10000, &observerError);
+    assert(gameCatalog.has_value());
+    for (const auto& game : gameCatalog->games) {
+        assert(game.providerIdUtf8 == "steam");
+        assert(!game.titleUtf8.empty());
+        assert(!game.executablePathUtf8.empty());
+    }
+
     assert(observer.ping(0xA11CEu, 5000, &observerError));
     assert(client.ping(0xC0117u, 5000, &clientError));
 
@@ -117,11 +139,22 @@ int main(int argc, char** argv) {
     assert(snapshot->seats[1].processCreationIdentity != 0);
     assert(WaitForSingleObject(readyEvent, 5000) == WAIT_OBJECT_0);
 
+    const auto launchedRuntime = observer.getSeatRuntimeInfo(
+        2, 5000, &observerError);
+    assert(launchedRuntime.has_value());
+    assert(launchedRuntime->titleUtf8 == "Host launch E2E");
+    assert(launchedRuntime->providerIdUtf8 == "custom");
+
     snapshot = client.stopGame(2, 10000, &clientError);
     assert(snapshot.has_value());
     assert(snapshot->seats[1].uiLeaseActive);
     assert(!snapshot->seats[1].gameLeaseActive);
     assert(!snapshot->seats[1].processOwned);
+    const auto stoppedRuntime = observer.getSeatRuntimeInfo(
+        2, 5000, &observerError);
+    assert(stoppedRuntime.has_value());
+    assert(stoppedRuntime->titleUtf8.empty());
+    assert(stoppedRuntime->providerIdUtf8.empty());
     CloseHandle(readyEvent);
 
     assert(client.ping(0x12345678u, 5000, &clientError));

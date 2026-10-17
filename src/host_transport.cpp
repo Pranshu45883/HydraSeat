@@ -2,10 +2,14 @@
 
 #include "hydra/game_launcher.hpp"
 #include "hydra/input_router.hpp"
+#include "hydra/provider_adapter.hpp"
+#include "hydra/steam_provider.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -182,6 +186,115 @@ std::optional<runtime::SeatHardwareConfiguration> toRuntimeSeatHardware(
     };
 }
 
+
+std::optional<GameCatalog> discoverSteamGameCatalog(std::string* error = nullptr) {
+    provider::steam::SteamProviderAdapter steam(
+        provider::steam::makeNativeSteamMetadataSource());
+    const auto refreshed = steam.refresh();
+    if (refreshed.result == provider::ProviderResult::ProviderAbsent) {
+        return GameCatalog{};
+    }
+    if (!refreshed.succeeded()) {
+        if (error) {
+            *error = refreshed.message.empty()
+                ? "Steam metadata discovery failed"
+                : refreshed.message;
+        }
+        return std::nullopt;
+    }
+
+    std::vector<catalog::GameCatalogCandidate> candidates;
+    const auto discovery = provider::discoverInstalledGames(steam, candidates);
+    if (!discovery.succeeded()) {
+        if (error) {
+            *error = discovery.message.empty()
+                ? "Steam installed-game discovery failed"
+                : discovery.message;
+        }
+        return std::nullopt;
+    }
+
+    GameCatalog catalog;
+    catalog.games.reserve((std::min)(
+        candidates.size(),
+        static_cast<std::size_t>(kHostProtocolMaxGameCatalogEntries)));
+    for (const auto& candidate : candidates) {
+        if (catalog.games.size() >= kHostProtocolMaxGameCatalogEntries) break;
+        if (candidate.providerId != "steam" ||
+            candidate.executableCandidates.empty()) {
+            continue;
+        }
+
+        const auto title = wideToUtf8(candidate.title);
+        const auto executable = wideToUtf8(candidate.executableCandidates.front());
+        const auto workingDirectory = wideToUtf8(candidate.installRoot);
+        if (!title || title->empty() || !executable || executable->empty() ||
+            !workingDirectory) {
+            continue;
+        }
+
+        GameCatalogEntry entry;
+        entry.providerIdUtf8 = "steam";
+        entry.providerAppIdUtf8 =
+            candidate.providerAppId.value_or(std::string{});
+        entry.titleUtf8 = *title;
+        entry.executablePathUtf8 = *executable;
+        entry.workingDirectoryUtf8 = *workingDirectory;
+        catalog.games.push_back(std::move(entry));
+    }
+
+    std::sort(
+        catalog.games.begin(),
+        catalog.games.end(),
+        [](const GameCatalogEntry& left, const GameCatalogEntry& right) {
+            if (left.titleUtf8 != right.titleUtf8) {
+                return left.titleUtf8 < right.titleUtf8;
+            }
+            return left.executablePathUtf8 < right.executablePathUtf8;
+        });
+    return catalog;
+}
+
+bool equivalentExecutablePath(
+    std::string_view leftUtf8,
+    std::string_view rightUtf8) {
+#if defined(_WIN32)
+    const auto leftWide = utf8ToWide(leftUtf8);
+    const auto rightWide = utf8ToWide(rightUtf8);
+    if (!leftWide || !rightWide) return false;
+
+    const auto normalize = [](const std::wstring& value) {
+        std::wstring normalized =
+            std::filesystem::path(value).lexically_normal().native();
+        std::replace(normalized.begin(), normalized.end(), L'/', L'\\');
+        while (normalized.size() > 3u && normalized.back() == L'\\') {
+            normalized.pop_back();
+        }
+        return normalized;
+    };
+    const auto left = normalize(*leftWide);
+    const auto right = normalize(*rightWide);
+    return _wcsicmp(left.c_str(), right.c_str()) == 0;
+#else
+    return leftUtf8 == rightUtf8;
+#endif
+}
+
+const GameCatalogEntry* steamGameForExecutable(
+    const GameCatalog& catalog,
+    std::string_view executablePathUtf8) {
+    const auto found = std::find_if(
+        catalog.games.cbegin(),
+        catalog.games.cend(),
+        [&](const GameCatalogEntry& entry) {
+            return entry.providerIdUtf8 == "steam" &&
+                   equivalentExecutablePath(
+                       entry.executablePathUtf8,
+                       executablePathUtf8);
+        });
+    return found == catalog.games.cend() ? nullptr : &*found;
+}
+
 } // namespace
 
 HostConnectionSession::HostConnectionSession(
@@ -348,6 +461,93 @@ Frame HostConnectionSession::handle(const Frame& request) {
         response.correlationId = request.correlationId;
         response.payload =
             encodeSeatHardwareAssignment(*protocolConfiguration);
+        return response;
+    }
+
+
+    case MessageType::GetGameCatalog: {
+        if (!request.payload.empty()) {
+            return error(
+                request.correlationId,
+                ErrorCode::Malformed,
+                "game catalog request payload must be empty");
+        }
+        std::string discoveryError;
+        const auto catalog = discoverSteamGameCatalog(&discoveryError);
+        if (!catalog) {
+            return error(
+                request.correlationId,
+                ErrorCode::InternalError,
+                discoveryError.empty()
+                    ? "installed-game discovery failed"
+                    : discoveryError);
+        }
+        Frame response;
+        response.type = MessageType::GameCatalog;
+        response.correlationId = request.correlationId;
+        response.payload = encodeGameCatalog(*catalog);
+        if (response.payload.empty() && !catalog->games.empty()) {
+            return error(
+                request.correlationId,
+                ErrorCode::InternalError,
+                "game catalog exceeded protocol bounds");
+        }
+        return response;
+    }
+
+    case MessageType::GetSeatRuntimeInfo: {
+        const auto seatRequest = decodeSeatRequest(request.payload);
+        if (!seatRequest) {
+            return error(
+                request.correlationId,
+                ErrorCode::Malformed,
+                "invalid Seat runtime-info query payload");
+        }
+        const auto info = host_.seatRuntimeInfo(seatRequest->seatId);
+        if (!info) {
+            return error(
+                request.correlationId,
+                ErrorCode::InvalidState,
+                "Seat runtime presentation is unavailable");
+        }
+        Frame response;
+        response.type = MessageType::SeatRuntimeInfo;
+        response.correlationId = request.correlationId;
+        response.payload = encodeSeatRuntimeInfo(*info);
+        if (response.payload.empty()) {
+            return error(
+                request.correlationId,
+                ErrorCode::InternalError,
+                "Seat runtime presentation could not be encoded");
+        }
+        return response;
+    }
+
+    case MessageType::GetInputActivity: {
+        const auto activityRequest = decodeInputActivityRequest(request.payload);
+        if (!activityRequest) {
+            return error(
+                request.correlationId,
+                ErrorCode::Malformed,
+                "invalid input-activity query payload");
+        }
+        const auto activity = host_.inputActivity(activityRequest->kind);
+        if (!activity) {
+            return error(
+                request.correlationId,
+                ErrorCode::InvalidState,
+                "input-activity snapshot is unavailable");
+        }
+        Frame response;
+        response.type = MessageType::InputActivity;
+        response.correlationId = request.correlationId;
+        response.payload = encodeInputActivitySnapshot(*activity);
+        if (response.payload.empty()) {
+            return error(
+                request.correlationId,
+                ErrorCode::InternalError,
+                "input-activity snapshot could not be encoded");
+        }
         return response;
     }
 
@@ -604,10 +804,32 @@ Frame HostConnectionSession::handle(const Frame& request) {
                 "host game launcher is unavailable");
         }
 #if defined(_WIN32)
-        const auto title = utf8ToWide(launch->titleUtf8);
-        const auto executable = utf8ToWide(launch->executablePathUtf8);
+        // Provider identity is resolved again by the canonical host. The UI may
+        // request a path from its cached catalog, but it cannot promote an
+        // arbitrary executable to a Steam game. When the path matches a current
+        // host-owned discovery record, use the canonical discovered title/path.
+        std::string launchTitleUtf8 = launch->titleUtf8;
+        std::string launchExecutableUtf8 = launch->executablePathUtf8;
+        std::string launchWorkingDirectoryUtf8 = launch->workingDirectoryUtf8;
+        std::string providerId = "custom";
+        if (const auto catalog = discoverSteamGameCatalog()) {
+            if (const auto* steamGame =
+                    steamGameForExecutable(*catalog, launch->executablePathUtf8)) {
+                providerId = "steam";
+                launchTitleUtf8 = steamGame->titleUtf8;
+                launchExecutableUtf8 = steamGame->executablePathUtf8;
+                if (!steamGame->workingDirectoryUtf8.empty()) {
+                    launchWorkingDirectoryUtf8 =
+                        steamGame->workingDirectoryUtf8;
+                }
+            }
+        }
+
+        const auto title = utf8ToWide(launchTitleUtf8);
+        const auto executable = utf8ToWide(launchExecutableUtf8);
         const auto arguments = utf8ToWide(launch->launchArgumentsUtf8);
-        const auto workingDirectory = utf8ToWide(launch->workingDirectoryUtf8);
+        const auto workingDirectory =
+            utf8ToWide(launchWorkingDirectoryUtf8);
         if (!title || !executable || !arguments || !workingDirectory) {
             return error(
                 request.correlationId, ErrorCode::Malformed,
@@ -616,6 +838,9 @@ Frame HostConnectionSession::handle(const Frame& request) {
 
         GameProfile profile;
         profile.title = *title;
+        // Steam discovery remains a read-only provider boundary. The actual
+        // process is intentionally launched as the validated local executable so
+        // HydraSeat can preserve strict Job Object/process ownership.
         profile.platform = GamePlatform::CustomExecutable;
         profile.executablePath = *executable;
         profile.launchArguments = *arguments;
@@ -632,6 +857,11 @@ Frame HostConnectionSession::handle(const Frame& request) {
                     ? "game launch failed or Seat game authority is unavailable"
                     : diagnostic);
         }
+
+        (void)host_.setSeatGamePresentation(
+            launch->seatId,
+            launchTitleUtf8.empty() ? std::string{"Application"} : launchTitleUtf8,
+            std::move(providerId));
 
         Frame response;
         response.type = MessageType::LaunchGameResult;
@@ -1204,6 +1434,85 @@ std::optional<SeatHardwareAssignment> HostPipeClient::getSeatHardware(
     const auto assignment = decodeSeatHardwareAssignment(response->payload);
     if (!assignment) setError(error, "invalid Seat hardware payload");
     return assignment;
+}
+
+
+std::optional<GameCatalog> HostPipeClient::getGameCatalog(
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto response = impl_->transact(
+        MessageType::GetGameCatalog, {}, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::GameCatalog) {
+        setError(error, "unexpected game catalog response");
+        return std::nullopt;
+    }
+    const auto catalog = decodeGameCatalog(response->payload);
+    if (!catalog) setError(error, "invalid game catalog payload");
+    return catalog;
+}
+
+std::optional<SeatRuntimeInfo> HostPipeClient::getSeatRuntimeInfo(
+    std::uint32_t seatId,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeSeatRequest(SeatRequest{seatId});
+    if (payload.empty()) {
+        setError(error, "invalid Seat id for runtime-info query");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::GetSeatRuntimeInfo, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::SeatRuntimeInfo) {
+        setError(error, "unexpected Seat runtime-info response");
+        return std::nullopt;
+    }
+    const auto info = decodeSeatRuntimeInfo(response->payload);
+    if (!info) setError(error, "invalid Seat runtime-info payload");
+    return info;
+}
+
+std::optional<InputActivitySnapshot> HostPipeClient::getInputActivity(
+    HardwareDeviceKind kind,
+    std::uint32_t timeoutMs,
+    std::string* error) {
+    if (!impl_) return std::nullopt;
+    const auto payload = encodeInputActivityRequest(InputActivityRequest{kind});
+    if (payload.empty()) {
+        setError(error, "invalid input-activity kind");
+        return std::nullopt;
+    }
+    const auto response = impl_->transact(
+        MessageType::GetInputActivity, payload, timeoutMs, error);
+    if (!response) return std::nullopt;
+    if (response->type == MessageType::Error) {
+        const auto protocolError = decodeError(response->payload);
+        setError(error, protocolError ? protocolError->diagnostic
+                                      : "host returned malformed error response");
+        return std::nullopt;
+    }
+    if (response->type != MessageType::InputActivity) {
+        setError(error, "unexpected input-activity response");
+        return std::nullopt;
+    }
+    const auto activity = decodeInputActivitySnapshot(response->payload);
+    if (!activity) setError(error, "invalid input-activity payload");
+    return activity;
 }
 
 std::optional<SeatHardwareAssignment> HostPipeClient::assignSeatHardware(

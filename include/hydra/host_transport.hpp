@@ -86,6 +86,17 @@ public:
         std::uint32_t seatId,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
         std::string* error = nullptr);
+    std::optional<GameCatalog> getGameCatalog(
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<SeatRuntimeInfo> getSeatRuntimeInfo(
+        std::uint32_t seatId,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
+    std::optional<InputActivitySnapshot> getInputActivity(
+        HardwareDeviceKind kind,
+        std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,
+        std::string* error = nullptr);
     std::optional<SeatHardwareAssignment> assignSeatHardware(
         const SeatHardwareAssignment& assignment,
         std::uint32_t timeoutMs = kDefaultHostPipeTimeoutMs,

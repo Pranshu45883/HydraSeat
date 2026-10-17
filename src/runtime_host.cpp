@@ -3,11 +3,44 @@
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <utility>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 namespace hydra::runtime {
 
 namespace {
+
+std::optional<std::string> wideToUtf8(std::wstring_view value) {
+#if defined(_WIN32)
+    if (value.empty()) return std::string{};
+    if (value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+        return std::nullopt;
+    }
+    const int sourceLength = static_cast<int>(value.size());
+    const int required = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), sourceLength,
+        nullptr, 0, nullptr, nullptr);
+    if (required <= 0) return std::nullopt;
+    std::string result(static_cast<std::size_t>(required), '\0');
+    const int written = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), sourceLength,
+        result.data(), required, nullptr, nullptr);
+    return written == required ? std::optional<std::string>{std::move(result)}
+                               : std::nullopt;
+#else
+    std::string result;
+    result.reserve(value.size());
+    for (const wchar_t ch : value) {
+        if (ch < 0 || ch > 0x7f) return std::nullopt;
+        result.push_back(static_cast<char>(ch));
+    }
+    return result;
+#endif
+}
 
 hostipc::SeatSnapshot toHostSnapshot(const SeatRuntimeSnapshot& snapshot) noexcept {
     return {
@@ -149,12 +182,75 @@ void RuntimeHost::observePhysicalInput(
     auto& confirmed = type == DeviceType::Keyboard
         ? confirmedKeyboardIds_
         : confirmedMouseIds_;
+    auto& activity = type == DeviceType::Keyboard
+        ? keyboardActivity_
+        : mouseActivity_;
     const bool changed = confirmed.insert(stableId).second;
+    activity.sequence = nextInputActivitySequence_;
+    activity.stableId = stableId;
+    if (nextInputActivitySequence_ != UINT64_MAX) {
+        ++nextInputActivitySequence_;
+    }
     noteMutationLocked(changed);
 #else
     (void)type;
     (void)devicePath;
 #endif
+}
+
+
+std::optional<hostipc::InputActivitySnapshot> RuntimeHost::inputActivity(
+    hostipc::HardwareDeviceKind kind) const {
+    if (kind != hostipc::HardwareDeviceKind::Keyboard &&
+        kind != hostipc::HardwareDeviceKind::Mouse) {
+        return std::nullopt;
+    }
+
+    std::lock_guard lock(mutex_);
+    const auto& activity = kind == hostipc::HardwareDeviceKind::Keyboard
+        ? keyboardActivity_
+        : mouseActivity_;
+    hostipc::InputActivitySnapshot result;
+    result.kind = kind;
+    result.sequence = activity.sequence;
+    if (!activity.stableId.empty()) {
+        const auto stableId = wideToUtf8(activity.stableId);
+        if (!stableId) return std::nullopt;
+        result.stableIdUtf8 = *stableId;
+    }
+    return result;
+}
+
+bool RuntimeHost::setSeatGamePresentation(
+    std::uint32_t seatId,
+    std::string titleUtf8,
+    std::string providerIdUtf8) noexcept {
+    if (seatId == 0 || seatId > seatRuntimeInfo_.size() ||
+        titleUtf8.empty() || titleUtf8.size() > hostipc::kHostProtocolMaxLaunchTitleBytes ||
+        providerIdUtf8.empty() ||
+        providerIdUtf8.size() > hostipc::kHostProtocolMaxProviderIdBytes) {
+        return false;
+    }
+    if (providerIdUtf8 != "custom" && providerIdUtf8 != "steam") return false;
+
+    std::lock_guard lock(mutex_);
+    const auto snapshot = controller_.snapshot(seatId);
+    if (!snapshot || !snapshot->gameLeaseActive || !snapshot->process) return false;
+    seatRuntimeInfo_[seatId - 1u] = hostipc::SeatRuntimeInfo{
+        seatId,
+        std::move(titleUtf8),
+        std::move(providerIdUtf8),
+    };
+    noteMutationLocked(true);
+    return true;
+}
+
+std::optional<hostipc::SeatRuntimeInfo> RuntimeHost::seatRuntimeInfo(
+    std::uint32_t seatId) const noexcept {
+    if (seatId == 0 || seatId > seatRuntimeInfo_.size()) return std::nullopt;
+    std::lock_guard lock(mutex_);
+    if (seatRuntimeInfo_[seatId - 1u]) return seatRuntimeInfo_[seatId - 1u];
+    return hostipc::SeatRuntimeInfo{seatId, {}, {}};
 }
 
 std::optional<SeatHardwareConfiguration>
@@ -553,6 +649,10 @@ RuntimeHost::virtualXInputMapping(const ActivationToken& activation) const noexc
 bool RuntimeHost::endSeatActivation(const ActivationToken& activation) noexcept {
     std::lock_guard lock(mutex_);
     const bool changed = controller_.endSeatActivation(activation);
+    if (changed && activation.seatId >= 1u &&
+        activation.seatId <= seatRuntimeInfo_.size()) {
+        seatRuntimeInfo_[activation.seatId - 1u].reset();
+    }
     noteMutationLocked(changed);
     return changed;
 }

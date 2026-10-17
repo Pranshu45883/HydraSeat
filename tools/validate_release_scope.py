@@ -35,7 +35,7 @@ EXPECTED_CAPABILITIES = {
     "controller.directinput": "deferred",
     "controller.raw-hid-sdl-vendor": "experimental",
     "audio.core-audio": "release-target",
-    "provider.steam-readonly-discovery": "deferred",
+    "provider.steam-readonly-discovery": "release-target",
     "provider.custom-exe": "release-target",
     "provider.epic-ea-gog": "deferred",
     "same-game.two-instance": "release-target",

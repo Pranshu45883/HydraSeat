@@ -103,9 +103,9 @@
     },
     {
       "id": "provider.steam-readonly-discovery",
-      "disposition": "deferred",
-      "validation": "not-required-for-v1",
-      "notes": "Steam provider discovery/URI planning foundations exist, but the canonical v1 host/UI launch path does not consume them yet; no Steam product-path claim is made."
+      "disposition": "release-target",
+      "validation": "real-steam-library-required",
+      "notes": "The canonical host performs bounded read-only Steam library discovery and exposes detected titles to the v1 UI. Launch remains host-owned through a validated local executable path; Steam authentication/account ownership stays with the Steam client, and no universal compatibility claim is made."
     },
     {
       "id": "provider.custom-exe",

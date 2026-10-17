@@ -9,11 +9,22 @@
 #include "ui/pages/hardware_page.hpp"
 #include "ui/pages/diagnostics_page.hpp"
 #include "ui/pages/settings_page.hpp"
+#include "ui/application_library.hpp"
 #include "ui/ui_settings.hpp"
 
-#include <QHBoxLayout>
-#include <QVBoxLayout>
+#include <QApplication>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QFrame>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QSettings>
+#include <QVBoxLayout>
 
 namespace hydra::ui {
 
@@ -134,6 +145,13 @@ void AppWindow::setupUi() {
         &SeatsPage::refreshApplications);
 
     connect(
+        dashboardPage, &DashboardPage::manageSeatsRequested,
+        this, [this]() { navigateToPage(1); });
+    connect(
+        dashboardPage, &DashboardPage::applicationsRequested,
+        this, [this]() { navigateToPage(2); });
+
+    connect(
         settingsPageNode,
         &SettingsPage::preferencesChanged,
         this,
@@ -150,6 +168,9 @@ void AppWindow::setupUi() {
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, audioPage, &AudioPage::updateState);
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, hardwarePage, &HardwarePage::updateState);
     connect(m_enginePoller.get(), &EnginePoller::stateUpdated, diagnosticsPage, &DiagnosticsPage::updateState);
+    connect(
+        m_enginePoller.get(), &EnginePoller::stateUpdated,
+        this, &AppWindow::maybeShowFirstRunWizard);
 
     mainLayout->addWidget(m_workspaceStack, 1);
 
@@ -167,6 +188,7 @@ void AppWindow::setupUi() {
                 m_connectionLabel->setText("Canonical host connected");
                 const bool subsystemDegraded =
                     payload.hardwareError ||
+                    payload.gameCatalogError ||
                     payload.controllerInventoryError ||
                     payload.audioEndpointError ||
                     payload.audioSessionError;
@@ -266,6 +288,252 @@ void AppWindow::onNavigationChanged(int index) {
     int targetIndex = item->data(Qt::UserRole).toInt(&ok);
     if (ok && targetIndex >= 0 && targetIndex < m_workspaceStack->count()) {
         m_workspaceStack->setCurrentIndex(targetIndex);
+    }
+}
+
+void AppWindow::navigateToPage(int targetIndex) {
+    if (!m_sidebar || !m_workspaceStack || targetIndex < 0 ||
+        targetIndex >= m_workspaceStack->count()) {
+        return;
+    }
+    for (int row = 0; row < m_sidebar->count(); ++row) {
+        auto* item = m_sidebar->item(row);
+        if (!item) continue;
+        bool ok = false;
+        const int itemTarget = item->data(Qt::UserRole).toInt(&ok);
+        if (ok && itemTarget == targetIndex) {
+            m_sidebar->setCurrentRow(row);
+            return;
+        }
+    }
+    m_workspaceStack->setCurrentIndex(targetIndex);
+}
+
+void AppWindow::maybeShowFirstRunWizard(const EngineStatePayload& payload) {
+    if (!payload.hostConnected || payload.hardwareError) {
+        return;
+    }
+
+    QSettings settings(
+        QSettings::NativeFormat,
+        QSettings::UserScope,
+        QStringLiteral("HydraSeat"),
+        QStringLiteral("HydraSeat"));
+    if (settings.value(QStringLiteral("ui/firstRunGuideDismissed"), false).toBool()) {
+        m_firstRunWizardHandled = true;
+        if (m_firstRunWizard && m_firstRunWizard->isVisible()) {
+            m_firstRunWizard->close();
+        }
+        return;
+    }
+
+    const auto configured = [&](std::size_t index) {
+        if (index >= payload.seatHardware.size() || !payload.seatHardware[index]) {
+            return false;
+        }
+        const auto& seat = *payload.seatHardware[index];
+        return !seat.displayIdUtf8.empty() && !seat.keyboardIdUtf8.empty() &&
+               !seat.mouseIdUtf8.empty();
+    };
+    const bool seat1Ready = configured(0);
+    const bool seat2Ready = configured(1);
+    const qsizetype savedApplications = ApplicationLibrary::load().size();
+    const std::size_t gameCount = payload.gameCatalog.games.size() +
+        static_cast<std::size_t>(savedApplications);
+    const bool gamesReady = gameCount > 0u;
+    const bool audioReady = !payload.audioEndpoints.empty();
+
+    if (seat1Ready && seat2Ready && gamesReady) {
+        settings.setValue(QStringLiteral("ui/firstRunGuideDismissed"), true);
+        settings.sync();
+        m_firstRunWizardHandled = true;
+        if (m_firstRunWizard) m_firstRunWizard->close();
+        return;
+    }
+
+    if (!m_firstRunWizard) {
+        m_firstRunWizard = new QDialog(this);
+        m_firstRunWizard->setWindowTitle(QStringLiteral("HydraSeat Setup Assistant"));
+        m_firstRunWizard->setWindowModality(Qt::NonModal);
+        m_firstRunWizard->setMinimumWidth(620);
+        m_firstRunWizard->setAttribute(Qt::WA_DeleteOnClose, false);
+
+        auto* layout = new QVBoxLayout(m_firstRunWizard);
+        layout->setSpacing(14);
+
+        auto* heading = new QLabel(
+            QStringLiteral("Finish your two-Seat setup"),
+            m_firstRunWizard);
+        heading->setStyleSheet(
+            "font-size: 22px; font-weight: bold; color: #F5F5F5;");
+        layout->addWidget(heading);
+
+        auto* intro = new QLabel(
+            QStringLiteral(
+                "Complete the steps below in order. This assistant stays open while "
+                "you configure HydraSeat and updates automatically from the canonical host."),
+            m_firstRunWizard);
+        intro->setWordWrap(true);
+        intro->setStyleSheet("font-size: 13px; color: #B5B5B5;");
+        layout->addWidget(intro);
+
+        auto* steps = new QGroupBox(
+            QStringLiteral("Initial setup"),
+            m_firstRunWizard);
+        auto* grid = new QGridLayout(steps);
+        grid->setHorizontalSpacing(16);
+        grid->setVerticalSpacing(10);
+
+        const auto addStep = [&](int row,
+                                 const QString& step,
+                                 QLabel*& status,
+                                 QPushButton*& action,
+                                 const QString& actionText) {
+            auto* name = new QLabel(step, steps);
+            status = new QLabel(QStringLiteral("Waiting"), steps);
+            action = new QPushButton(actionText, steps);
+            grid->addWidget(name, row, 0);
+            grid->addWidget(status, row, 1);
+            grid->addWidget(action, row, 2);
+        };
+
+        addStep(
+            0,
+            QStringLiteral("1. Seat 1 hardware"),
+            m_firstRunSeat1Status,
+            m_firstRunSeat1Button,
+            QStringLiteral("Configure Seat 1"));
+        addStep(
+            1,
+            QStringLiteral("2. Seat 2 hardware"),
+            m_firstRunSeat2Status,
+            m_firstRunSeat2Button,
+            QStringLiteral("Configure Seat 2"));
+        addStep(
+            2,
+            QStringLiteral("3. Game library"),
+            m_firstRunGamesStatus,
+            m_firstRunGamesButton,
+            QStringLiteral("Choose Games"));
+
+        auto* audioName = new QLabel(QStringLiteral("4. Audio outputs"), steps);
+        m_firstRunAudioStatus = new QLabel(QStringLiteral("Optional"), steps);
+        auto* audioHint = new QLabel(
+            QStringLiteral("Choose a preferred output per Seat on the Seats page."),
+            steps);
+        audioHint->setWordWrap(true);
+        audioHint->setStyleSheet("font-size: 11px; color: #777777;");
+        grid->addWidget(audioName, 3, 0);
+        grid->addWidget(m_firstRunAudioStatus, 3, 1);
+        grid->addWidget(audioHint, 3, 2);
+        layout->addWidget(steps);
+
+        auto* identifyHint = new QLabel(
+            QStringLiteral(
+                "Duplicate keyboards and mice can be identified by physical activity. "
+                "Steam games are discovered automatically; custom executables remain available."),
+            m_firstRunWizard);
+        identifyHint->setWordWrap(true);
+        identifyHint->setStyleSheet("font-size: 12px; color: #777777;");
+        layout->addWidget(identifyHint);
+
+        auto* actions = new QHBoxLayout();
+        actions->addStretch();
+        auto* laterButton = new QPushButton(
+            QStringLiteral("Set up later"),
+            m_firstRunWizard);
+        actions->addWidget(laterButton);
+        layout->addLayout(actions);
+
+        connect(
+            m_firstRunSeat1Button,
+            &QPushButton::clicked,
+            this,
+            [this]() { navigateToPage(1); });
+        connect(
+            m_firstRunSeat2Button,
+            &QPushButton::clicked,
+            this,
+            [this]() { navigateToPage(1); });
+        connect(
+            m_firstRunGamesButton,
+            &QPushButton::clicked,
+            this,
+            [this]() { navigateToPage(2); });
+        connect(
+            laterButton,
+            &QPushButton::clicked,
+            this,
+            [this]() {
+                QSettings localSettings(
+                    QSettings::NativeFormat,
+                    QSettings::UserScope,
+                    QStringLiteral("HydraSeat"),
+                    QStringLiteral("HydraSeat"));
+                localSettings.setValue(
+                    QStringLiteral("ui/firstRunGuideDismissed"),
+                    true);
+                localSettings.sync();
+                m_firstRunWizardHandled = true;
+                if (m_firstRunWizard) m_firstRunWizard->close();
+            });
+        connect(
+            m_firstRunWizard,
+            &QDialog::rejected,
+            this,
+            [this]() {
+                // Closing the assistant is session-only. A future launch will
+                // offer it again unless the user chose Set up later or completed
+                // the required setup.
+                m_firstRunWizardHandled = true;
+            });
+    }
+
+    const auto setStatus = [](QLabel* label,
+                              bool ready,
+                              const QString& readyText,
+                              const QString& missingText) {
+        if (!label) return;
+        label->setText(ready ? readyText : missingText);
+        label->setStyleSheet(
+            ready
+                ? "font-weight: bold; color: #B5B5B5;"
+                : "font-weight: bold; color: #E10600;");
+    };
+
+    setStatus(
+        m_firstRunSeat1Status,
+        seat1Ready,
+        QStringLiteral("Ready"),
+        QStringLiteral("Needs setup"));
+    setStatus(
+        m_firstRunSeat2Status,
+        seat2Ready,
+        QStringLiteral("Ready"),
+        QStringLiteral("Needs setup"));
+    setStatus(
+        m_firstRunGamesStatus,
+        gamesReady,
+        QStringLiteral("%1 detected/saved").arg(gameCount),
+        QStringLiteral("Add or detect a game"));
+    setStatus(
+        m_firstRunAudioStatus,
+        audioReady,
+        QStringLiteral("%1 available").arg(payload.audioEndpoints.size()),
+        QStringLiteral("Optional; none detected"));
+
+    if (m_firstRunSeat1Button) m_firstRunSeat1Button->setEnabled(!seat1Ready);
+    if (m_firstRunSeat2Button) {
+        m_firstRunSeat2Button->setEnabled(seat1Ready && !seat2Ready);
+    }
+    if (m_firstRunGamesButton) {
+        m_firstRunGamesButton->setEnabled(seat1Ready && seat2Ready && !gamesReady);
+    }
+
+    if (!m_firstRunWizardHandled && !m_firstRunWizard->isVisible()) {
+        m_firstRunWizard->show();
+        m_firstRunWizard->raise();
+        m_firstRunWizard->activateWindow();
     }
 }
 

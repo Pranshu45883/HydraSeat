@@ -321,6 +321,45 @@ std::wstring lowerPath(std::wstring value) {
     return value;
 }
 
+std::wstring executableNameToken(std::wstring_view value) {
+    std::wstring normalized;
+    normalized.reserve(value.size());
+    for (wchar_t ch : value) {
+        if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+        if ((ch >= L'a' && ch <= L'z') || (ch >= L'0' && ch <= L'9')) {
+            normalized.push_back(ch);
+        }
+    }
+    return normalized;
+}
+
+int executablePreferenceScore(const fs::path& executable,
+                              std::wstring_view title,
+                              const fs::path& installRoot) {
+    const auto stem = executableNameToken(executable.stem().wstring());
+    const auto titleToken = executableNameToken(title);
+    const auto installToken = executableNameToken(installRoot.filename().wstring());
+    int score = 0;
+    if (!titleToken.empty() && stem == titleToken) score += 120;
+    if (!installToken.empty() && stem == installToken) score += 100;
+    if (lowerPath(executable.parent_path().wstring()) ==
+        lowerPath(installRoot.lexically_normal().wstring())) {
+        score += 20;
+    }
+
+    static constexpr std::array<std::wstring_view, 7u> lowPriorityTokens{
+        L"unins", L"uninstall", L"setup", L"install", L"crashreport",
+        L"crashhandler", L"redist",
+    };
+    for (const auto token : lowPriorityTokens) {
+        if (stem.find(token) != std::wstring::npos) {
+            score -= 100;
+            break;
+        }
+    }
+    return score;
+}
+
 std::string normalizedSteamAppType(std::string_view value) {
     std::string normalized;
     normalized.reserve(value.size());
@@ -861,8 +900,14 @@ ProviderDiagnostic SteamProviderAdapter::refresh() noexcept {
             if (!source_->listExecutableHints(app.installRoot, app.executableHints, error)) {
                 throw std::runtime_error(error);
             }
+            const fs::path installRootPath(app.installRoot);
             std::sort(app.executableHints.begin(), app.executableHints.end(),
-                      [](const auto& left, const auto& right) {
+                      [&](const auto& left, const auto& right) {
+                          const int leftScore = executablePreferenceScore(
+                              fs::path(left), app.title, installRootPath);
+                          const int rightScore = executablePreferenceScore(
+                              fs::path(right), app.title, installRootPath);
+                          if (leftScore != rightScore) return leftScore > rightScore;
                           return lowerPath(left) < lowerPath(right);
                       });
             app.executableHints.erase(

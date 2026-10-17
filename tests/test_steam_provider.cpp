@@ -168,6 +168,13 @@ void testReadOnlyMultiLibraryDiscoveryAndDeterminism() {
               "Steam manifest fields become bounded provider-neutral catalog candidates");
     }
 
+    if (games.size() == 2u) {
+        check(games[1].executableCandidates.size() == 2u &&
+                  games[1].executableCandidates.front() ==
+                      L"D:\\SteamLibrary\\steamapps\\common\\Second\\second.exe",
+              "Steam discovery prefers the title/install-root executable over a generic launcher");
+    }
+
     const auto firstRevision = descriptor.metadataRevision;
     const auto firstGames = games;
     check(adapter.refresh().succeeded() &&

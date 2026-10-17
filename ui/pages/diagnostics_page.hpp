@@ -4,6 +4,7 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QList>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -21,13 +22,18 @@ public:
 public slots:
     void updateState(const EngineStatePayload& payload);
 
+private slots:
+    void onExportSupportBundle();
+
 private:
     QVBoxLayout* m_listLayout{nullptr};
     QList<QFrame*> m_seatFrames;
+    EngineStatePayload m_lastPayload;
 
     QFrame* buildSeatDiagnostics(std::uint32_t seatId);
     void updateSeatDiagnostics(
         const hydra::hostipc::SeatSnapshot* snapshot,
+        const hydra::hostipc::SeatRuntimeInfo* runtimeInfo,
         QFrame* frame);
 };
 

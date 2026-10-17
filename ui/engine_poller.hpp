@@ -4,6 +4,7 @@
 #include <QThread>
 #include <QTimer>
 #include <array>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -29,9 +30,16 @@ struct EngineStatePayload {
     std::array<
         std::optional<hydra::hostipc::SeatHardwareAssignment>,
         hydra::hostipc::kHostSeatCount> seatHardware{};
+    hydra::hostipc::GameCatalog gameCatalog;
+    std::array<
+        std::optional<hydra::hostipc::SeatRuntimeInfo>,
+        hydra::hostipc::kHostSeatCount> seatRuntimeInfo{};
+    std::optional<hydra::hostipc::InputActivitySnapshot> keyboardActivity;
+    std::optional<hydra::hostipc::InputActivitySnapshot> mouseActivity;
     std::string hostError;
     bool hostConnected{false};
     bool hardwareError{false};
+    bool gameCatalogError{false};
     bool controllerInventoryError{false};
     bool audioEndpointError{false};
     bool audioSessionError{false};
@@ -52,6 +60,9 @@ signals:
 private:
     hydra::controller::ControllerInventory m_controllerInventory;
     hydra::hostipc::HostPipeClient m_hostClient;
+    hydra::hostipc::GameCatalog m_gameCatalogCache;
+    std::chrono::steady_clock::time_point m_nextGameCatalogRefresh{};
+    bool m_gameCatalogInitialized{false};
 };
 
 class EnginePoller : public QObject {

@@ -20,6 +20,7 @@ public:
 
     static QVector<ApplicationLaunchEntry> load();
     static void remember(const ApplicationLaunchEntry& entry);
+    static bool remove(const QString& executablePath);
 };
 
 } // namespace hydra::ui

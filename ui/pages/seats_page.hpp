@@ -31,10 +31,13 @@ private slots:
     void onStopRequested(std::uint32_t seatId);
     void onConfigureRequested(std::uint32_t seatId);
     void onControllerSelectionChanged(std::uint32_t seatId);
+    void onIdentifyInput(std::uint32_t seatId, bool keyboard);
+    void onAudioSelectionChanged(std::uint32_t seatId);
 
 private:
     struct SeatWidgets {
         QLabel* stateBadge{nullptr};
+        QLabel* runtimeLabel{nullptr};
         QLabel* feedbackLabel{nullptr};
 
         QComboBox* appCombo{nullptr};
@@ -45,6 +48,8 @@ private:
         QComboBox* ctrlSrcCombo{nullptr};
         QComboBox* audioCombo{nullptr};
 
+        QPushButton* keyboardIdentifyBtn{nullptr};
+        QPushButton* mouseIdentifyBtn{nullptr};
         QPushButton* configureBtn{nullptr};
         QPushButton* launchBtn{nullptr};
         QPushButton* stopBtn{nullptr};
@@ -53,6 +58,12 @@ private:
         std::optional<hydra::controller::XInputPairingSnapshot>
             controllerPairingBaseline;
         QString controllerPairingId;
+        std::optional<std::uint64_t> keyboardIdentifyBaseline;
+        std::optional<std::uint64_t> mouseIdentifyBaseline;
+        std::uint32_t audioRouteAttemptPid{0};
+        std::uint64_t audioRouteAttemptCreation{0};
+        QString audioRouteAttemptEndpoint;
+        bool audioRouteInFlight{false};
         bool operationInFlight{false};
     };
 
@@ -66,6 +77,8 @@ private:
         std::uint32_t seatId,
         SeatWidgets& widgets);
     void populateCombos(std::uint32_t seatId, SeatWidgets& widgets);
+    void applyInputIdentification(std::uint32_t seatId, SeatWidgets& widgets);
+    void maybeAutoRouteAudio(std::uint32_t seatId, SeatWidgets& widgets);
     const hydra::hostipc::SeatSnapshot* seatSnapshot(
         std::uint32_t seatId) const noexcept;
 };

@@ -75,6 +75,12 @@ bool validMessageType(MessageType type) noexcept {
     case MessageType::SeatHardware:
     case MessageType::AssignSeatHardware:
     case MessageType::AssignSeatHardwareResult:
+    case MessageType::GetGameCatalog:
+    case MessageType::GameCatalog:
+    case MessageType::GetSeatRuntimeInfo:
+    case MessageType::SeatRuntimeInfo:
+    case MessageType::GetInputActivity:
+    case MessageType::InputActivity:
         return true;
     }
     return false;
@@ -309,6 +315,12 @@ std::string_view messageTypeName(MessageType type) noexcept {
     case MessageType::SeatHardware: return "SeatHardware";
     case MessageType::AssignSeatHardware: return "AssignSeatHardware";
     case MessageType::AssignSeatHardwareResult: return "AssignSeatHardwareResult";
+    case MessageType::GetGameCatalog: return "GetGameCatalog";
+    case MessageType::GameCatalog: return "GameCatalog";
+    case MessageType::GetSeatRuntimeInfo: return "GetSeatRuntimeInfo";
+    case MessageType::SeatRuntimeInfo: return "SeatRuntimeInfo";
+    case MessageType::GetInputActivity: return "GetInputActivity";
+    case MessageType::InputActivity: return "InputActivity";
     }
     return "Unknown";
 }
@@ -775,6 +787,193 @@ std::optional<ControllerPairRequest> decodeControllerPairRequest(
     return request;
 }
 
+
+std::vector<std::byte> encodeGameCatalog(const GameCatalog& catalog) {
+    if (catalog.games.size() > kHostProtocolMaxGameCatalogEntries) return {};
+
+    std::vector<std::byte> out;
+    appendInteger(out, static_cast<std::uint32_t>(catalog.games.size()));
+    appendInteger(out, std::uint32_t{0});
+    for (const auto& game : catalog.games) {
+        if (!validUtf8(game.providerIdUtf8, kHostProtocolMaxProviderIdBytes, false) ||
+            !validUtf8(game.providerAppIdUtf8, kHostProtocolMaxProviderAppIdBytes, true) ||
+            !validUtf8(game.titleUtf8, kHostProtocolMaxLaunchTitleBytes, false) ||
+            !validUtf8(game.executablePathUtf8, kHostProtocolMaxLaunchPathBytes, false) ||
+            !validUtf8(game.workingDirectoryUtf8, kHostProtocolMaxLaunchPathBytes, true)) {
+            return {};
+        }
+        appendString(out, game.providerIdUtf8);
+        appendString(out, game.providerAppIdUtf8);
+        appendString(out, game.titleUtf8);
+        appendString(out, game.executablePathUtf8);
+        appendString(out, game.workingDirectoryUtf8);
+        if (out.size() > kHostProtocolMaxPayloadBytes) return {};
+    }
+    return out;
+}
+
+std::optional<GameCatalog> decodeGameCatalog(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 8u || payload.size() > kHostProtocolMaxPayloadBytes) {
+        return std::nullopt;
+    }
+
+    std::size_t offset = 0;
+    std::uint32_t count = 0;
+    std::uint32_t reserved = 0;
+    if (!readInteger(payload, offset, count) ||
+        !readInteger(payload, offset, reserved) ||
+        reserved != 0 || count > kHostProtocolMaxGameCatalogEntries) {
+        return std::nullopt;
+    }
+
+    GameCatalog catalog;
+    catalog.games.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        GameCatalogEntry game;
+        if (!readString(payload, offset, kHostProtocolMaxProviderIdBytes, false,
+                        game.providerIdUtf8) ||
+            !readString(payload, offset, kHostProtocolMaxProviderAppIdBytes, true,
+                        game.providerAppIdUtf8) ||
+            !readString(payload, offset, kHostProtocolMaxLaunchTitleBytes, false,
+                        game.titleUtf8) ||
+            !readString(payload, offset, kHostProtocolMaxLaunchPathBytes, false,
+                        game.executablePathUtf8) ||
+            !readString(payload, offset, kHostProtocolMaxLaunchPathBytes, true,
+                        game.workingDirectoryUtf8)) {
+            return std::nullopt;
+        }
+        catalog.games.push_back(std::move(game));
+    }
+    if (offset != payload.size()) return std::nullopt;
+    return catalog;
+}
+
+std::vector<std::byte> encodeSeatRuntimeInfo(const SeatRuntimeInfo& info) {
+    const bool hasPresentation = !info.titleUtf8.empty() || !info.providerIdUtf8.empty();
+    if (!validSeatId(info.seatId) ||
+        (hasPresentation &&
+         (!validUtf8(info.titleUtf8, kHostProtocolMaxLaunchTitleBytes, false) ||
+          !validUtf8(info.providerIdUtf8, kHostProtocolMaxProviderIdBytes, false))) ||
+        (!hasPresentation &&
+         (!info.titleUtf8.empty() || !info.providerIdUtf8.empty()))) {
+        return {};
+    }
+
+    std::vector<std::byte> out;
+    appendInteger(out, info.seatId);
+    appendInteger(out, std::uint32_t{0});
+    appendString(out, info.titleUtf8);
+    appendString(out, info.providerIdUtf8);
+    return out.size() <= kHostProtocolMaxPayloadBytes ? out : std::vector<std::byte>{};
+}
+
+std::optional<SeatRuntimeInfo> decodeSeatRuntimeInfo(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 16u || payload.size() > kHostProtocolMaxPayloadBytes) {
+        return std::nullopt;
+    }
+    std::size_t offset = 0;
+    SeatRuntimeInfo info;
+    std::uint32_t reserved = 0;
+    if (!readInteger(payload, offset, info.seatId) ||
+        !readInteger(payload, offset, reserved) ||
+        reserved != 0 || !validSeatId(info.seatId) ||
+        !readString(payload, offset, kHostProtocolMaxLaunchTitleBytes, true,
+                    info.titleUtf8) ||
+        !readString(payload, offset, kHostProtocolMaxProviderIdBytes, true,
+                    info.providerIdUtf8) ||
+        offset != payload.size()) {
+        return std::nullopt;
+    }
+    if (info.titleUtf8.empty() != info.providerIdUtf8.empty()) return std::nullopt;
+    return info;
+}
+
+std::vector<std::byte> encodeInputActivityRequest(
+    const InputActivityRequest& request) {
+    if (request.kind != HardwareDeviceKind::Keyboard &&
+        request.kind != HardwareDeviceKind::Mouse) {
+        return {};
+    }
+    std::vector<std::byte> out;
+    appendInteger(out, static_cast<std::uint8_t>(request.kind));
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(out, std::uint8_t{0});
+    return out;
+}
+
+std::optional<InputActivityRequest> decodeInputActivityRequest(
+    std::span<const std::byte> payload) {
+    if (payload.size() != 4u) return std::nullopt;
+    std::size_t offset = 0;
+    std::uint8_t rawKind = 0;
+    std::uint8_t r1 = 0, r2 = 0, r3 = 0;
+    if (!readInteger(payload, offset, rawKind) ||
+        !readInteger(payload, offset, r1) ||
+        !readInteger(payload, offset, r2) ||
+        !readInteger(payload, offset, r3) ||
+        r1 != 0 || r2 != 0 || r3 != 0) {
+        return std::nullopt;
+    }
+    const auto kind = static_cast<HardwareDeviceKind>(rawKind);
+    if (kind != HardwareDeviceKind::Keyboard &&
+        kind != HardwareDeviceKind::Mouse) {
+        return std::nullopt;
+    }
+    return InputActivityRequest{kind};
+}
+
+std::vector<std::byte> encodeInputActivitySnapshot(
+    const InputActivitySnapshot& snapshot) {
+    if ((snapshot.kind != HardwareDeviceKind::Keyboard &&
+         snapshot.kind != HardwareDeviceKind::Mouse) ||
+        !validUtf8(snapshot.stableIdUtf8,
+                   kHostProtocolMaxHardwareDeviceIdBytes,
+                   snapshot.sequence == 0u) ||
+        ((snapshot.sequence == 0u) != snapshot.stableIdUtf8.empty())) {
+        return {};
+    }
+    std::vector<std::byte> out;
+    appendInteger(out, static_cast<std::uint8_t>(snapshot.kind));
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(out, std::uint8_t{0});
+    appendInteger(out, snapshot.sequence);
+    appendString(out, snapshot.stableIdUtf8);
+    return out;
+}
+
+std::optional<InputActivitySnapshot> decodeInputActivitySnapshot(
+    std::span<const std::byte> payload) {
+    if (payload.size() < 16u || payload.size() > kHostProtocolMaxPayloadBytes) {
+        return std::nullopt;
+    }
+    std::size_t offset = 0;
+    std::uint8_t rawKind = 0;
+    std::uint8_t r1 = 0, r2 = 0, r3 = 0;
+    InputActivitySnapshot snapshot;
+    if (!readInteger(payload, offset, rawKind) ||
+        !readInteger(payload, offset, r1) ||
+        !readInteger(payload, offset, r2) ||
+        !readInteger(payload, offset, r3) ||
+        r1 != 0 || r2 != 0 || r3 != 0 ||
+        !readInteger(payload, offset, snapshot.sequence)) {
+        return std::nullopt;
+    }
+    snapshot.kind = static_cast<HardwareDeviceKind>(rawKind);
+    if ((snapshot.kind != HardwareDeviceKind::Keyboard &&
+         snapshot.kind != HardwareDeviceKind::Mouse) ||
+        !readString(payload, offset, kHostProtocolMaxHardwareDeviceIdBytes,
+                    snapshot.sequence == 0u, snapshot.stableIdUtf8) ||
+        offset != payload.size() ||
+        ((snapshot.sequence == 0u) != snapshot.stableIdUtf8.empty())) {
+        return std::nullopt;
+    }
+    return snapshot;
+}
+
 std::vector<std::byte> encodeLaunchGameRequest(
     const LaunchGameRequest& request) {
     if (!validSeatId(request.seatId) ||
@@ -1056,6 +1255,9 @@ MessageType responseTypeFor(MessageType request) noexcept {
     case MessageType::GetHardwareInventory: return MessageType::HardwareInventory;
     case MessageType::GetSeatHardware: return MessageType::SeatHardware;
     case MessageType::AssignSeatHardware: return MessageType::AssignSeatHardwareResult;
+    case MessageType::GetGameCatalog: return MessageType::GameCatalog;
+    case MessageType::GetSeatRuntimeInfo: return MessageType::SeatRuntimeInfo;
+    case MessageType::GetInputActivity: return MessageType::InputActivity;
     default: return MessageType::Error;
     }
 }

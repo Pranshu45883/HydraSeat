@@ -2,7 +2,7 @@
 
 HydraSeat is a Windows local gaming multiseat project focused on running **two independent local gaming Seats in one interactive Windows session**.
 
-> **Licensing note:** the upstream README has declared MIT since the initial project commit, but the repository currently contains no `LICENSE` file. Release packaging therefore keeps project licensing as an explicit unresolved blocker until the upstream maintainer confirms or restores the intended license text.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](https://isocpp.org/)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4?logo=windows)](https://www.microsoft.com/windows/)
 
@@ -103,3 +103,7 @@ ctest --test-dir build -C Release --output-on-failure
 - [Collaboration Contract](docs/COLLABORATION_CONTRACT.md) — engineering invariants and contributor boundaries;
 - [Compatibility Strategy](docs/COMPATIBILITY_STRATEGY.md) — game/process compatibility policy;
 - [Roadmap](docs/ROADMAP.md) — next integration and acceptance milestones.
+
+## License
+
+HydraSeat is distributed under the [MIT License](LICENSE). Third-party dependencies and any separately licensed components retain their respective license terms and attribution requirements.

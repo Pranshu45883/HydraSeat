@@ -26,17 +26,22 @@ if(WIN32)
         add_link_options(-static -static-libgcc -static-libstdc++)
     endif()
 
-    # Check for PKEY_AudioEndpoint_StableId availability in the current SDK
+    # This optional SDK property must be linkable, not merely declared.
+    # "(void)PKEY_AudioEndpoint_StableId" may be optimized away, making
+    # the previous check pass even when the SDK supplies no link definition.
+    # Use the same Windows libraries as production consumers of the key.
     include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_LIBRARIES ${WIN32_LIBS})
     check_cxx_source_compiles("
         #include <windows.h>
         #include <mmdeviceapi.h>
         #include <functiondiscoverykeys_devpkey.h>
         int main() {
-            (void)PKEY_AudioEndpoint_StableId;
-            return 0;
+            const PROPERTYKEY* volatile key = &PKEY_AudioEndpoint_StableId;
+            return key->pid == 0;
         }
     " HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID)
+    unset(CMAKE_REQUIRED_LIBRARIES)
 
     if(HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID)
         add_compile_definitions(HYDRA_HAS_PKEY_AUDIOENDPOINT_STABLEID=1)

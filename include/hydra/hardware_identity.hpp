@@ -94,9 +94,10 @@ inline std::wstring selectRawInputPhysicalIdentity(
     if (!deviceInstanceId.empty()) {
         return canonicalizeInstanceId(deviceInstanceId);
     }
-    if (!parentInstanceId.empty()) {
-        return canonicalizeInstanceId(parentInstanceId);
-    }
+    // A shared parent (for example an ACPI controller) does not identify a
+    // single keyboard or mouse. Keep distinct Raw Input interfaces separate;
+    // without an interface path, fail closed rather than inventing an ID.
+    (void)parentInstanceId;
     return normalizeDevicePath(interfacePath);
 }
 

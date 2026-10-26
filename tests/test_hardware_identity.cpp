@@ -157,6 +157,16 @@ int main() {
               selectRawInputPhysicalIdentity({}, externalKeyboard, sharedAcpiParent,
                                              siblingInterface),
           "Raw Input must not merge two keyboards solely by shared parent/container");
+    // SetupAPI can resolve a shared parent without resolving the individual
+    // HID devnode. Such evidence cannot merge two distinct Raw Input endpoints.
+    check(selectRawInputPhysicalIdentity({}, {}, sharedAcpiParent, firstInterface) !=
+              selectRawInputPhysicalIdentity({}, {}, sharedAcpiParent, siblingInterface),
+          "shared parent without leaf IDs must not merge distinct interfaces");
+    check(selectRawInputPhysicalIdentity({}, {}, sharedAcpiParent, firstInterface) ==
+              normalizeDevicePath(firstInterface),
+          "unresolved leaf must prefer its full interface path over a shared parent");
+    check(selectRawInputPhysicalIdentity({}, {}, sharedAcpiParent, {}).empty(),
+          "shared parent alone is insufficient for a Raw Input identity");
     check(selectRawInputPhysicalIdentity(firstPhysicalUsbAncestor, firstDeviceInstance,
                                          firstParent, firstInterface) ==
               selectRawInputPhysicalIdentity(firstPhysicalUsbAncestor, siblingDeviceInstance,

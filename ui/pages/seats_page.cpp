@@ -713,7 +713,7 @@ void SeatsPage::applyInputIdentification(
 
         const auto& activity =
             keyboard ? m_lastPayload.keyboardActivity : m_lastPayload.mouseActivity;
-        if (!activity || activity->sequence == *baseline ||
+        if (!activity || activity->sequence <= *baseline ||
             activity->stableIdUtf8.empty()) {
             return;
         }

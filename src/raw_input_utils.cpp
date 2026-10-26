@@ -503,23 +503,19 @@ DeviceInterfaceIdentity resolveDeviceInterfaceIdentity(std::wstring_view interfa
 
 std::wstring makeStableRawInputDeviceId(
     std::wstring_view category, const DeviceInterfaceIdentity& identity) {
-    const std::wstring_view containerId = identity.physicalContainerId
-                                              ? *identity.physicalContainerId
-                                              : std::wstring_view{};
     const std::wstring_view physicalAncestorId = identity.physicalAncestorInstanceId
                                                      ? *identity.physicalAncestorInstanceId
                                                      : std::wstring_view{};
     const std::wstring_view parentId = identity.parentDeviceInstanceId
                                            ? *identity.parentDeviceInstanceId
                                            : std::wstring_view{};
-    const std::wstring_view selectedAncestorId = !physicalAncestorId.empty()
-                                                     ? physicalAncestorId
-                                                     : parentId;
     const std::wstring_view deviceId = identity.deviceInstanceId
                                            ? *identity.deviceInstanceId
                                            : std::wstring_view{};
-    return hardware::makeStableDeviceId(
-        category, containerId, selectedAncestorId, deviceId, identity.interfacePath);
+    const auto physicalId = hardware::selectRawInputPhysicalIdentity(
+        physicalAncestorId, deviceId, parentId, identity.interfacePath);
+    if (physicalId.empty()) return {};
+    return std::wstring(category) + L":" + physicalId;
 }
 
 std::wstring makeStableRawInputDeviceId(

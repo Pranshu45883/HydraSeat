@@ -28,6 +28,9 @@ struct DeviceInfo {
     // actually in use. The canonical host still keeps the candidate identity
     // available for validation once the UI has confirmed it.
     bool requiresActivityConfirmation{false};
+    // We could not prove a local hardware transport. Unlike composite HID
+    // role confirmation, a persisted profile must not override this guard.
+    bool requiresFreshTransportConfirmation{false};
 };
 
 class HardwareDetector {
@@ -41,8 +44,13 @@ public:
     // Detect all physical keyboards separately
     std::vector<DeviceInfo> detectKeyboards();
 
-    // Detect all physical mice / touchpads separately
+    // Detect independently routable physical mouse/touchpad endpoints.
     std::vector<DeviceInfo> detectMice();
+
+    // Read-only inventory of Precision Touchpad HID sensors. These are NOT
+    // independently assignable mouse devices unless Windows exposes separate
+    // attributable Raw Input mouse events (hDevice can be null for touchpads).
+    std::vector<DeviceInfo> detectTouchpadSensors();
 
     // Detect all connected gamepads/controllers
     std::vector<DeviceInfo> detectControllers();

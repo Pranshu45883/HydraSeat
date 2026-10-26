@@ -2,6 +2,7 @@
 #include "hydra/controller_inventory.hpp"
 #include "hydra/display_topology.hpp"
 #include "hydra/hardware_identity.hpp"
+#include "hydra/hid_usage.hpp"
 #include "hydra/raw_input_utils.hpp"
 
 #include <iostream>
@@ -45,26 +46,15 @@ struct PhysicalInputGroup {
     std::wstring displayName;
     std::vector<RawInputEndpoint> keyboards;
     std::vector<RawInputEndpoint> mice;
+    bool requiresTransportConfirmation{false};
 };
 
 std::wstring physicalIdentityKey(
     const win32::DeviceInterfaceIdentity& identity) {
-    const std::wstring_view container =
-        identity.physicalContainerId
-            ? std::wstring_view(*identity.physicalContainerId)
-            : std::wstring_view{};
-    const std::wstring_view ancestor =
-        identity.physicalAncestorInstanceId
-            ? std::wstring_view(*identity.physicalAncestorInstanceId)
-            : (identity.parentDeviceInstanceId
-                   ? std::wstring_view(*identity.parentDeviceInstanceId)
-                   : std::wstring_view{});
-    const std::wstring_view device =
-        identity.deviceInstanceId
-            ? std::wstring_view(*identity.deviceInstanceId)
-            : std::wstring_view{};
-    return hardware::selectPhysicalIdentity(
-        container, ancestor, device, identity.interfacePath);
+    // Grouping must use EXACTLY the same physical key as the host's input
+    // activity and Seat binding IDs. A shared ContainerId (particularly on
+    // ACPI/I2C laptops) is not sufficient to merge separate keyboard inputs.
+    return win32::makeStableRawInputDeviceId(L"physical", identity);
 }
 
 bool receiverLike(std::wstring_view name) {
@@ -135,15 +125,22 @@ std::vector<PhysicalInputGroup> enumeratePhysicalInputGroups() {
         if (!path) continue;
 
         auto identity = win32::resolveDeviceInterfaceIdentity(*path);
-        if (identity.syntheticOrRemote || !identity.physicalTransportProven) {
-            continue;
-        }
+        if (identity.syntheticOrRemote) continue;
+        // Some wired USB keyboards temporarily lack SetupAPI ancestry during
+        // hotplug. Keep a narrowly identified HID VID/PID candidate, but never
+        // expose it for Seat assignment until this Raw Input ID produces real
+        // input activity. Generic/virtual/ambiguous paths stay excluded.
+        const bool provisional =
+            !identity.physicalTransportProven &&
+            hardware::isProvisionalUsbHidInputPath(*path);
+        if (!identity.physicalTransportProven && !provisional) continue;
 
         const auto physicalKey = physicalIdentityKey(identity);
         if (physicalKey.empty()) continue;
 
         auto& group = byPhysicalIdentity[physicalKey];
         group.physicalKey = physicalKey;
+        group.requiresTransportConfirmation |= provisional;
         if (group.displayName.empty() && identity.physicalDisplayName) {
             group.displayName = *identity.physicalDisplayName;
         }
@@ -194,10 +191,11 @@ std::vector<DeviceInfo> devicesForRole(
             !group.keyboards.empty() && !group.mice.empty();
         const auto primary = primaryRole(group);
         const bool needsActivity =
-            composite &&
-            (receiverLike(group.displayName) ||
-             !primary ||
-             *primary != wantedRole);
+            group.requiresTransportConfirmation ||
+            (composite &&
+             (receiverLike(group.displayName) ||
+              !primary ||
+              *primary != wantedRole));
 
         DeviceInfo info;
         info.type = wantedRole == PhysicalInputRole::Keyboard
@@ -223,16 +221,27 @@ std::vector<DeviceInfo> devicesForRole(
             representative->identity);
         if (info.id.empty()) continue;
         info.name = group.displayName;
+        const auto hasTouchpadEvidence = [&]() {
+            if (hardware::isLikelyTouchpadPath(representative->devicePath) ||
+                hardware::isLikelyTouchpadPath(group.displayName)) {
+                return true;
+            }
+            for (const auto& instance : representative->identity.ancestorInstanceIds) {
+                if (hardware::isLikelyTouchpadPath(instance)) return true;
+            }
+            return false;
+        };
         if (wantedRole == PhysicalInputRole::Keyboard &&
             hardware::isLikelyInternalKeyboardPath(
                 representative->devicePath)) {
             info.name = L"Internal Keyboard";
         } else if (wantedRole == PhysicalInputRole::Mouse &&
-                   hardware::isLikelyTouchpadPath(
-                       representative->devicePath)) {
+                   hasTouchpadEvidence()) {
             info.name = L"Touchpad";
         }
         info.requiresActivityConfirmation = needsActivity;
+        info.requiresFreshTransportConfirmation =
+            group.requiresTransportConfirmation;
         result.push_back(std::move(info));
     }
 
@@ -309,6 +318,57 @@ std::vector<DeviceInfo> HardwareDetector::detectMice() {
 #else
     return {};
 #endif
+}
+
+// Digitizer Page 0x0D / Usage 0x05 is a Precision Touchpad HID sensor,
+// not the Generic Desktop mouse collection (Page 0x01 / Usage 0x02).
+// Enumerate it for the Hardware page ONLY. Windows can translate its movement
+// into mouse events with hDevice == nullptr, which cannot be assigned to a Seat.
+std::vector<DeviceInfo> HardwareDetector::detectTouchpadSensors() {
+    std::vector<DeviceInfo> sensors;
+#ifdef _WIN32
+    const auto rawDevices = win32::enumerateRawInputDevices();
+    if (!rawDevices) return sensors;
+
+    std::map<std::wstring, DeviceInfo> byId;
+    for (const auto& device : rawDevices.devices) {
+        if (device.dwType != RIM_TYPEHID) continue;
+        const auto details = win32::rawInputDeviceInfo(device.hDevice);
+        if (!details || details->dwType != RIM_TYPEHID ||
+            hid::classifyCollection(details->hid.usUsagePage,
+                                    details->hid.usUsage) != hid::CollectionKind::Touchpad) {
+            continue;
+        }
+        const auto path = win32::rawInputDeviceName(device.hDevice);
+        if (!path) continue;
+        const auto identity = win32::resolveDeviceInterfaceIdentity(*path);
+        if (identity.syntheticOrRemote ||
+            hardware::isObviousRemoteOrSyntheticInputPath(*path)) {
+            continue;
+        }
+        const auto stableId =
+            win32::makeStableRawInputDeviceId(L"touchpad-sensor", identity);
+        if (stableId.empty()) continue;
+
+        auto [position, inserted] = byId.try_emplace(stableId);
+        if (inserted) {
+            auto& info = position->second;
+            info.id = stableId;
+            info.type = DeviceType::Mouse;
+            info.name = L"Precision Touchpad (HID sensor only)";
+            info.devicePath = *path;
+            info.nativeHandle = reinterpret_cast<uintptr_t>(device.hDevice);
+            // This must never enter the canonical assignable mouse inventory.
+            info.requiresActivityConfirmation = true;
+        }
+    }
+    sensors.reserve(byId.size());
+    for (auto& [id, device] : byId) {
+        (void)id;
+        sensors.push_back(std::move(device));
+    }
+#endif
+    return sensors;
 }
 
 std::vector<DeviceInfo> HardwareDetector::detectControllers() {

@@ -136,14 +136,16 @@ std::vector<DeviceInfo> RuntimeHost::hardwareInventory() {
             [this, &isPersistedKeyboard](const DeviceInfo& device) {
                 return device.requiresActivityConfirmation &&
                        !confirmedKeyboardIds_.contains(device.id) &&
-                       !isPersistedKeyboard(device.id);
+                       (device.requiresFreshTransportConfirmation ||
+                        !isPersistedKeyboard(device.id));
             });
         std::erase_if(
             mice,
             [this, &isPersistedMouse](const DeviceInfo& device) {
                 return device.requiresActivityConfirmation &&
                        !confirmedMouseIds_.contains(device.id) &&
-                       !isPersistedMouse(device.id);
+                       (device.requiresFreshTransportConfirmation ||
+                        !isPersistedMouse(device.id));
             });
     }
 

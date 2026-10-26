@@ -20,6 +20,8 @@ void printCategory(
                    << L"  Native/index: " << device.nativeHandle << L"\n"
                    << L"  Activity confirmation: "
                    << (device.requiresActivityConfirmation ? L"required" : L"not required")
+                   << L"\n  Transport proof: "
+                   << (device.requiresFreshTransportConfirmation ? L"pending input activity" : L"not pending")
                    << L"\n\n";
     }
 }
@@ -31,7 +33,9 @@ int main() {
 
     printCategory(L"Displays", detector.detectDisplays());
     printCategory(L"Keyboards", detector.detectKeyboards());
-    printCategory(L"Mice / touchpads", detector.detectMice());
+    printCategory(L"Individually addressable mice / touchpads", detector.detectMice());
+    printCategory(L"Touchpad HID sensors (NOT Seat-assignable)",
+                  detector.detectTouchpadSensors());
     printCategory(L"Controllers", detector.detectControllers());
 
     // The current detector API does not expose an authoritative failure object.

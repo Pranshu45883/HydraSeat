@@ -200,6 +200,11 @@ void EnginePollerWorker::doPoll() {
         }
     }
 
+    // Expose system HID touchpad sensors only as read-only hardware evidence.
+    // A sensor is not necessarily an individually routable Raw Input mouse.
+    hydra::HardwareDetector touchpadDetector;
+    payload.touchpadSensors = touchpadDetector.detectTouchpadSensors();
+
     // Controller discovery is independent from Core Audio/COM. Do it before
     // entering the audio apartment so a transient COM failure cannot make
     // controllers disappear from an otherwise healthy hardware snapshot.

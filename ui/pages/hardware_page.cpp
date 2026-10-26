@@ -150,6 +150,12 @@ void HardwarePage::updateState(const EngineStatePayload& payload) {
     addSection("DISPLAYS", payload.displays);
     addSection("KEYBOARDS", payload.keyboards);
     addSection("MICE", payload.mice);
+    if (!payload.touchpadSensors.empty()) {
+        // HID sensors are observable, but are not verified independent mouse
+        // inputs. Do not include them in the assignable device counts/combos.
+        addSection("TOUCHPAD SENSORS (NOT SEAT-ASSIGNABLE)",
+                   payload.touchpadSensors);
+    }
     if (payload.controllerInventoryError) {
         auto* err = new QLabel(
             "CONTROLLER INVENTORY UNAVAILABLE\n" +

@@ -1,4 +1,5 @@
 #include "hydra/hardware_identity.hpp"
+#include "hydra/hid_usage.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -24,6 +25,7 @@ int main() {
     using hydra::hardware::normalizeDevicePath;
     using hydra::hardware::selectInterfaceDeviceIdentity;
     using hydra::hardware::selectPhysicalIdentity;
+    using hydra::hardware::selectRawInputPhysicalIdentity;
     using namespace std::string_view_literals;
 
     const std::wstring withTrailingNulls(
@@ -140,6 +142,52 @@ int main() {
           "stable persisted ID keeps same-VID/PID physical devices separate by container authority");
     check(makeStableDeviceId(L"Keyboard", L"", L"", L"").empty(),
           "missing identity data cannot produce a stable ID");
+
+    // Regression: two laptop HID devnodes can share ACPI ancestry or a
+    // ContainerId, yet must remain distinct Raw Input keyboard identities.
+    // Legacy selectPhysicalIdentity retains its unrelated container semantics.
+    constexpr std::wstring_view internalKeyboard =
+        L"HID\\VID_0001&PID_0001\\INTERNAL-KEYBOARD";
+    constexpr std::wstring_view externalKeyboard =
+        L"HID\\VID_046D&PID_C31C\\WIRED-USB-KEYBOARD";
+    constexpr std::wstring_view sharedAcpiParent =
+        L"ACPI\\PNP0C50\\SHARED-CONTROLLER";
+    check(selectRawInputPhysicalIdentity({}, internalKeyboard, sharedAcpiParent,
+                                        firstInterface) !=
+              selectRawInputPhysicalIdentity({}, externalKeyboard, sharedAcpiParent,
+                                             siblingInterface),
+          "Raw Input must not merge two keyboards solely by shared parent/container");
+    check(selectRawInputPhysicalIdentity(firstPhysicalUsbAncestor, firstDeviceInstance,
+                                         firstParent, firstInterface) ==
+              selectRawInputPhysicalIdentity(firstPhysicalUsbAncestor, siblingDeviceInstance,
+                                             siblingParent, siblingInterface),
+          "sibling USB HID collections share the full physical USB ancestor");
+    check(selectRawInputPhysicalIdentity(firstPhysicalUsbAncestor, firstDeviceInstance,
+                                         firstParent, firstInterface) !=
+              selectRawInputPhysicalIdentity(otherPhysicalUsbAncestor, firstDeviceInstance,
+                                             firstParent, otherPhysicalUnit),
+          "separate same-model USB keyboards retain distinct stable Raw Input identity");
+    check(selectRawInputPhysicalIdentity({}, {}, {}, firstInterface) ==
+              normalizeDevicePath(firstInterface),
+          "unresolved Raw Input identity conservatively uses the complete interface path");
+    check(hydra::hardware::isProvisionalUsbHidInputPath(
+              L"\\\\?\\HID#VID_046D&PID_C31C#7&ABC&0&0000"),
+          "specific wired USB HID interface may be provisionally discovered");
+    check(!hydra::hardware::isProvisionalUsbHidInputPath(
+              L"\\\\?\\ROOT#VIRTUAL#VID_046D&PID_C31C"),
+          "virtual root devices are not provisional physical HID");
+    check(!hydra::hardware::isProvisionalUsbHidInputPath(
+              L"\\\\?\\HID#VID_045E&PID_028E#VIGEM"),
+          "known virtual HID controllers are not provisional physical input");
+    check(!hydra::hardware::isProvisionalUsbHidInputPath(
+              L"\\\\?\\HID#UNKNOWN-DEVICE"),
+          "ambiguous HID interface is not provisional input");
+    check(hydra::hid::classifyCollection(0x0d, 0x05) ==
+              hydra::hid::CollectionKind::Touchpad,
+          "Precision Touchpad is Digitizers page 0x0D usage 0x05");
+    check(hydra::hid::classifyCollection(0x01, 0x05) ==
+              hydra::hid::CollectionKind::Gamepad,
+          "Generic Desktop usage 0x05 is a gamepad, not a touchpad");
 
     check(hydra::hardware::isObviousRemoteOrSyntheticInputPath(
               L"\\\\?\\ROOT#RDP_MOU#0000"),

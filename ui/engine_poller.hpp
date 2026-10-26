@@ -22,6 +22,8 @@ struct EngineStatePayload {
     std::vector<hydra::DeviceInfo> displays;
     std::vector<hydra::DeviceInfo> keyboards;
     std::vector<hydra::DeviceInfo> mice;
+    // Read-only HID digitizer sensors; never offered for Seat mouse assignment.
+    std::vector<hydra::DeviceInfo> touchpadSensors;
     std::vector<hydra::DeviceInfo> controllers;
     std::vector<hydra::windows::AudioRenderEndpoint> audioEndpoints;
     std::vector<hydra::windows::AudioSessionObservation> audioSessions;

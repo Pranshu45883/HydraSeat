@@ -78,6 +78,29 @@ inline std::wstring selectPhysicalIdentity(std::wstring_view parentInstanceId,
     return selectPhysicalIdentity({}, parentInstanceId, deviceInstanceId, interfacePath);
 }
 
+// Raw Input needs one identity per physical keyboard/mouse, not a potentially
+// machine-wide ContainerId. Prefer the full USB device ancestor (not a shared
+// USB hub or class interface). For non-USB built-in devices, prefer the leaf
+// PnP devnode: a laptop keyboard and I2C touchpad can share a parent/container
+// and must not accidentally collapse into one Seat input identity.
+inline std::wstring selectRawInputPhysicalIdentity(
+    std::wstring_view physicalUsbAncestorInstanceId,
+    std::wstring_view deviceInstanceId,
+    std::wstring_view parentInstanceId,
+    std::wstring_view interfacePath) {
+    if (!physicalUsbAncestorInstanceId.empty()) {
+        return canonicalizeInstanceId(physicalUsbAncestorInstanceId);
+    }
+    if (!deviceInstanceId.empty()) {
+        return canonicalizeInstanceId(deviceInstanceId);
+    }
+    // A shared parent (for example an ACPI controller) does not identify a
+    // single keyboard or mouse. Keep distinct Raw Input interfaces separate;
+    // without an interface path, fail closed rather than inventing an ID.
+    (void)parentInstanceId;
+    return normalizeDevicePath(interfacePath);
+}
+
 inline std::wstring selectInterfaceDeviceIdentity(std::wstring_view deviceInstanceId,
                                                   std::wstring_view interfacePath) {
     if (!deviceInstanceId.empty()) {
@@ -145,6 +168,24 @@ inline bool isObviousRemoteOrSyntheticInputIdentity(std::wstring_view interfaceP
     return isObviousRemoteOrSyntheticInputPath(interfacePath) ||
            isObviousRemoteOrSyntheticInputPath(deviceInstanceId) ||
            isObviousRemoteOrSyntheticInputPath(parentInstanceId);
+}
+
+// A device that Windows exposes as a specific VID/PID HID Raw Input
+// interface may be listed provisionally when SetupAPI ancestry lookup is
+// temporarily unavailable (USB hotplug/race). This is NOT physical proof:
+// the host must first observe activity from that exact stable identity.
+// Explicitly virtual/remote adapters are never eligible for this fallback.
+inline bool isProvisionalUsbHidInputPath(std::wstring_view path) {
+    const auto normalized = normalizeDevicePath(path);
+    if (!normalized.starts_with(L"\\\\?\\HID#VID_") ||
+        !containsToken(normalized, L"&PID_") ||
+        isObviousRemoteOrSyntheticInputPath(normalized)) {
+        return false;
+    }
+    return !containsToken(normalized, L"VIGEM") &&
+           !containsToken(normalized, L"VJOY") &&
+           !containsToken(normalized, L"FEIZHI") &&
+           !containsToken(normalized, L"VIRTUAL");
 }
 
 inline bool isLikelyInternalKeyboardPath(std::wstring_view path) {

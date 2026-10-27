@@ -1,4 +1,5 @@
 #include "hydra/input_router.hpp"
+#include "hydra/raw_input_utils.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -90,14 +91,12 @@ void InputRouter::handleRawInput(HRAWINPUT hRawInput) {
             std::chrono::steady_clock::now().time_since_epoch())
             .count());
 
-    if (raw->header.hDevice != NULL) {
-        UINT nameSize = 0;
-        GetRawInputDeviceInfoW(raw->header.hDevice, RIDI_DEVICENAME, NULL, &nameSize);
-        if (nameSize > 0) {
-            std::wstring nameBuf(nameSize, L'\0');
-            if (GetRawInputDeviceInfoW(raw->header.hDevice, RIDI_DEVICENAME, nameBuf.data(), &nameSize) != (UINT)-1) {
-                event.devicePath = nameBuf;
-            }
+    // Use the bounded, hotplug-safe Raw Input name lookup shared with the
+    // inventory. The old direct two-call lookup could lose the device path
+    // during USB reconnects and silently break per-keyboard identification.
+    if (raw->header.hDevice != nullptr) {
+        if (const auto path = win32::rawInputDeviceName(raw->header.hDevice)) {
+            event.devicePath = *path;
         }
     }
 

@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -73,6 +74,11 @@ HANDLE openVerifiedDirectChild(
     const auto parentCreation = creationIdentity(parentProcess);
     if (parentPid == 0 || parentCreation == 0) return nullptr;
 
+    // CTest's $<TARGET_FILE:...> may use forward slashes, while
+    // QueryFullProcessImageNameW returns native Windows separators.
+    std::wstring expectedImage(expectedExecutable);
+    std::replace(expectedImage.begin(), expectedImage.end(), L'/', L'\\');
+
     ScopedHandle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
     if (snapshot.value == INVALID_HANDLE_VALUE) {
         snapshot.value = nullptr;
@@ -82,13 +88,20 @@ HANDLE openVerifiedDirectChild(
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
     if (!Process32FirstW(snapshot.value, &entry)) return nullptr;
+    unsigned matchingParentEntries = 0;
+    DWORD lastOpenError = ERROR_SUCCESS;
     do {
         if (entry.th32ParentProcessID != parentPid) continue;
+        ++matchingParentEntries;
 
         ScopedHandle candidate{OpenProcess(
             SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
             FALSE, entry.th32ProcessID)};
-        if (!candidate.value || !processStillRunning(candidate.value) ||
+        if (!candidate.value) {
+            lastOpenError = GetLastError();
+            continue;
+        }
+        if (!processStillRunning(candidate.value) ||
             creationIdentity(candidate.value) <= parentCreation) {
             continue;
         }
@@ -100,9 +113,12 @@ HANDLE openVerifiedDirectChild(
             continue;
         }
         image.resize(imageLength);
+        std::replace(image.begin(), image.end(), L'/', L'\\');
         if (CompareStringOrdinal(
-                image.c_str(), -1, expectedExecutable.c_str(), -1, TRUE) !=
+                image.c_str(), -1, expectedImage.c_str(), -1, TRUE) !=
             CSTR_EQUAL) {
+            std::wcerr << L"[diagnostic] unexpected direct-child image: "
+                       << image << L" (expected " << expectedImage << L")\n";
             continue;
         }
 
@@ -110,6 +126,9 @@ HANDLE openVerifiedDirectChild(
         candidate.value = nullptr;
         return retained;
     } while (Process32NextW(snapshot.value, &entry));
+    std::cerr << "[diagnostic] no verified live child for parent PID "
+              << parentPid << " parentMatches=" << matchingParentEntries
+              << " lastOpenError=" << lastOpenError << '\n';
     return nullptr;
 }
 

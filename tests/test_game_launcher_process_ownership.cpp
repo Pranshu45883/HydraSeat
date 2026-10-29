@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -64,20 +65,71 @@ bool processStillRunning(HANDLE process) {
     return WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
 }
 
-DWORD findDirectChild(DWORD parentPid) {
+// A Toolhelp PID alone is not a process identity: the entry may be stale by
+// the time OpenProcess runs. Retain a live handle and validate its parent
+// lifetime and exact helper image before the caller relies on it.
+HANDLE openVerifiedDirectChild(
+    HANDLE parentProcess, const std::wstring& expectedExecutable) {
+    const DWORD parentPid = GetProcessId(parentProcess);
+    const auto parentCreation = creationIdentity(parentProcess);
+    if (parentPid == 0 || parentCreation == 0) return nullptr;
+
+    // CTest's $<TARGET_FILE:...> may use forward slashes, while
+    // QueryFullProcessImageNameW returns native Windows separators.
+    std::wstring expectedImage(expectedExecutable);
+    std::replace(expectedImage.begin(), expectedImage.end(), L'/', L'\\');
+
     ScopedHandle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
     if (snapshot.value == INVALID_HANDLE_VALUE) {
         snapshot.value = nullptr;
-        return 0;
+        return nullptr;
     }
 
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
-    if (!Process32FirstW(snapshot.value, &entry)) return 0;
+    if (!Process32FirstW(snapshot.value, &entry)) return nullptr;
+    unsigned matchingParentEntries = 0;
+    DWORD lastOpenError = ERROR_SUCCESS;
     do {
-        if (entry.th32ParentProcessID == parentPid) return entry.th32ProcessID;
+        if (entry.th32ParentProcessID != parentPid) continue;
+        ++matchingParentEntries;
+
+        ScopedHandle candidate{OpenProcess(
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+            FALSE, entry.th32ProcessID)};
+        if (!candidate.value) {
+            lastOpenError = GetLastError();
+            continue;
+        }
+        if (!processStillRunning(candidate.value) ||
+            creationIdentity(candidate.value) <= parentCreation) {
+            continue;
+        }
+
+        std::wstring image(32768u, L'\0');
+        DWORD imageLength = static_cast<DWORD>(image.size());
+        if (!QueryFullProcessImageNameW(
+                candidate.value, 0, image.data(), &imageLength)) {
+            continue;
+        }
+        image.resize(imageLength);
+        std::replace(image.begin(), image.end(), L'/', L'\\');
+        if (CompareStringOrdinal(
+                image.c_str(), -1, expectedImage.c_str(), -1, TRUE) !=
+            CSTR_EQUAL) {
+            std::wcerr << L"[diagnostic] unexpected direct-child image: "
+                       << image << L" (expected " << expectedImage << L")\n";
+            continue;
+        }
+
+        HANDLE retained = candidate.value;
+        candidate.value = nullptr;
+        return retained;
     } while (Process32NextW(snapshot.value, &entry));
-    return 0;
+    std::cerr << "[diagnostic] no verified live child for parent PID "
+              << parentPid << " parentMatches=" << matchingParentEntries
+              << " lastOpenError=" << lastOpenError << '\n';
+    return nullptr;
 }
 
 bool requireExitedOrCleanup(HANDLE process, DWORD timeoutMs, const char* message) {
@@ -145,12 +197,12 @@ int wmain(int argc, wchar_t* argv[]) {
         return 10;
     }
 
-    const DWORD descendantPid = findDirectChild(seat1Snapshot->process->pid);
-    if (!check(descendantPid != 0, "discover direct Seat 1 descendant")) return 11;
-    ScopedHandle seat1Descendant{OpenProcess(
-        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
-        FALSE, descendantPid)};
-    if (!check(seat1Descendant.value != nullptr, "open Seat 1 descendant")) return 12;
+    ScopedHandle seat1Descendant{
+        openVerifiedDirectChild(seat1Process.value, helperPath)};
+    if (!check(seat1Descendant.value != nullptr,
+               "open verified live Seat 1 descendant")) {
+        return 12;
+    }
     if (!check(processStillRunning(seat1Descendant.value),
                "Seat 1 descendant is running")) {
         return 13;
@@ -261,12 +313,12 @@ int wmain(int argc, wchar_t* argv[]) {
                "root-exit fixture descendant becomes ready")) {
         return 37;
     }
-    const DWORD exitedRootChildPid = findDirectChild(exitedRootSnapshot->process->pid);
-    if (!check(exitedRootChildPid != 0, "discover root-exit descendant")) return 38;
-    ScopedHandle exitedRootChild{OpenProcess(
-        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
-        FALSE, exitedRootChildPid)};
-    if (!check(exitedRootChild.value != nullptr, "open root-exit descendant")) return 39;
+    ScopedHandle exitedRootChild{
+        openVerifiedDirectChild(exitedRootProcess.value, helperPath)};
+    if (!check(exitedRootChild.value != nullptr,
+               "open verified live root-exit descendant")) {
+        return 39;
+    }
     if (!check(WaitForSingleObject(exitedRootProcess.value, 3000) == WAIT_OBJECT_0,
                "launch root exits before its descendant")) {
         return 40;
@@ -320,21 +372,17 @@ int wmain(int argc, wchar_t* argv[]) {
                    "destructor test runtime owns process tree")) {
             return 49;
         }
-        destructorProcess.value = OpenProcess(SYNCHRONIZE, FALSE, snapshot->process->pid);
+        destructorProcess.value = OpenProcess(
+            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE, snapshot->process->pid);
         if (!check(destructorProcess.value != nullptr,
                    "open destructor-owned root for observation")) {
             return 50;
         }
-        const DWORD destructorChildPid = findDirectChild(snapshot->process->pid);
-        if (!check(destructorChildPid != 0,
-                   "discover destructor-owned descendant")) {
-            return 51;
-        }
-        destructorDescendant.value = OpenProcess(
-            SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
-            FALSE, destructorChildPid);
+        destructorDescendant.value =
+            openVerifiedDirectChild(destructorProcess.value, helperPath);
         if (!check(destructorDescendant.value != nullptr,
-                   "open destructor-owned descendant for observation")) {
+                   "open verified live destructor-owned descendant")) {
             return 52;
         }
     }

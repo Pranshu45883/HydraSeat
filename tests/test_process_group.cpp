@@ -488,15 +488,29 @@ void testGameExitAfterHandoff() {
     }, std::chrono::milliseconds(1800));
     check(descendantActive, "legitimate child becomes authoritative after launcher exits");
 
+    // Wait for the exact owned Job to become empty before asserting its
+    // terminal handoff state. A fixed timer starting at promotion is not proof
+    // the fixture's child has exited on a loaded Windows CI runner.
+    const bool naturallyEmpty = launched.group->waitForEmpty(5000u);
+    check(naturallyEmpty,
+          "naturally exited handoff tree is verifiably empty without adopting another process");
     const bool treeExited = waitUntil([&] {
         return launched.group->handoffSnapshot().state == ProcessHandoffState::TreeExited;
-    }, std::chrono::milliseconds(2500));
+    }, std::chrono::milliseconds(1000));
+    if (!treeExited) {
+        const auto current = launched.group->handoffSnapshot();
+        const auto tracked = launched.group->snapshot();
+        std::cerr << "[diagnostic] terminal handoff state="
+                  << processHandoffStateName(current.state)
+                  << " generation=" << current.handoffGeneration
+                  << " trackingComplete=" << tracked.trackingComplete
+                  << " runningCount=" << tracked.runningCount()
+                  << " naturallyEmpty=" << naturallyEmpty << '\n';
+    }
     check(treeExited, "final game exit is distinguished from PID reuse and handoff failure");
     const auto finalHandoff = launched.group->handoffSnapshot();
     check(!promoted.valid() || finalHandoff.authoritativeProcess.sameInstance(promoted),
           "untrusted helper descendants never replace the final game authority on exit");
-    check(launched.group->waitForEmpty(0u),
-          "naturally exited handoff tree is verifiably empty without adopting another process");
 
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);

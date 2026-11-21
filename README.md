@@ -2,6 +2,8 @@
 
 HydraSeat is a Windows local gaming multiseat project focused on running **two independent local gaming Seats in one interactive Windows session**.
 
+**ALRET: WE ARE NOT Hydra Multi-Seat!**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)](https://isocpp.org/)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4?logo=windows)](https://www.microsoft.com/windows/)
